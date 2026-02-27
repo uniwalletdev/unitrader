@@ -1,0 +1,57 @@
+# Web Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Database
+sqlalchemy==2.0.23
+psycopg2-binary==2.9.9
+aiosqlite==0.19.0
+alembic==1.13.0
+
+# Pydantic / Settings
+pydantic==2.5.0
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.1
+python-multipart==0.0.6
+cryptography==41.0.7
+pyotp==2.9.0
+
+# HTTP Client (unpinned — let pip resolve compatible version)
+httpx>=0.24.0,<1.0.0
+
+# AI  (>=0.20 required for Messages API + Claude 3 models)
+anthropic>=0.40.0
+
+# Rate Limiting
+slowapi==0.1.9
+
+# Email
+resend>=2.0.0
+
+# Payments
+stripe==7.4.0
+
+# Database-as-a-service (optional — only needed if using Supabase client directly)
+# supabase>=2.3.0
+
+# Monitoring / Error Tracking
+sentry-sdk[fastapi]==1.38.0
+
+# Telegram Bot
+# 20.3 is the minimum — currently 22.x is installed and fully compatible
+python-telegram-bot[webhooks]>=20.3
+
+# WhatsApp / Twilio
+twilio>=8.0.0
+
+# Task Scheduling (used by Telegram bot alert system)
+APScheduler==3.10.4
+
+# Utilities
+python-dateutil==2.9.0
+pytz==2024.1
