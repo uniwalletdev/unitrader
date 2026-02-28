@@ -150,7 +150,10 @@ async def lifespan(app: FastAPI):
     logger.info("Starting %s v%s (%s)", settings.app_name, settings.app_version, settings.environment)
 
     # 1. Initialise database tables
-    await create_tables()
+    try:
+        await create_tables()
+    except Exception as _db_exc:
+        logger.error("Database init failed (app will still start): %s", _db_exc)
 
     # 2. Verify Anthropic API key is present
     if settings.anthropic_api_key:
