@@ -26,7 +26,7 @@ services:
       - STRIPE_PRO_PRICE_ID=${STRIPE_PRO_PRICE_ID}
       - RESEND_API_KEY=${RESEND_API_KEY}
       - SENTRY_DSN=${SENTRY_DSN}
-      - ALLOWED_ORIGINS=http://localhost:3000,https://${DOMAIN:-localhost}
+      - ALLOWED_ORIGINS=https://unitrader.ai,https://www.unitrader.ai,http://localhost:3000
     depends_on:
       db:
         condition: service_healthy
@@ -72,7 +72,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://api:8000
+      - NEXT_PUBLIC_API_URL=https://api.unitrader.ai
       - NEXT_PUBLIC_STRIPE_PUBLIC_KEY=${STRIPE_PUBLIC_KEY}
     depends_on:
       - api

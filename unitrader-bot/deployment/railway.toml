@@ -12,17 +12,38 @@ restartPolicyMaxRetries = 3
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 
-# Environment variables are set in the Railway dashboard.
-# Required:
+# ── Environment variables ─────────────────────────────────────────────────────
+# Set these in the Railway dashboard under your service → Variables
+#
+# REQUIRED:
 #   ENVIRONMENT=production
-#   DATABASE_URL          (Railway PostgreSQL add-on)
-#   JWT_SECRET_KEY
-#   MASTER_ENCRYPTION_KEY
-#   FIELD_ENCRYPTION_KEY
+#   DATABASE_URL              (Railway PostgreSQL add-on — auto-filled)
+#   JWT_SECRET_KEY            (generate: python -c "import secrets; print(secrets.token_hex(32))")
+#   MASTER_ENCRYPTION_KEY     (generate: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+#   FIELD_ENCRYPTION_KEY      (generate: same as above)
 #   ANTHROPIC_API_KEY
 #   STRIPE_SECRET_KEY
 #   STRIPE_WEBHOOK_SECRET
 #   STRIPE_PRO_PRICE_ID
 #   RESEND_API_KEY
-#   SENTRY_DSN            (optional)
-#   ALLOWED_ORIGINS       (your Vercel frontend URL)
+#   EMAIL_FROM=noreply@unitrader.ai
+#
+# DOMAIN / CORS:
+#   API_BASE_URL=https://api.unitrader.ai
+#   ALLOWED_ORIGINS=https://unitrader.ai,https://www.unitrader.ai
+#
+# TELEGRAM:
+#   TELEGRAM_BOT_TOKEN
+#   TELEGRAM_BOT_USERNAME=unitraderAI_bot
+#
+# WHATSAPP / TWILIO:
+#   TWILIO_ACCOUNT_SID
+#   TWILIO_AUTH_TOKEN
+#   TWILIO_WHATSAPP_NUMBER=+443330386509
+#
+# CLERK:
+#   CLERK_SECRET_KEY
+#   CLERK_PUBLISHABLE_KEY
+#
+# OPTIONAL:
+#   SENTRY_DSN

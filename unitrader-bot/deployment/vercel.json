@@ -1,26 +1,33 @@
 {
   "version": 2,
-  "framework": "nextjs",
-  "buildCommand": "npm run build",
-  "outputDirectory": ".next",
-  "installCommand": "npm install",
-  "rootDirectory": "frontend",
+  "name": "unitrader-frontend",
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/next"
+    }
+  ],
   "env": {
-    "NEXT_PUBLIC_API_URL": "@unitrader_api_url",
-    "NEXT_PUBLIC_STRIPE_PUBLIC_KEY": "@unitrader_stripe_public_key"
+    "NEXT_PUBLIC_API_URL": "https://api.unitrader.ai"
   },
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://api.unitrader.ai/api/:path*"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
       "headers": [
-        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
         { "key": "X-Content-Type-Options", "value": "nosniff" },
-        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
-        { "key": "Permissions-Policy", "value": "camera=(), microphone=(), geolocation=()" }
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" }
       ]
     }
   ],
-  "rewrites": [
-    { "source": "/api/:path*", "destination": "https://your-railway-url.up.railway.app/api/:path*" }
+  "domains": [
+    "unitrader.ai",
+    "www.unitrader.ai"
   ]
 }
