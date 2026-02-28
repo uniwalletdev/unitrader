@@ -15,7 +15,6 @@ import sentry_sdk
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.httpsredirect import HTTPSRedirectMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -461,13 +460,22 @@ app.state.limiter = limiter
 # Middleware (order matters — outermost first)
 # ─────────────────────────────────────────────
 
-# HTTPS redirect — production only
-if settings.is_production:
-    app.add_middleware(HTTPSRedirectMiddleware)
+# HTTPS redirect — NOT added here because Railway terminates SSL at the proxy
+# level and forwards plain HTTP internally. Adding HTTPSRedirectMiddleware would
+# cause Railway's health checks (http://localhost:8000/health) to get 301s and fail.
 
-# Trusted hosts
+# Trusted hosts — allow our domain, Railway's internal hostnames, and localhost
 if settings.is_production:
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["unitrader.app", "*.unitrader.app"])
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=[
+            "unitrader.ai",
+            "*.unitrader.ai",
+            "*.up.railway.app",
+            "localhost",
+            "127.0.0.1",
+        ],
+    )
 
 # CORS
 app.add_middleware(
