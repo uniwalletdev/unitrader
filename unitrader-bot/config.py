@@ -170,7 +170,8 @@ class Settings(BaseSettings):
     # ─────────────────────────────────────────────
     # CORS
     # ─────────────────────────────────────────────
-    allowed_origins: str = "http://localhost:3000,http://localhost:8080"
+    # Production: set ALLOWED_ORIGINS to include frontend URL + https://unitrader-production.up.railway.app
+    allowed_origins: str = "http://localhost:3000,http://localhost:8080,https://unitrader-production.up.railway.app"
 
     # ─────────────────────────────────────────────
     # Rate Limiting
@@ -235,9 +236,18 @@ class Settings(BaseSettings):
 
     @property
     def db_ssl_args(self) -> dict:
-        """Extra SQLAlchemy connect_args for SSL in production."""
+        """Extra SQLAlchemy connect_args for asyncpg SSL.
+
+        Supabase transaction pooler (port 6543) uses PgBouncer which has a
+        self-signed certificate chain that asyncpg rejects when ssl=True.
+        Passing no SSL args lets asyncpg connect without certificate
+        verification — the pooler connection is still encrypted end-to-end.
+        Direct connections (port 5432) can use ssl=True safely.
+        """
         if self.use_ssl and "postgresql" in self.database_url:
-            return {"ssl": "require"}
+            if "pooler.supabase.com" in self.database_url:
+                return {}  # Supabase pooler: no explicit SSL args needed
+            return {"ssl": True}
         return {}
 
 
