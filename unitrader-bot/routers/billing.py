@@ -64,7 +64,7 @@ async def list_plans():
                     "name": "Pro",
                     "price_usd": 9.99,
                     "price_monthly_cents": PLAN_PRICES["pro"],
-                    "trial_days": 7,
+                    "trial_days": 14,
                     "features": PLAN_FEATURES["pro"],
                     "cta": "Start Free Trial",
                     "highlighted": True,
