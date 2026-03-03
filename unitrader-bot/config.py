@@ -236,17 +236,19 @@ class Settings(BaseSettings):
 
     @property
     def db_ssl_args(self) -> dict:
-        """Extra SQLAlchemy connect_args for asyncpg SSL.
+        """Extra SQLAlchemy connect_args for asyncpg.
 
-        Supabase transaction pooler (port 6543) uses PgBouncer which has a
-        self-signed certificate chain that asyncpg rejects when ssl=True.
-        Passing no SSL args lets asyncpg connect without certificate
-        verification — the pooler connection is still encrypted end-to-end.
-        Direct connections (port 5432) can use ssl=True safely.
+        Supabase Transaction Pooler (port 6543) runs PgBouncer in transaction
+        mode which does NOT support prepared statements. asyncpg caches them
+        by default, causing DuplicatePreparedStatementError. Fix: disable the
+        statement cache with statement_cache_size=0.
+
+        SSL: Supabase pooler uses a self-signed cert chain that asyncpg
+        rejects when ssl=True, so we omit ssl args for the pooler.
         """
+        if "pooler.supabase.com" in self.database_url:
+            return {"statement_cache_size": 0}
         if self.use_ssl and "postgresql" in self.database_url:
-            if "pooler.supabase.com" in self.database_url:
-                return {}  # Supabase pooler: no explicit SSL args needed
             return {"ssl": True}
         return {}
 
