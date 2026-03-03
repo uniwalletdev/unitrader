@@ -98,7 +98,7 @@ export default function TrialCountdownPage() {
   return (
     <>
       <Head>
-        <title>Your Trial — {trial.ai_name} | Unitrader</title>
+        <title>Your Trial — {trial.aiName} | Unitrader</title>
       </Head>
 
       <div className="min-h-screen bg-dark-950 text-white">
@@ -144,7 +144,7 @@ export default function TrialCountdownPage() {
 
           {/* AI Performance */}
           <h2 className="text-sm font-semibold uppercase tracking-widest text-dark-400 mb-3">
-            {trial.ai_name}&apos;s Performance
+            {trial.aiName}&apos;s Performance
           </h2>
           <div className="grid grid-cols-3 gap-3 mb-8">
             <Stat
