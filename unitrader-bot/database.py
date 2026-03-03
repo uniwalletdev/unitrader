@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.pool import NullPool
 
 from config import settings
 
@@ -35,12 +36,21 @@ elif _db_url.startswith("postgres://"):
 # SQLite doesn't support pool_size / max_overflow
 _is_sqlite = "sqlite" in _db_url
 
+# Detect Supabase Transaction Pooler (PgBouncer in transaction mode).
+# PgBouncer transaction mode is incompatible with SQLAlchemy's connection pool
+# when multiple workers are running: prepared statement names collide across
+# workers. Fix: use NullPool so every request gets a fresh PgBouncer slot.
+# PgBouncer handles pooling on its side; we don't need SQLAlchemy pooling too.
+_use_nullpool = "pooler.supabase.com" in _db_url
+
 _engine_kwargs: dict = {
     "echo": settings.debug,
     "future": True,
 }
 
-if not _is_sqlite:
+if _use_nullpool:
+    _engine_kwargs["poolclass"] = NullPool
+elif not _is_sqlite:
     _engine_kwargs.update(
         {
             "pool_size": settings.db_pool_size,
@@ -50,8 +60,9 @@ if not _is_sqlite:
             "pool_pre_ping": True,  # validate connections before use
         }
     )
-    if settings.db_ssl_args:
-        _engine_kwargs["connect_args"] = settings.db_ssl_args
+
+if settings.db_ssl_args:
+    _engine_kwargs["connect_args"] = settings.db_ssl_args
 
 engine = create_async_engine(_db_url, **_engine_kwargs)
 
