@@ -60,43 +60,6 @@ async def database_health(db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.get("/database/debug", summary="Database debug — shows exact error and URL shape")
-async def database_debug():
-    """Temporary debug endpoint — shows DB URL shape and exact connection error."""
-    import re
-    from database import _db_url, _engine_kwargs
-    from config import settings
-
-    # Mask password in URL for safe display
-    masked = re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", _db_url)
-    connect_args = _engine_kwargs.get("connect_args", {})
-
-    # Try connecting directly
-    error_detail = None
-    try:
-        from sqlalchemy.ext.asyncio import create_async_engine
-        from sqlalchemy import text as sql_text
-        engine = create_async_engine(_db_url, connect_args=connect_args, pool_pre_ping=True)
-        async with engine.connect() as conn:
-            result = await conn.execute(sql_text("SELECT version()"))
-            version = result.fetchone()[0]
-        await engine.dispose()
-        return {
-            "status": "connected",
-            "db_url_shape": masked,
-            "connect_args": str(connect_args),
-            "pg_version": str(version)[:80],
-        }
-    except Exception as exc:
-        error_detail = str(exc)
-
-    return {
-        "status": "error",
-        "db_url_shape": masked,
-        "connect_args": str(connect_args),
-        "error": error_detail[:300] if error_detail else None,
-    }
-
 
 # ─────────────────────────────────────────────
 # GET /health/ai
