@@ -67,7 +67,7 @@ async def _fetch_binance(symbol: str) -> dict:
 
 
 async def _fetch_alpaca(symbol: str) -> dict:
-    base = settings.alpaca_base_url.rstrip("/")
+    base = settings.alpaca_data_url.rstrip("/")
     headers = {
         "APCA-API-KEY-ID": settings.alpaca_api_key,
         "APCA-API-SECRET-KEY": settings.alpaca_api_secret,
@@ -156,7 +156,7 @@ async def _fetch_binance_closes(symbol: str, limit: int) -> list[float]:
 
 
 async def _fetch_alpaca_closes(symbol: str, limit: int) -> list[float]:
-    base = settings.alpaca_base_url.rstrip("/")
+    base = settings.alpaca_data_url.rstrip("/")
     headers = {
         "APCA-API-KEY-ID": settings.alpaca_api_key,
         "APCA-API-SECRET-KEY": settings.alpaca_api_secret,

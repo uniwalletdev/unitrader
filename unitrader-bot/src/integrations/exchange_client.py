@@ -274,17 +274,22 @@ class AlpacaClient(BaseExchangeClient):
     def __init__(self, api_key: str, api_secret: str, base_url: str | None = None):
         super().__init__(api_key, api_secret)
         raw_url = (base_url or settings.alpaca_base_url).rstrip("/")
-        # Guard against base URL already containing /v2 — paths include it.
         if raw_url.endswith("/v2"):
             raw_url = raw_url[:-3]
         self._base_url = raw_url
+        _common_headers = {
+            "APCA-API-KEY-ID": api_key,
+            "APCA-API-SECRET-KEY": api_secret,
+            "Content-Type": "application/json",
+        }
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
-            headers={
-                "APCA-API-KEY-ID": api_key,
-                "APCA-API-SECRET-KEY": api_secret,
-                "Content-Type": "application/json",
-            },
+            headers=_common_headers,
+            timeout=10.0,
+        )
+        self._data_http = httpx.AsyncClient(
+            base_url=settings.alpaca_data_url.rstrip("/"),
+            headers=_common_headers,
             timeout=10.0,
         )
 
@@ -306,10 +311,14 @@ class AlpacaClient(BaseExchangeClient):
         data = await _with_retry(self._get, "/v2/account")
         return float(data.get("cash", 0))
 
+    async def _data_get(self, path: str, params: dict | None = None) -> Any:
+        resp = await self._data_http.get(path, params=params)
+        resp.raise_for_status()
+        return resp.json()
+
     async def get_current_price(self, symbol: str) -> float:
-        data = await _with_retry(self._get, f"/v2/stocks/{symbol}/quotes/latest")
+        data = await _with_retry(self._data_get, f"/v2/stocks/{symbol}/quotes/latest")
         quote = data.get("quote", {})
-        # Use mid-price of bid/ask
         bid = float(quote.get("bp", 0))
         ask = float(quote.get("ap", 0))
         return (bid + ask) / 2 if bid and ask else float(quote.get("ap", 0))
@@ -396,6 +405,7 @@ class AlpacaClient(BaseExchangeClient):
 
     async def aclose(self) -> None:
         await self._http.aclose()
+        await self._data_http.aclose()
 
 
 # ─────────────────────────────────────────────
