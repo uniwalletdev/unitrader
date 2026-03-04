@@ -49,7 +49,8 @@ async def fetch_market_data(symbol: str, exchange: str) -> dict:
 
 
 async def _fetch_binance(symbol: str) -> dict:
-    url = "https://api.binance.com/api/v3/ticker/24hr"
+    base = (settings.binance_base_url or "https://api.binance.com").rstrip("/")
+    url = f"{base}/api/v3/ticker/24hr"
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.get(url, params={"symbol": symbol})
         resp.raise_for_status()
@@ -146,7 +147,8 @@ async def fetch_ohlcv(symbol: str, exchange: str, limit: int = 200) -> list[floa
 
 
 async def _fetch_binance_closes(symbol: str, limit: int) -> list[float]:
-    url = "https://api.binance.com/api/v3/klines"
+    base = (settings.binance_base_url or "https://api.binance.com").rstrip("/")
+    url = f"{base}/api/v3/klines"
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
         resp = await client.get(url, params={"symbol": symbol, "interval": "5m", "limit": limit})
         resp.raise_for_status()

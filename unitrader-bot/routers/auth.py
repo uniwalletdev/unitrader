@@ -455,9 +455,7 @@ async def password_reset_request(
 
     if user:
         token = generate_secure_token(32)
-        expire = datetime.now(timezone.utc).replace(
-            hour=(datetime.now(timezone.utc).hour + 1) % 24
-        )
+        expire = datetime.now(timezone.utc) + timedelta(hours=1)
         user.password_reset_token = token
         user.password_reset_expires = expire
         await _log_event(db, "password_reset_requested", request, user_id=user.id)
@@ -747,22 +745,22 @@ async def generate_telegram_linking_code(
 ):
     """Generate a 6-digit OTP the user can send to the Telegram bot as /link CODE.
 
-    Old unused codes for this user are expired immediately to avoid confusion.
+    Old expired codes are cleaned up but active WhatsApp codes are preserved.
     The new code expires in 15 minutes and is single-use.
     """
     now = datetime.now(timezone.utc)
 
-    # Invalidate any previous unused codes for this user
-    old_codes = await db.execute(
+    # Clean up only expired codes (preserve any active WhatsApp linking codes)
+    expired_codes = await db.execute(
         select(TelegramLinkingCode).where(
             TelegramLinkingCode.user_id == current_user.id,
             TelegramLinkingCode.is_used == False,  # noqa: E712
+            TelegramLinkingCode.expires_at <= now,
         )
     )
-    for row in old_codes.scalars().all():
+    for row in expired_codes.scalars().all():
         await db.delete(row)
 
-    # Generate a 6-digit numeric code (100000–999999)
     code = str(secrets.randbelow(900_000) + 100_000)
     expires_at = now + timedelta(minutes=15)
 
@@ -775,7 +773,7 @@ async def generate_telegram_linking_code(
 
     return {
         "status": "success",
-        "code": code,
+        "data": {"code": code},
         "expires_in_minutes": 15,
         "instruction": f"Send to {settings.telegram_bot_handle}: /link {code}",
     }
@@ -816,6 +814,12 @@ async def link_telegram_account(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired linking code",
+        )
+
+    if not row.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Linking code has no associated user — please generate a new code from the dashboard",
         )
 
     # Guard: this Telegram account may already be linked to a *different* user
@@ -942,17 +946,20 @@ async def generate_whatsapp_linking_code(
 
     The bot recognises: LINK 123456
     Codes expire in 15 minutes and are single-use.
-    Old unused codes for this user are cleaned up immediately.
+    Old expired codes are cleaned up but active Telegram codes are preserved.
     """
     now = datetime.now(timezone.utc)
 
-    old_codes = await db.execute(
+    # Only expire codes that have already timed out (don't invalidate
+    # active Telegram linking codes that share the same table).
+    expired_codes = await db.execute(
         select(TelegramLinkingCode).where(
             TelegramLinkingCode.user_id == current_user.id,
             TelegramLinkingCode.is_used == False,  # noqa: E712
+            TelegramLinkingCode.expires_at <= now,
         )
     )
-    for row in old_codes.scalars().all():
+    for row in expired_codes.scalars().all():
         await db.delete(row)
 
     code       = str(secrets.randbelow(900_000) + 100_000)
@@ -967,7 +974,7 @@ async def generate_whatsapp_linking_code(
 
     return {
         "status": "success",
-        "code": code,
+        "data": {"code": code},
         "expires_in_minutes": 15,
         "instruction": f"Send to the Unitrader WhatsApp number: LINK {code}",
     }
@@ -1006,6 +1013,12 @@ async def link_whatsapp_account(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or expired linking code",
+        )
+
+    if not row.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Linking code has no associated user — please generate a new code from the dashboard",
         )
 
     existing = (await db.execute(

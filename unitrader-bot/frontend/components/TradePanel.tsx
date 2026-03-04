@@ -1,0 +1,296 @@
+import { useState, useEffect } from "react";
+import {
+  Crosshair, Loader2, TrendingUp, TrendingDown, Minus,
+  AlertCircle, ChevronRight, Link2, RefreshCw,
+} from "lucide-react";
+import { tradingApi, exchangeApi } from "@/lib/api";
+
+interface ConnectedExchange {
+  exchange: string;
+  connected_at: string | null;
+}
+
+interface TradeResult {
+  status: string;
+  reason?: string;
+  decision?: string;
+  confidence?: number;
+  reasoning?: string;
+  entry_price?: number;
+  stop_loss?: number;
+  take_profit?: number;
+  side?: string;
+  symbol?: string;
+  quantity?: number;
+  trade_id?: string;
+  market_trend?: string;
+}
+
+const POPULAR_SYMBOLS: Record<string, string[]> = {
+  alpaca: ["AAPL", "TSLA", "NVDA", "MSFT", "AMZN", "GOOGL", "META", "SPY"],
+  binance: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"],
+  oanda: ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD"],
+};
+
+export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) => void }) {
+  const [exchanges, setExchanges] = useState<ConnectedExchange[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedExchange, setSelectedExchange] = useState("");
+  const [symbol, setSymbol] = useState("");
+  const [executing, setExecuting] = useState(false);
+  const [result, setResult] = useState<TradeResult | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    exchangeApi.list().then((res) => {
+      const data = res.data.data || [];
+      setExchanges(data);
+      if (data.length > 0) setSelectedExchange(data[0].exchange);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  const handleExecute = async () => {
+    if (!symbol.trim() || !selectedExchange) return;
+    setExecuting(true);
+    setResult(null);
+    setError("");
+    try {
+      const res = await tradingApi.execute(symbol.trim().toUpperCase(), selectedExchange);
+      setResult(res.data.data);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "Trade execution failed. Please try again.");
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  const suggestions = POPULAR_SYMBOLS[selectedExchange] || [];
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-sm text-dark-500">
+        <Loader2 size={16} className="mr-2 animate-spin" /> Loading...
+      </div>
+    );
+  }
+
+  if (exchanges.length === 0) {
+    return (
+      <div className="mx-auto max-w-md space-y-6 py-16 text-center">
+        <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-dark-900">
+          <Link2 size={28} className="text-dark-500" />
+        </div>
+        <h1 className="text-xl font-bold text-white">Connect an Exchange First</h1>
+        <p className="text-sm text-dark-400">
+          To start trading, connect your exchange API keys in Settings.
+          Your AI will analyze markets and execute trades on your behalf.
+        </p>
+        <button onClick={() => onNavigate?.("settings")} className="btn-primary">
+          Go to Settings <ChevronRight size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-2xl space-y-6">
+      <div className="flex items-center gap-2">
+        <Crosshair size={18} className="text-brand-400" />
+        <h1 className="text-xl font-bold text-white">AI Trade Execution</h1>
+      </div>
+
+      <div className="rounded-xl border border-dark-800 bg-dark-950 p-6">
+        <div className="space-y-4">
+          {/* Exchange selector */}
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-dark-400">Exchange</label>
+            <div className="flex gap-2">
+              {exchanges.map((ex) => (
+                <button
+                  key={ex.exchange}
+                  onClick={() => { setSelectedExchange(ex.exchange); setSymbol(""); setResult(null); }}
+                  className={`rounded-lg border px-4 py-2 text-sm font-medium transition ${
+                    selectedExchange === ex.exchange
+                      ? "border-brand-500 bg-brand-500/10 text-brand-400"
+                      : "border-dark-700 text-dark-400 hover:border-dark-600"
+                  }`}
+                >
+                  {ex.exchange.charAt(0).toUpperCase() + ex.exchange.slice(1)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Symbol input */}
+          <div>
+            <label className="mb-1.5 block text-xs font-medium text-dark-400">Symbol</label>
+            <input
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === "Enter" && !executing && handleExecute()}
+              placeholder={selectedExchange === "alpaca" ? "e.g. AAPL" : selectedExchange === "binance" ? "e.g. BTCUSDT" : "e.g. EUR_USD"}
+              className="input font-mono"
+              disabled={executing}
+            />
+          </div>
+
+          {/* Quick picks */}
+          {suggestions.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-xs text-dark-500">Quick picks</p>
+              <div className="flex flex-wrap gap-1.5">
+                {suggestions.map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => setSymbol(s)}
+                    disabled={executing}
+                    className={`rounded-md border px-2.5 py-1 text-xs font-mono transition ${
+                      symbol === s
+                        ? "border-brand-500/50 bg-brand-500/10 text-brand-400"
+                        : "border-dark-700 text-dark-500 hover:text-dark-300"
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Execute button */}
+          <button
+            onClick={handleExecute}
+            disabled={!symbol.trim() || executing}
+            className="btn-primary w-full py-3 text-sm disabled:opacity-50"
+          >
+            {executing ? (
+              <>
+                <Loader2 size={15} className="animate-spin" />
+                Analyzing market data...
+              </>
+            ) : (
+              <>
+                <Crosshair size={15} />
+                Analyze & Trade
+              </>
+            )}
+          </button>
+
+          {executing && (
+            <p className="text-center text-xs text-dark-500">
+              Your AI is fetching live data, running technical analysis, and consulting Claude. This may take 30-60 seconds.
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-400">
+          <AlertCircle size={15} className="shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {/* Result */}
+      {result && (
+        <div className="rounded-xl border border-dark-800 bg-dark-950 p-6">
+          <h2 className="mb-4 text-sm font-semibold text-dark-200">Analysis Result</h2>
+
+          {result.status === "skipped" && (
+            <div className="flex items-center gap-3 rounded-lg bg-dark-900 p-4">
+              <Minus size={20} className="text-yellow-400" />
+              <div>
+                <p className="text-sm font-medium text-yellow-400">Skipped</p>
+                <p className="text-xs text-dark-400">{result.reason}</p>
+              </div>
+            </div>
+          )}
+
+          {result.status === "error" && (
+            <div className="flex items-center gap-3 rounded-lg bg-red-500/5 p-4">
+              <AlertCircle size={20} className="text-red-400" />
+              <div>
+                <p className="text-sm font-medium text-red-400">Error</p>
+                <p className="text-xs text-dark-400">{result.reason}</p>
+              </div>
+            </div>
+          )}
+
+          {(result.status === "executed" || result.decision) && (
+            <div className="space-y-4">
+              {/* Decision badge */}
+              <div className="flex items-center gap-3">
+                {result.decision === "BUY" ? (
+                  <div className="flex items-center gap-2 rounded-lg bg-brand-500/10 px-4 py-2">
+                    <TrendingUp size={18} className="text-brand-400" />
+                    <span className="text-sm font-bold text-brand-400">BUY</span>
+                  </div>
+                ) : result.decision === "SELL" ? (
+                  <div className="flex items-center gap-2 rounded-lg bg-red-500/10 px-4 py-2">
+                    <TrendingDown size={18} className="text-red-400" />
+                    <span className="text-sm font-bold text-red-400">SELL</span>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 rounded-lg bg-yellow-500/10 px-4 py-2">
+                    <Minus size={18} className="text-yellow-400" />
+                    <span className="text-sm font-bold text-yellow-400">WAIT</span>
+                  </div>
+                )}
+
+                {result.confidence !== undefined && (
+                  <div className="rounded-lg border border-dark-700 px-3 py-2">
+                    <span className="text-xs text-dark-500">Confidence</span>
+                    <span className="ml-2 text-sm font-bold text-white">{result.confidence}%</span>
+                  </div>
+                )}
+
+                {result.market_trend && (
+                  <div className="rounded-lg border border-dark-700 px-3 py-2">
+                    <span className="text-xs text-dark-500">Trend</span>
+                    <span className="ml-2 text-sm font-medium text-dark-200">{result.market_trend}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Reasoning */}
+              {result.reasoning && (
+                <div className="rounded-lg bg-dark-900 p-4">
+                  <p className="mb-1 text-xs font-medium text-dark-500">AI Reasoning</p>
+                  <p className="text-sm leading-relaxed text-dark-300">{result.reasoning}</p>
+                </div>
+              )}
+
+              {/* Trade details */}
+              {result.entry_price && (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-lg border border-dark-700 p-3 text-center">
+                    <p className="text-[10px] text-dark-500">Entry</p>
+                    <p className="font-mono text-sm font-bold text-white">${result.entry_price.toLocaleString()}</p>
+                  </div>
+                  <div className="rounded-lg border border-red-500/20 p-3 text-center">
+                    <p className="text-[10px] text-dark-500">Stop Loss</p>
+                    <p className="font-mono text-sm font-bold text-red-400">${result.stop_loss?.toLocaleString()}</p>
+                  </div>
+                  <div className="rounded-lg border border-brand-500/20 p-3 text-center">
+                    <p className="text-[10px] text-dark-500">Take Profit</p>
+                    <p className="font-mono text-sm font-bold text-brand-400">${result.take_profit?.toLocaleString()}</p>
+                  </div>
+                </div>
+              )}
+
+              {result.trade_id && (
+                <p className="text-xs text-dark-500">
+                  Trade executed successfully. View it in{" "}
+                  <button onClick={() => onNavigate?.("positions")} className="text-brand-400 hover:underline">
+                    Positions
+                  </button>.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

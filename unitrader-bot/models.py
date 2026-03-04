@@ -198,6 +198,9 @@ class Trade(Base):
     )
 
     # Trade details
+    exchange: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="alpaca"  # alpaca | binance | oanda
+    )
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)  # e.g. BTC/USD
     side: Mapped[str] = mapped_column(String(4), nullable=False)      # BUY | SELL
     quantity: Mapped[float] = mapped_column(Float, nullable=False)

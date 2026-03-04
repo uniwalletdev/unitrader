@@ -35,14 +35,17 @@ export const authApi = {
   login: (email: string, password: string) =>
     api.post("/api/auth/login", { email, password }),
   me: () => api.get("/api/auth/me"),
-
-  /** Exchange a Clerk session token for our internal JWT. */
   clerkSync: (clerk_token: string) =>
     api.post("/api/auth/clerk-sync", { clerk_token }),
-
-  /** Set AI name for a new Clerk user (called after clerkSync returns needs_setup). */
   clerkSetup: (user_id: string, ai_name: string) =>
     api.post("/api/auth/clerk-setup", { user_id, ai_name }),
+  setup2FA: () => api.post("/api/auth/2fa/setup"),
+  verify2FA: (code: string) => api.post("/api/auth/2fa/verify", { code }),
+  telegramCode: () => api.post("/api/auth/telegram/linking-code"),
+  whatsappCode: () => api.post("/api/auth/whatsapp/linking-code"),
+  externalAccounts: () => api.get("/api/auth/external-accounts"),
+  unlinkAccount: (platform: string) =>
+    api.post("/api/auth/unlink-external-account", { platform }),
 };
 
 // ── Trading ──────────────────────────────────────────────────────────────────
@@ -88,4 +91,30 @@ export const trialApi = {
   choiceOptions: () => api.get("/api/trial/choice-options"),
   makeChoice: (choice: "pro" | "free" | "cancel") =>
     api.post("/api/trial/make-choice", { choice }),
+};
+
+// ── Content ──────────────────────────────────────────────────────────────────
+export const contentApi = {
+  topics: () => api.get("/api/content/topics"),
+  blogPosts: () => api.get("/api/content/blog-posts"),
+  blogPost: (slug: string) => api.get(`/api/content/blog-posts/${slug}`),
+  generateBlog: (topic: string) =>
+    api.post("/api/content/generate-blog", { topic }),
+  publishBlog: (postId: string) =>
+    api.post(`/api/content/blog-posts/${postId}/publish`),
+  socialCalendar: () => api.get("/api/content/social-calendar"),
+  generateSocial: (topic?: string) =>
+    api.post("/api/content/generate-social", { topic }),
+  socialPosts: () => api.get("/api/content/social-posts"),
+};
+
+// ── Learning ─────────────────────────────────────────────────────────────────
+export const learningApi = {
+  patterns: () => api.get("/api/learning/patterns"),
+  instructions: (agent: string) =>
+    api.get(`/api/learning/instructions/${agent}`),
+  outputs: () => api.get("/api/learning/outputs"),
+  insights: (type: string) => api.get(`/api/learning/insights/${type}`),
+  dashboard: () => api.get("/api/learning/dashboard"),
+  trigger: () => api.post("/api/learning/trigger"),
 };

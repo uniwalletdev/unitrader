@@ -134,9 +134,7 @@ async def _get_platform_stats(db: AsyncSession) -> dict:
         result = await db.execute(
             select(
                 func.count(Trade.id).label("total_trades"),
-                func.avg(
-                    Trade.profit_percent.cast(type_=None)
-                ).label("avg_profit_pct"),
+                func.avg(Trade.profit_percent).label("avg_profit_pct"),
             ).where(Trade.status == "closed")
         )
         row = result.first()

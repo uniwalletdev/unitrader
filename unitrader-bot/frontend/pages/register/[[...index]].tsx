@@ -21,7 +21,7 @@ export default function RegisterPage() {
         <p className="text-dark-300 text-sm mb-6 text-center max-w-sm">
           Sign up with Google or email — takes 30 seconds.
           <br />
-          <span className="text-brand-400 font-medium">7-day free trial included.</span>
+          <span className="text-brand-400 font-medium">14-day free trial included.</span>
         </p>
 
         {/* Clerk handles Google, email, OTP — all in one */}

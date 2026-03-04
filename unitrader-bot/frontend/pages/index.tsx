@@ -116,8 +116,8 @@ const FAQ_ITEMS = [
     a: "Yes, completely. You set approved assets, trading hours, max position sizes, and can pause or stop the AI at any time from your dashboard.",
   },
   {
-    q: "How is the 7-day trial different from free?",
-    a: "The 7-day trial gives you full Pro access with unlimited trades. The free tier continues after the trial with 10 trades per month.",
+    q: "How is the 14-day trial different from free?",
+    a: "The 14-day trial gives you full Pro access with unlimited trades. The free tier continues after the trial with 10 trades per month.",
   },
 ];
 
@@ -234,7 +234,7 @@ export default function LandingPage() {
         <title>Unitrader — Your Personal AI Trading Companion</title>
         <meta
           name="description"
-          content="Unitrader uses Claude AI to analyse markets, execute trades, and enforce risk management 24/7. Start your 7-day free trial."
+          content="Unitrader uses Claude AI to analyse markets, execute trades, and enforce risk management 24/7. Start your 14-day free trial."
         />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
@@ -332,7 +332,7 @@ export default function LandingPage() {
 
             <div className="flex flex-col items-center gap-4 sm:flex-row sm:justify-center">
               <Link href="/register" className="btn-primary px-8 py-3.5 text-base shadow-lg shadow-brand-500/20">
-                Start Free Trial — 7 Days Free
+                Start Free Trial — 14 Days Free
                 <ArrowRight size={18} />
               </Link>
               <Link href="#how-it-works" className="btn-outline px-8 py-3.5 text-base">
@@ -446,7 +446,7 @@ export default function LandingPage() {
               <h2 className="text-3xl font-bold text-white sm:text-4xl">
                 Simple, transparent pricing
               </h2>
-              <p className="mt-3 text-dark-400">7-day free trial. Cancel anytime.</p>
+              <p className="mt-3 text-dark-400">14-day free trial. Cancel anytime.</p>
             </div>
 
             <div className="grid gap-6 md:grid-cols-2">
@@ -491,7 +491,7 @@ export default function LandingPage() {
                   ))}
                 </ul>
                 <Link href="/register?plan=pro" className="btn-primary w-full text-center shadow-lg shadow-brand-500/20">
-                  Start 7-Day Free Trial — $9.99/mo
+                  Start 14-Day Free Trial — $9.99/mo
                   <ArrowRight size={16} />
                 </Link>
               </div>
@@ -520,7 +520,7 @@ export default function LandingPage() {
               Ready to meet your AI trader?
             </h2>
             <p className="mb-8 text-dark-400">
-              Name it, configure it, and watch it go to work. 7 days free, no card required.
+              Name it, configure it, and watch it go to work. 14 days free, no card required.
             </p>
             <Link href="/register" className="btn-primary px-10 py-4 text-base shadow-xl shadow-brand-500/20">
               Create Your AI Now — It's Free

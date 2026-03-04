@@ -113,13 +113,13 @@ class BinanceClient(BaseExchangeClient):
     Docs: https://binance-docs.github.io/apidocs/spot/en/
     """
 
-    BASE_URL = "https://api.binance.com"
     RECV_WINDOW = 5000
 
-    def __init__(self, api_key: str, api_secret: str):
+    def __init__(self, api_key: str, api_secret: str, base_url: str | None = None):
         super().__init__(api_key, api_secret)
+        self._base_url = (base_url or settings.binance_base_url or "https://api.binance.com").rstrip("/")
         self._http = httpx.AsyncClient(
-            base_url=self.BASE_URL,
+            base_url=self._base_url,
             headers={"X-MBX-APIKEY": api_key},
             timeout=10.0,
         )
@@ -559,7 +559,7 @@ def get_exchange_client(
     """
     exchange = exchange.lower()
     if exchange == "binance":
-        return BinanceClient(api_key, api_secret)
+        return BinanceClient(api_key, api_secret, base_url=kwargs.get("base_url"))
     if exchange == "alpaca":
         return AlpacaClient(api_key, api_secret, base_url=kwargs.get("base_url"))
     if exchange == "oanda":

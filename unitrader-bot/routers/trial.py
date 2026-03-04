@@ -92,17 +92,17 @@ async def trial_status(
     # ── Aggregate trade stats ─────────────────────────────────────────
     closed_q = select(
         func.count(Trade.id).label("total"),
-        func.sum(Trade.profit).label("total_profit"),
-        func.sum(Trade.loss).label("total_loss"),
+        func.coalesce(func.sum(Trade.profit), 0).label("total_profit"),
+        func.coalesce(func.sum(Trade.loss), 0).label("total_loss"),
     ).where(
         Trade.user_id == current_user.id,
         Trade.status == "closed",
     )
-    row = (await db.execute(closed_q)).one()
+    row = (await db.execute(closed_q)).first()
 
-    total_trades: int = row.total or 0
-    total_profit: float = float(row.total_profit or 0)
-    total_loss:   float = float(row.total_loss   or 0)
+    total_trades: int = (row.total if row else 0) or 0
+    total_profit: float = float((row.total_profit if row else 0) or 0)
+    total_loss:   float = float((row.total_loss if row else 0)   or 0)
     net_pnl:      float = total_profit - total_loss
 
     # Win rate

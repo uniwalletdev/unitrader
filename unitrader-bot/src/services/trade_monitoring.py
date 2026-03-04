@@ -74,8 +74,11 @@ async def _check_position(
     ai_name: str,
 ) -> None:
     """Evaluate a single open position and close it if stop/target is hit."""
-    # Find matching API key for this trade's exchange (best-effort match)
-    key_row = next((k for k in key_rows), None)
+    trade_exchange = getattr(trade, "exchange", None)
+    key_row = next(
+        (k for k in key_rows if k.exchange == trade_exchange),
+        key_rows[0] if key_rows else None,
+    )
     if not key_row:
         return
 

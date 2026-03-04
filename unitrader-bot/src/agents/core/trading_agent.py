@@ -503,6 +503,7 @@ class TradingAgent:
             # Persist to database
             trade = Trade(
                 user_id=self.user_id,
+                exchange=exchange_name,
                 symbol=symbol,
                 side=decision["decision"],
                 quantity=params["quantity"],
@@ -702,13 +703,13 @@ class TradingAgent:
             key_result = await db.execute(
                 select(ExchangeAPIKey).where(
                     ExchangeAPIKey.user_id == self.user_id,
-                    ExchangeAPIKey.exchange.in_(["binance", "alpaca", "oanda"]),
+                    ExchangeAPIKey.exchange == trade.exchange,
                     ExchangeAPIKey.is_active == True,  # noqa: E712
                 )
             )
             key_row = key_result.scalars().first()
             if not key_row:
-                return {"status": "error", "reason": "No active exchange API key"}
+                return {"status": "error", "reason": f"No active API key for {trade.exchange}"}
 
             raw_key, raw_secret = decrypt_api_key(
                 key_row.encrypted_api_key, key_row.encrypted_api_secret

@@ -119,7 +119,7 @@ export default function OnboardingPage() {
                 onChange={(e) => setAiName(e.target.value)}
                 placeholder="e.g. TradeMaster"
                 maxLength={20}
-                className="input-field text-center text-lg font-semibold tracking-wide"
+                className="input text-center text-lg font-semibold tracking-wide"
                 autoFocus
               />
 

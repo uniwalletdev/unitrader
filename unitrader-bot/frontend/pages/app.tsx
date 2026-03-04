@@ -5,10 +5,15 @@ import { useRouter } from "next/router";
 import {
   TrendingUp, TrendingDown, MessageSquare, BarChart3, Settings,
   LogOut, RefreshCw, X, Send, ChevronRight, AlertTriangle,
-  Zap, Shield, Activity, Clock,
+  Zap, Shield, Activity, Clock, Crosshair, BookOpen, Brain,
 } from "lucide-react";
 import { tradingApi, chatApi, authApi, billingApi, exchangeApi } from "@/lib/api";
 import ExchangeConnections from "@/components/ExchangeConnections";
+import TradePanel from "@/components/TradePanel";
+import PositionsPanel from "@/components/PositionsPanel";
+import ContentPanel from "@/components/ContentPanel";
+import LearningPanel from "@/components/LearningPanel";
+import SecuritySettings from "@/components/SecuritySettings";
 import TrialChoiceModal from "@/components/TrialChoiceModal";
 import { useTrialStatus, clearTrialCache } from "@/hooks/useTrialStatus";
 
@@ -33,9 +38,12 @@ interface User { id: string; email: string; ai_name: string; subscription_tier: 
 
 const NAV = [
   { id: "dashboard", icon: BarChart3, label: "Dashboard" },
+  { id: "trade", icon: Crosshair, label: "Trade" },
   { id: "chat", icon: MessageSquare, label: "Chat" },
   { id: "positions", icon: TrendingUp, label: "Positions" },
   { id: "history", icon: Activity, label: "History" },
+  { id: "content", icon: BookOpen, label: "Content" },
+  { id: "learning", icon: Brain, label: "Learning" },
   { id: "settings", icon: Settings, label: "Settings" },
 ];
 
@@ -248,15 +256,35 @@ function Dashboard({ user }: { user: User | null }) {
 // ─────────────────────────────────────────────
 
 function Chat({ user }: { user: User | null }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      role: "assistant",
-      content: `Hi! I'm ${user?.ai_name || "your AI"}. I can help with market analysis, trade questions, performance reviews, and more. What would you like to know?`,
-    },
-  ]);
+  const welcomeMsg: ChatMessage = {
+    role: "assistant",
+    content: `Hi! I'm ${user?.ai_name || "your AI"}. I can help with market analysis, trade questions, performance reviews, and more. What would you like to know?`,
+  };
+  const [messages, setMessages] = useState<ChatMessage[]>([welcomeMsg]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  // Load conversation history on mount
+  useEffect(() => {
+    if (historyLoaded) return;
+    chatApi.history(50).then((res) => {
+      const convos = res.data.data?.conversations || res.data.data || [];
+      if (Array.isArray(convos) && convos.length > 0) {
+        const past: ChatMessage[] = [];
+        convos.forEach((c: any) => {
+          const msgs = c.messages || c;
+          if (Array.isArray(msgs)) {
+            msgs.forEach((m: any) => {
+              if (m.role && m.content) past.push({ role: m.role, content: m.content, context: m.context });
+            });
+          }
+        });
+        if (past.length > 0) setMessages([welcomeMsg, ...past]);
+      }
+    }).catch(() => {}).finally(() => setHistoryLoaded(true));
+  }, [historyLoaded]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -441,6 +469,11 @@ function SettingsPanel({ user }: { user: User | null }) {
         <ExchangeConnections />
       </div>
 
+      {/* Security & Connected Apps */}
+      <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
+        <SecuritySettings />
+      </div>
+
       {user?.subscription_tier !== "pro" ? (
         <div className="rounded-xl border border-brand-500/30 bg-brand-500/5 p-5">
           <div className="mb-3 flex items-center gap-2">
@@ -608,13 +641,16 @@ export default function AppPage() {
 
           <main className="flex-1 overflow-y-auto px-6 py-6">
             {activeTab === "dashboard" && <Dashboard user={user} />}
+            {activeTab === "trade" && <TradePanel onNavigate={setActiveTab} />}
             {activeTab === "chat" && (
               <div className="flex h-full flex-col">
                 <Chat user={user} />
               </div>
             )}
-            {activeTab === "positions" && <Dashboard user={user} />}
+            {activeTab === "positions" && <PositionsPanel onNavigate={setActiveTab} />}
             {activeTab === "history" && <History />}
+            {activeTab === "content" && <ContentPanel />}
+            {activeTab === "learning" && <LearningPanel user={user} />}
             {activeTab === "settings" && <SettingsPanel user={user} />}
           </main>
         </div>
