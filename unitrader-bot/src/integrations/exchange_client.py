@@ -602,6 +602,8 @@ def get_exchange_client(
     exchange: str,
     api_key: str,
     api_secret: str,
+    *,
+    is_paper: bool = True,
     **kwargs,
 ) -> BaseExchangeClient:
     """Return the appropriate exchange client for the given exchange name.
@@ -610,6 +612,7 @@ def get_exchange_client(
         exchange: One of 'binance', 'alpaca', 'oanda'.
         api_key: Decrypted API key.
         api_secret: Decrypted API secret.
+        is_paper: If True, route to paper/sandbox endpoints where applicable.
 
     Raises:
         ValueError: If exchange is not supported.
@@ -618,7 +621,13 @@ def get_exchange_client(
     if exchange == "binance":
         return BinanceClient(api_key, api_secret, base_url=kwargs.get("base_url"))
     if exchange == "alpaca":
-        return AlpacaClient(api_key, api_secret, base_url=kwargs.get("base_url"))
+        base_url = kwargs.get("base_url")
+        if not base_url:
+            base_url = (
+                "https://paper-api.alpaca.markets" if is_paper
+                else "https://api.alpaca.markets"
+            )
+        return AlpacaClient(api_key, api_secret, base_url=base_url)
     if exchange == "oanda":
         return OandaClient(api_key, api_secret, account_id=kwargs.get("account_id"))
     raise ValueError(f"Unsupported exchange: '{exchange}'. Choose binance, alpaca, or oanda.")

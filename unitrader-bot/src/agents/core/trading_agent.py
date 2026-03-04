@@ -413,114 +413,117 @@ class TradingAgent:
         exchange_name: str,
         ai_name: str = "Claude",
     ) -> dict:
-        """Orchestrate the full trade lifecycle: safety → order → DB → notify.
+        """Orchestrate the full trade lifecycle: safety -> order -> DB -> notify.
+
+        Per-user exchange keys are fetched, decrypted, used once, then wiped.
 
         Returns:
             {"status": "executed", "trade_id": "..."} or
             {"status": "rejected", "reason": "..."}
         """
-        async with AsyncSessionLocal() as db:
-            # Load user + settings
-            user_result = await db.execute(select(User).where(User.id == self.user_id))
-            user = user_result.scalar_one_or_none()
-            if not user or not user.is_active:
-                return {"status": "rejected", "reason": "User not found or inactive"}
+        raw_key = raw_secret = None
+        client = None
+        try:
+            async with AsyncSessionLocal() as db:
+                user_result = await db.execute(select(User).where(User.id == self.user_id))
+                user = user_result.scalar_one_or_none()
+                if not user or not user.is_active:
+                    return {"status": "rejected", "reason": "User not found or inactive"}
 
-            settings_result = await db.execute(
-                select(UserSettings).where(UserSettings.user_id == self.user_id)
-            )
-            user_settings = settings_result.scalar_one_or_none()
-            if not user_settings:
-                user_settings = UserSettings(user_id=self.user_id)
-
-            # Load decrypted API key
-            key_result = await db.execute(
-                select(ExchangeAPIKey).where(
-                    ExchangeAPIKey.user_id == self.user_id,
-                    ExchangeAPIKey.exchange == exchange_name,
-                    ExchangeAPIKey.is_active == True,  # noqa: E712
+                settings_result = await db.execute(
+                    select(UserSettings).where(UserSettings.user_id == self.user_id)
                 )
-            )
-            api_key_row = key_result.scalar_one_or_none()
-            if not api_key_row:
-                return {"status": "rejected", "reason": f"No active API key for {exchange_name}"}
+                user_settings = settings_result.scalar_one_or_none()
+                if not user_settings:
+                    user_settings = UserSettings(user_id=self.user_id)
 
-            try:
-                raw_key, raw_secret = decrypt_api_key(
-                    api_key_row.encrypted_api_key,
-                    api_key_row.encrypted_api_secret,
+                key_result = await db.execute(
+                    select(ExchangeAPIKey).where(
+                        ExchangeAPIKey.user_id == self.user_id,
+                        ExchangeAPIKey.exchange == exchange_name,
+                        ExchangeAPIKey.is_active == True,  # noqa: E712
+                    )
                 )
-            except Exception as exc:
-                logger.error("Failed to decrypt API key: %s", exc)
-                return {"status": "rejected", "reason": "Could not decrypt exchange API key"}
+                api_key_row = key_result.scalar_one_or_none()
+                if not api_key_row:
+                    logger.warning(
+                        "No active %s API key for user %s — cannot execute trade",
+                        exchange_name, self.user_id,
+                    )
+                    return {"status": "rejected", "reason": f"No active API key for {exchange_name}"}
 
-            # Get exchange client + balance
-            client = get_exchange_client(exchange_name, raw_key, raw_secret)
-            try:
-                account_balance = await client.get_account_balance()
-            except Exception as exc:
-                return {"status": "rejected", "reason": f"Exchange balance fetch failed: {exc}"}
+                is_paper = getattr(api_key_row, "is_paper", True)
+                try:
+                    raw_key, raw_secret = decrypt_api_key(
+                        api_key_row.encrypted_api_key,
+                        api_key_row.encrypted_api_secret,
+                    )
+                except Exception as exc:
+                    logger.error("Failed to decrypt API key for user %s: %s", self.user_id, exc)
+                    return {"status": "rejected", "reason": "Could not decrypt exchange API key"}
 
-            # Safety checks
-            guard = await self._safety_checks(decision, account_balance, user_settings, db)
-            if not guard["allowed"]:
-                logger.info(
-                    "Trade rejected for user %s: %s", self.user_id, guard["reason"]
+                client = get_exchange_client(exchange_name, raw_key, raw_secret, is_paper=is_paper)
+                raw_key = raw_secret = None  # wipe decrypted keys immediately
+
+                try:
+                    account_balance = await client.get_account_balance()
+                except Exception as exc:
+                    return {"status": "rejected", "reason": f"Exchange balance fetch failed: {exc}"}
+
+                guard = await self._safety_checks(decision, account_balance, user_settings, db)
+                if not guard["allowed"]:
+                    logger.info("Trade rejected for user %s: %s", self.user_id, guard["reason"])
+                    return {"status": "rejected", "reason": guard["reason"]}
+
+                params = build_trade_parameters(
+                    confidence=decision["confidence"],
+                    entry_price=decision["entry_price"],
+                    side=decision["decision"],
+                    account_balance=account_balance,
                 )
-                return {"status": "rejected", "reason": guard["reason"]}
+                if not params.get("tradeable"):
+                    return {"status": "rejected", "reason": params.get("reason", "Not tradeable")}
 
-            # Build precise parameters
-            params = build_trade_parameters(
-                confidence=decision["confidence"],
-                entry_price=decision["entry_price"],
-                side=decision["decision"],
-                account_balance=account_balance,
-            )
-            if not params.get("tradeable"):
-                return {"status": "rejected", "reason": params.get("reason", "Not tradeable")}
+                start_time = datetime.now(timezone.utc)
+                try:
+                    order_id = await client.place_order(
+                        symbol=symbol,
+                        side=decision["decision"],
+                        quantity=params["quantity"],
+                        price=decision["entry_price"],
+                    )
+                except Exception as exc:
+                    logger.error("Order placement failed: %s", exc)
+                    return {"status": "rejected", "reason": f"Order placement failed: {exc}"}
 
-            # Place the order
-            start_time = datetime.now(timezone.utc)
-            try:
-                order_id = await client.place_order(
+                execution_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
+
+                await client.set_stop_loss(symbol, order_id, decision["stop_loss"])
+                await client.set_take_profit(symbol, order_id, decision["take_profit"])
+
+                trade = Trade(
+                    user_id=self.user_id,
+                    exchange=exchange_name,
                     symbol=symbol,
                     side=decision["decision"],
                     quantity=params["quantity"],
-                    price=decision["entry_price"],
+                    entry_price=decision["entry_price"],
+                    stop_loss=decision["stop_loss"],
+                    take_profit=decision["take_profit"],
+                    status="open",
+                    claude_confidence=float(decision["confidence"]),
+                    market_condition=decision.get("market_condition", "unknown"),
+                    execution_time=round(execution_ms, 2),
                 )
-            except Exception as exc:
-                logger.error("Order placement failed: %s", exc)
-                return {"status": "rejected", "reason": f"Order placement failed: {exc}"}
+                db.add(trade)
+                await db.flush()
+                trade_id = trade.id
+                await db.commit()
 
-            execution_ms = (datetime.now(timezone.utc) - start_time).total_seconds() * 1000
-
-            # Place stop-loss
-            await client.set_stop_loss(symbol, order_id, decision["stop_loss"])
-
-            # Place take-profit
-            await client.set_take_profit(symbol, order_id, decision["take_profit"])
-
-            # Persist to database
-            trade = Trade(
-                user_id=self.user_id,
-                exchange=exchange_name,
-                symbol=symbol,
-                side=decision["decision"],
-                quantity=params["quantity"],
-                entry_price=decision["entry_price"],
-                stop_loss=decision["stop_loss"],
-                take_profit=decision["take_profit"],
-                status="open",
-                claude_confidence=float(decision["confidence"]),
-                market_condition=decision.get("market_condition", "unknown"),
-                execution_time=round(execution_ms, 2),
-            )
-            db.add(trade)
-            await db.flush()
-            trade_id = trade.id
-
-            await db.commit()
-            await client.aclose()
+        finally:
+            raw_key = raw_secret = None
+            if client:
+                await client.aclose()
 
         logger.info(
             "%s executed %s %s @ %.4f (trade_id=%s)",
@@ -594,34 +597,49 @@ class TradingAgent:
                     + "\n"
                 )
 
-        # ── Step 1: Load user + exchange ──────────────────────────────────
-        async with AsyncSessionLocal() as db:
-            user_result = await db.execute(select(User).where(User.id == self.user_id))
-            user = user_result.scalar_one_or_none()
-            ai_name = user.ai_name if user else "Claude"
+        # ── Step 1: Load user + exchange keys ─────────────────────────────
+        raw_key = raw_secret = None
+        try:
+            async with AsyncSessionLocal() as db:
+                user_result = await db.execute(select(User).where(User.id == self.user_id))
+                user = user_result.scalar_one_or_none()
+                ai_name = user.ai_name if user else "Claude"
 
-            user_history = await self._get_user_history(db, symbol)
-            open_count   = await self._get_open_trade_count(db)
+                user_history = await self._get_user_history(db, symbol)
+                open_count   = await self._get_open_trade_count(db)
 
-            try:
-                balance_key = await db.execute(
+                key_result = await db.execute(
                     select(ExchangeAPIKey).where(
                         ExchangeAPIKey.user_id == self.user_id,
                         ExchangeAPIKey.exchange == exchange_name,
                         ExchangeAPIKey.is_active == True,  # noqa: E712
                     )
                 )
-                key_row = balance_key.scalar_one_or_none()
+                key_row = key_result.scalar_one_or_none()
                 if not key_row:
+                    logger.warning(
+                        "No %s API key for user %s — skipping trading cycle",
+                        exchange_name, self.user_id,
+                    )
                     return {"status": "skipped", "reason": "No API key configured"}
+
+                is_paper = getattr(key_row, "is_paper", True)
                 raw_key, raw_secret = decrypt_api_key(
                     key_row.encrypted_api_key, key_row.encrypted_api_secret
                 )
-                client = get_exchange_client(exchange_name, raw_key, raw_secret)
+
+            client = get_exchange_client(exchange_name, raw_key, raw_secret, is_paper=is_paper)
+            raw_key = raw_secret = None  # wipe from memory immediately
+
+            try:
                 account_balance = await client.get_account_balance()
+            finally:
                 await client.aclose()
-            except Exception as exc:
-                return {"status": "error", "reason": str(exc)}
+
+        except Exception as exc:
+            raw_key = raw_secret = None
+            logger.error("run_cycle key/balance phase failed for user %s: %s", self.user_id, exc)
+            return {"status": "error", "reason": str(exc)}
 
         # ── Step 2: Market analysis ───────────────────────────────────────
         market_data = await self.analyze_market(symbol, exchange_name)
@@ -686,66 +704,76 @@ class TradingAgent:
     async def close_position(self, trade_id: str) -> dict:
         """Manually close an open position and record the result.
 
-        Returns the final trade result with profit/loss figures.
+        Per-user keys are decrypted, used, then wiped from memory.
         """
-        async with AsyncSessionLocal() as db:
-            trade_result = await db.execute(
-                select(Trade).where(
-                    Trade.id == trade_id,
-                    Trade.user_id == self.user_id,
-                    Trade.status == "open",
+        raw_key = raw_secret = None
+        client = None
+        try:
+            async with AsyncSessionLocal() as db:
+                trade_result = await db.execute(
+                    select(Trade).where(
+                        Trade.id == trade_id,
+                        Trade.user_id == self.user_id,
+                        Trade.status == "open",
+                    )
                 )
-            )
-            trade = trade_result.scalar_one_or_none()
-            if not trade:
-                return {"status": "error", "reason": "Trade not found or already closed"}
+                trade = trade_result.scalar_one_or_none()
+                if not trade:
+                    return {"status": "error", "reason": "Trade not found or already closed"}
 
-            key_result = await db.execute(
-                select(ExchangeAPIKey).where(
-                    ExchangeAPIKey.user_id == self.user_id,
-                    ExchangeAPIKey.exchange == trade.exchange,
-                    ExchangeAPIKey.is_active == True,  # noqa: E712
+                key_result = await db.execute(
+                    select(ExchangeAPIKey).where(
+                        ExchangeAPIKey.user_id == self.user_id,
+                        ExchangeAPIKey.exchange == trade.exchange,
+                        ExchangeAPIKey.is_active == True,  # noqa: E712
+                    )
                 )
-            )
-            key_row = key_result.scalars().first()
-            if not key_row:
-                return {"status": "error", "reason": f"No active API key for {trade.exchange}"}
+                key_row = key_result.scalars().first()
+                if not key_row:
+                    logger.warning(
+                        "No active %s API key for user %s — cannot close position %s",
+                        trade.exchange, self.user_id, trade_id,
+                    )
+                    return {"status": "error", "reason": f"No active API key for {trade.exchange}"}
 
-            raw_key, raw_secret = decrypt_api_key(
-                key_row.encrypted_api_key, key_row.encrypted_api_secret
-            )
-            client = get_exchange_client(key_row.exchange, raw_key, raw_secret)
+                is_paper = getattr(key_row, "is_paper", True)
+                raw_key, raw_secret = decrypt_api_key(
+                    key_row.encrypted_api_key, key_row.encrypted_api_secret
+                )
+                client = get_exchange_client(key_row.exchange, raw_key, raw_secret, is_paper=is_paper)
+                raw_key = raw_secret = None  # wipe immediately
 
-            try:
-                current_price = await client.get_current_price(trade.symbol)
-                await client.close_position(trade.symbol)
-            except Exception as exc:
+                try:
+                    current_price = await client.get_current_price(trade.symbol)
+                    await client.close_position(trade.symbol)
+                except Exception as exc:
+                    return {"status": "error", "reason": str(exc)}
+
+                if trade.side == "BUY":
+                    pnl = (current_price - trade.entry_price) * trade.quantity
+                else:
+                    pnl = (trade.entry_price - current_price) * trade.quantity
+
+                pnl_pct = ((current_price - trade.entry_price) / trade.entry_price) * 100
+                if trade.side == "SELL":
+                    pnl_pct = -pnl_pct
+
+                trade.exit_price = current_price
+                trade.status = "closed"
+                trade.closed_at = datetime.now(timezone.utc)
+                if pnl >= 0:
+                    trade.profit = round(pnl, 2)
+                    trade.profit_percent = round(pnl_pct, 4)
+                else:
+                    trade.loss = round(abs(pnl), 2)
+                    trade.profit_percent = round(pnl_pct, 4)
+
+                await db.commit()
+
+        finally:
+            raw_key = raw_secret = None
+            if client:
                 await client.aclose()
-                return {"status": "error", "reason": str(exc)}
-            finally:
-                await client.aclose()
-
-            # Calculate P&L
-            if trade.side == "BUY":
-                pnl = (current_price - trade.entry_price) * trade.quantity
-            else:
-                pnl = (trade.entry_price - current_price) * trade.quantity
-
-            pnl_pct = ((current_price - trade.entry_price) / trade.entry_price) * 100
-            if trade.side == "SELL":
-                pnl_pct = -pnl_pct
-
-            trade.exit_price = current_price
-            trade.status = "closed"
-            trade.closed_at = datetime.now(timezone.utc)
-            if pnl >= 0:
-                trade.profit = round(pnl, 2)
-                trade.profit_percent = round(pnl_pct, 4)
-            else:
-                trade.loss = round(abs(pnl), 2)
-                trade.profit_percent = round(pnl_pct, 4)
-
-            await db.commit()
 
         result = {
             "status": "closed",

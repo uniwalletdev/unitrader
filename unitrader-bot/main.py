@@ -25,7 +25,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import settings
 from database import AsyncSessionLocal, create_tables
-from models import User, UserSettings
+from models import ExchangeAPIKey, User, UserSettings
 from routers import auth, health
 from routers import trading as trading_router
 from routers import chat as chat_router
@@ -248,7 +248,8 @@ async def _trading_loop() -> None:
     """Execute trading cycles for all active users every 5 minutes.
 
     For each user with active exchange keys and approved assets,
-    runs TradingAgent.run_cycle() per symbol.
+    runs TradingAgent.run_cycle() per symbol. Users without exchange
+    keys are skipped with a debug log rather than an error.
     """
     logger.info("Trading loop started")
     while True:
@@ -261,12 +262,23 @@ async def _trading_loop() -> None:
 
             for user in active_users:
                 try:
-                    # Determine which assets + exchanges to trade
                     async with AsyncSessionLocal() as db:
                         settings_result = await db.execute(
                             select(UserSettings).where(UserSettings.user_id == user.id)
                         )
                         user_settings = settings_result.scalar_one_or_none()
+
+                        keys_result = await db.execute(
+                            select(ExchangeAPIKey.exchange).where(
+                                ExchangeAPIKey.user_id == user.id,
+                                ExchangeAPIKey.is_active == True,  # noqa: E712
+                            )
+                        )
+                        connected_exchanges = {row[0] for row in keys_result.all()}
+
+                    if not connected_exchanges:
+                        logger.debug("User %s has no exchange keys — skipping trading loop", user.id)
+                        continue
 
                     approved = (
                         user_settings.approved_assets
@@ -280,7 +292,6 @@ async def _trading_loop() -> None:
                     agent = TradingAgent(user.id)
 
                     for asset_config in approved:
-                        # approved_assets format: [{"symbol": "BTCUSDT", "exchange": "binance"}, ...]
                         if isinstance(asset_config, dict):
                             symbol = asset_config.get("symbol")
                             exchange = asset_config.get("exchange", "binance")
@@ -289,6 +300,13 @@ async def _trading_loop() -> None:
                             exchange = "binance"
 
                         if not symbol:
+                            continue
+
+                        if exchange not in connected_exchanges:
+                            logger.warning(
+                                "User %s wants to trade %s on %s but has no keys — skipping",
+                                user.id, symbol, exchange,
+                            )
                             continue
 
                         try:
