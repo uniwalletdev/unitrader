@@ -27,7 +27,12 @@ from routers.auth import get_current_user
 from schemas import SuccessResponse, TradeResponse
 from security import encrypt_api_key, hash_api_key
 from src.agents.core.trading_agent import TradingAgent
-from src.integrations.exchange_client import get_exchange_client
+from src.integrations.exchange_client import (
+    get_exchange_client,
+    validate_alpaca_keys,
+    validate_binance_keys,
+    validate_oanda_keys,
+)
 from src.services.trade_monitoring import enforce_loss_limits
 from src.services.subscription import check_free_tier_symbol, check_trade_limit
 
@@ -53,9 +58,46 @@ class ConnectExchangeRequest(BaseModel):
     exchange: str = Field(..., pattern="^(alpaca|binance|oanda)$")
     api_key: str = Field(..., min_length=1)
     api_secret: str = Field(..., min_length=1)
+    is_paper: bool = Field(True, description="Whether these are paper/sandbox keys")
 
 
 VALID_EXCHANGES = {"alpaca", "binance", "oanda"}
+
+
+# ─────────────────────────────────────────────
+# Validation dispatcher
+# ─────────────────────────────────────────────
+
+async def _validate_exchange_keys(exchange: str, api_key: str, api_secret: str, is_paper: bool) -> float:
+    """Validate keys against the exchange and return the account balance.
+
+    Raises HTTPException(400) on failure.
+    """
+    try:
+        if exchange == "alpaca":
+            valid = await validate_alpaca_keys(api_key, api_secret, paper=is_paper)
+            if not valid:
+                raise ValueError("Alpaca rejected the credentials")
+        elif exchange == "binance":
+            valid = await validate_binance_keys(api_key, api_secret)
+            if not valid:
+                raise ValueError("Binance rejected the credentials")
+        elif exchange == "oanda":
+            valid = await validate_oanda_keys(api_key, api_secret)
+            if not valid:
+                raise ValueError("OANDA rejected the credentials")
+
+        client = get_exchange_client(exchange, api_key, api_secret)
+        balance = await client.get_account_balance()
+        await client.aclose()
+        return balance
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not connect to {exchange}: {exc}",
+        )
 
 
 # ─────────────────────────────────────────────
@@ -71,51 +113,57 @@ async def connect_exchange(
     """Save (or update) encrypted exchange API keys for the current user.
 
     Validates the keys against the exchange before storing them.
+    Keys are encrypted with Fernet and never returned after saving.
     """
     exchange = body.exchange.lower()
 
-    # Validate keys by making a test call to the exchange
+    balance = await _validate_exchange_keys(exchange, body.api_key, body.api_secret, body.is_paper)
+
     try:
-        client = get_exchange_client(exchange, body.api_key, body.api_secret)
-        balance = await client.get_account_balance()
-        await client.aclose()
+        enc_key, enc_secret = encrypt_api_key(body.api_key, body.api_secret)
+        key_hash_val = hash_api_key(body.api_key)
+
+        existing = await db.execute(
+            select(ExchangeAPIKey).where(
+                ExchangeAPIKey.user_id == current_user.id,
+                ExchangeAPIKey.exchange == exchange,
+                ExchangeAPIKey.is_active == True,  # noqa: E712
+            )
+        )
+        old_key = existing.scalar_one_or_none()
+        if old_key:
+            old_key.is_active = False
+            old_key.rotated_at = datetime.now(timezone.utc)
+
+        now = datetime.now(timezone.utc)
+        new_key = ExchangeAPIKey(
+            user_id=current_user.id,
+            exchange=exchange,
+            encrypted_api_key=enc_key,
+            encrypted_api_secret=enc_secret,
+            key_hash=key_hash_val,
+            is_active=True,
+            is_paper=body.is_paper,
+        )
+        db.add(new_key)
+        await db.commit()
+        await db.refresh(new_key)
+    except HTTPException:
+        raise
     except Exception as exc:
+        await db.rollback()
+        logger.error("Failed to save exchange keys for user %s: %s", current_user.id, exc)
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Could not connect to {exchange}: {exc}",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save exchange keys. Please try again.",
         )
-
-    enc_key, enc_secret = encrypt_api_key(body.api_key, body.api_secret)
-    key_hash_val = hash_api_key(body.api_key)
-
-    # Upsert: deactivate old key for this exchange, insert new one
-    existing = await db.execute(
-        select(ExchangeAPIKey).where(
-            ExchangeAPIKey.user_id == current_user.id,
-            ExchangeAPIKey.exchange == exchange,
-            ExchangeAPIKey.is_active == True,  # noqa: E712
-        )
-    )
-    old_key = existing.scalar_one_or_none()
-    if old_key:
-        old_key.is_active = False
-        old_key.rotated_at = datetime.now(timezone.utc)
-
-    new_key = ExchangeAPIKey(
-        user_id=current_user.id,
-        exchange=exchange,
-        encrypted_api_key=enc_key,
-        encrypted_api_secret=enc_secret,
-        key_hash=key_hash_val,
-        is_active=True,
-    )
-    db.add(new_key)
-    await db.commit()
 
     return {
         "status": "success",
         "data": {
             "exchange": exchange,
+            "connected_at": new_key.created_at.isoformat() if new_key.created_at else now.isoformat(),
+            "is_paper": body.is_paper,
             "balance_usd": round(balance, 2),
             "message": f"{exchange.title()} connected successfully",
         },
@@ -145,6 +193,7 @@ async def list_exchange_keys(
             {
                 "exchange": k.exchange,
                 "connected_at": k.created_at.isoformat() if k.created_at else None,
+                "is_paper": k.is_paper,
                 "last_used": k.last_used_at.isoformat() if k.last_used_at else None,
             }
             for k in keys
@@ -177,10 +226,19 @@ async def disconnect_exchange(
             detail=f"No active {exchange} connection found",
         )
 
-    key_row.is_active = False
-    key_row.rotated_at = datetime.now(timezone.utc)
-    await db.commit()
-    return {"status": "success", "data": {"message": f"{exchange.title()} disconnected"}}
+    try:
+        key_row.is_active = False
+        key_row.rotated_at = datetime.now(timezone.utc)
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.error("Failed to disconnect %s for user %s: %s", exchange, current_user.id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to disconnect exchange. Please try again.",
+        )
+
+    return {"status": "success", "data": {"exchange": exchange, "message": f"{exchange.title()} disconnected"}}
 
 
 # ─────────────────────────────────────────────

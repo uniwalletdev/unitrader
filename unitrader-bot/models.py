@@ -315,6 +315,7 @@ class ExchangeAPIKey(Base):
     key_hash: Mapped[str] = mapped_column(String(128), nullable=False)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_paper: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     key_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(

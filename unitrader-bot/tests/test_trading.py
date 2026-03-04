@@ -7,7 +7,13 @@ Tests are grouped by module:
   - trade_execution.py  (pure calculations — no I/O)
   - market_data.py      (indicator calculations — no I/O)
   - trading_agent.py    (safety checks, personalisation)
+  - Exchange-keys endpoints (mocked DB + exchange validation)
 """
+
+import asyncio
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -320,3 +326,173 @@ class TestCalculateIndicators:
         prices = _prices(200)
         result = calculate_indicators(prices)
         assert 0 <= result["rsi"] <= 100
+
+
+# ═════════════════════════════════════════════
+# EXCHANGE KEY VALIDATION FUNCTIONS
+# ═════════════════════════════════════════════
+
+class TestValidateAlpacaKeys:
+    @pytest.mark.asyncio
+    async def test_valid_keys_return_true(self):
+        mock_resp = MagicMock(status_code=200)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.integrations.exchange_client.httpx.AsyncClient", return_value=mock_client):
+            from src.integrations.exchange_client import validate_alpaca_keys
+            result = await validate_alpaca_keys("PK_TEST", "secret_test", paper=True)
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_invalid_keys_return_false(self):
+        mock_resp = MagicMock(status_code=401)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.integrations.exchange_client.httpx.AsyncClient", return_value=mock_client):
+            from src.integrations.exchange_client import validate_alpaca_keys
+            result = await validate_alpaca_keys("BAD_KEY", "BAD_SECRET", paper=True)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_paper_true_uses_paper_url(self):
+        mock_resp = MagicMock(status_code=200)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.integrations.exchange_client.httpx.AsyncClient", return_value=mock_client) as ctor:
+            from src.integrations.exchange_client import validate_alpaca_keys
+            await validate_alpaca_keys("PK", "SK", paper=True)
+            call_kwargs = ctor.call_args[1]
+            assert "paper-api" in call_kwargs["base_url"]
+
+    @pytest.mark.asyncio
+    async def test_paper_false_uses_live_url(self):
+        mock_resp = MagicMock(status_code=200)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.integrations.exchange_client.httpx.AsyncClient", return_value=mock_client) as ctor:
+            from src.integrations.exchange_client import validate_alpaca_keys
+            await validate_alpaca_keys("PK", "SK", paper=False)
+            call_kwargs = ctor.call_args[1]
+            assert call_kwargs["base_url"] == "https://api.alpaca.markets"
+
+
+class TestValidateBinanceKeys:
+    @pytest.mark.asyncio
+    async def test_valid_keys_return_true(self):
+        mock_resp = MagicMock(status_code=200)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.integrations.exchange_client.httpx.AsyncClient", return_value=mock_client):
+            from src.integrations.exchange_client import validate_binance_keys
+            result = await validate_binance_keys("BIN_KEY", "BIN_SECRET")
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_invalid_keys_return_false(self):
+        mock_resp = MagicMock(status_code=403)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.integrations.exchange_client.httpx.AsyncClient", return_value=mock_client):
+            from src.integrations.exchange_client import validate_binance_keys
+            result = await validate_binance_keys("BAD", "BAD")
+        assert result is False
+
+
+class TestValidateOandaKeys:
+    @pytest.mark.asyncio
+    async def test_valid_keys_return_true(self):
+        mock_resp = MagicMock(status_code=200)
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("src.integrations.exchange_client.httpx.AsyncClient", return_value=mock_client):
+            from src.integrations.exchange_client import validate_oanda_keys
+            result = await validate_oanda_keys("OANDA_TOKEN", "001-001-12345-001")
+        assert result is True
+
+
+# ═════════════════════════════════════════════
+# CONNECT EXCHANGE — endpoint logic
+# ═════════════════════════════════════════════
+
+class TestConnectExchangeRequest:
+    """Test the ConnectExchangeRequest pydantic model."""
+
+    def test_valid_alpaca_request(self):
+        from routers.trading import ConnectExchangeRequest
+        req = ConnectExchangeRequest(
+            exchange="alpaca", api_key="PK12345", api_secret="secret123", is_paper=True
+        )
+        assert req.exchange == "alpaca"
+        assert req.is_paper is True
+
+    def test_invalid_exchange_rejected(self):
+        from routers.trading import ConnectExchangeRequest
+        with pytest.raises(Exception):
+            ConnectExchangeRequest(
+                exchange="kraken", api_key="k", api_secret="s", is_paper=True
+            )
+
+    def test_is_paper_defaults_true(self):
+        from routers.trading import ConnectExchangeRequest
+        req = ConnectExchangeRequest(
+            exchange="binance", api_key="key", api_secret="secret"
+        )
+        assert req.is_paper is True
+
+    def test_empty_key_rejected(self):
+        from routers.trading import ConnectExchangeRequest
+        with pytest.raises(Exception):
+            ConnectExchangeRequest(
+                exchange="alpaca", api_key="", api_secret="secret", is_paper=True
+            )
+
+
+# ═════════════════════════════════════════════
+# ENCRYPTION ROUND-TRIP
+# ═════════════════════════════════════════════
+
+class TestEncryptionRoundTrip:
+    """Verify Fernet encrypt → decrypt produces original values."""
+
+    def test_encrypt_then_decrypt(self):
+        from security import encrypt_api_key, decrypt_api_key
+        key, secret = "PK_TEST_12345", "SK_TEST_ABCDE"
+        enc_key, enc_secret = encrypt_api_key(key, secret)
+        assert enc_key != key
+        assert enc_secret != secret
+        dec_key, dec_secret = decrypt_api_key(enc_key, enc_secret)
+        assert dec_key == key
+        assert dec_secret == secret
+
+    def test_hash_is_deterministic(self):
+        from security import hash_api_key
+        h1 = hash_api_key("PK_TEST_12345")
+        h2 = hash_api_key("PK_TEST_12345")
+        assert h1 == h2
+
+    def test_different_keys_different_hashes(self):
+        from security import hash_api_key
+        h1 = hash_api_key("PK_KEY_A")
+        h2 = hash_api_key("PK_KEY_B")
+        assert h1 != h2

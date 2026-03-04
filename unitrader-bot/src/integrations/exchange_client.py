@@ -548,6 +548,53 @@ class OandaClient(BaseExchangeClient):
 
 
 # ─────────────────────────────────────────────
+# Key Validation Helpers
+# ─────────────────────────────────────────────
+
+async def validate_alpaca_keys(api_key: str, api_secret: str, paper: bool = True) -> bool:
+    """Verify Alpaca credentials by hitting /v2/account. Returns True if valid."""
+    base = "https://paper-api.alpaca.markets" if paper else "https://api.alpaca.markets"
+    async with httpx.AsyncClient(
+        base_url=base,
+        headers={"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": api_secret},
+        timeout=10.0,
+    ) as client:
+        resp = await client.get("/v2/account")
+        return resp.status_code == 200
+
+
+async def validate_binance_keys(api_key: str, api_secret: str) -> bool:
+    """Verify Binance credentials by calling /api/v3/account."""
+    base = (settings.binance_base_url or "https://api.binance.com").rstrip("/")
+    params: dict[str, Any] = {
+        "timestamp": int(time.time() * 1000),
+        "recvWindow": 5000,
+    }
+    query = urlencode(params)
+    sig = hmac.new(api_secret.encode(), query.encode(), hashlib.sha256).hexdigest()
+    params["signature"] = sig
+    async with httpx.AsyncClient(
+        base_url=base,
+        headers={"X-MBX-APIKEY": api_key},
+        timeout=10.0,
+    ) as client:
+        resp = await client.get("/api/v3/account", params=params)
+        return resp.status_code == 200
+
+
+async def validate_oanda_keys(api_key: str, account_id: str) -> bool:
+    """Verify OANDA credentials by calling /v3/accounts/{id}/summary."""
+    base = settings.oanda_base_url.rstrip("/")
+    async with httpx.AsyncClient(
+        base_url=base,
+        headers={"Authorization": f"Bearer {api_key}"},
+        timeout=10.0,
+    ) as client:
+        resp = await client.get(f"/v3/accounts/{account_id}/summary")
+        return resp.status_code == 200
+
+
+# ─────────────────────────────────────────────
 # Factory
 # ─────────────────────────────────────────────
 
