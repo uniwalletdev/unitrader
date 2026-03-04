@@ -25,7 +25,10 @@ export default function SecuritySettings() {
 
   useEffect(() => {
     authApi.externalAccounts()
-      .then((r) => setAccounts(r.data.data || r.data || []))
+      .then((r) => {
+        const d = r.data?.data || r.data?.accounts || r.data || [];
+        setAccounts(Array.isArray(d) ? d : []);
+      })
       .catch(() => setAccounts([]))
       .finally(() => setLoading(false));
   }, []);
