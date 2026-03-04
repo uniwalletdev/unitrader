@@ -273,7 +273,11 @@ class AlpacaClient(BaseExchangeClient):
 
     def __init__(self, api_key: str, api_secret: str, base_url: str | None = None):
         super().__init__(api_key, api_secret)
-        self._base_url = (base_url or settings.alpaca_base_url).rstrip("/")
+        raw_url = (base_url or settings.alpaca_base_url).rstrip("/")
+        # Guard against base URL already containing /v2 — paths include it.
+        if raw_url.endswith("/v2"):
+            raw_url = raw_url[:-3]
+        self._base_url = raw_url
         self._http = httpx.AsyncClient(
             base_url=self._base_url,
             headers={
