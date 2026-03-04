@@ -7,7 +7,8 @@ import {
   LogOut, RefreshCw, X, Send, ChevronRight, AlertTriangle,
   Zap, Shield, Activity, Clock,
 } from "lucide-react";
-import { tradingApi, chatApi, authApi, billingApi } from "@/lib/api";
+import { tradingApi, chatApi, authApi, billingApi, exchangeApi } from "@/lib/api";
+import ExchangeConnections from "@/components/ExchangeConnections";
 import TrialChoiceModal from "@/components/TrialChoiceModal";
 import { useTrialStatus, clearTrialCache } from "@/hooks/useTrialStatus";
 
@@ -418,7 +419,7 @@ function SettingsPanel({ user }: { user: User | null }) {
   };
 
   return (
-    <div className="max-w-lg space-y-6">
+    <div className="max-w-2xl space-y-6">
       <h1 className="text-xl font-bold text-white">Settings</h1>
 
       <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
@@ -435,6 +436,11 @@ function SettingsPanel({ user }: { user: User | null }) {
         </div>
       </div>
 
+      {/* Exchange Connections */}
+      <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
+        <ExchangeConnections />
+      </div>
+
       {user?.subscription_tier !== "pro" ? (
         <div className="rounded-xl border border-brand-500/30 bg-brand-500/5 p-5">
           <div className="mb-3 flex items-center gap-2">
@@ -442,10 +448,10 @@ function SettingsPanel({ user }: { user: User | null }) {
             <h2 className="text-sm font-semibold text-brand-300">Upgrade to Pro</h2>
           </div>
           <p className="mb-4 text-xs text-dark-400">
-            Unlimited AI trades, all exchanges, advanced analytics. 7-day free trial included.
+            Unlimited AI trades, all exchanges, advanced analytics. 14-day free trial included.
           </p>
           <button onClick={handleUpgrade} className="btn-primary w-full">
-            Start 7-Day Free Trial — $9.99/mo
+            Start 14-Day Free Trial — $9.99/mo
           </button>
         </div>
       ) : (

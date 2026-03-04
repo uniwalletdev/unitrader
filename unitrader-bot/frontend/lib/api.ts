@@ -57,6 +57,15 @@ export const tradingApi = {
     api.post("/api/trading/close-position", { trade_id }),
 };
 
+// ── Exchange Keys ────────────────────────────────────────────────────────────
+export const exchangeApi = {
+  list: () => api.get("/api/trading/exchange-keys"),
+  connect: (exchange: string, api_key: string, api_secret: string) =>
+    api.post("/api/trading/exchange-keys", { exchange, api_key, api_secret }),
+  disconnect: (exchange: string) =>
+    api.delete(`/api/trading/exchange-keys/${exchange}`),
+};
+
 // ── Chat ─────────────────────────────────────────────────────────────────────
 export const chatApi = {
   sendMessage: (message: string) => api.post("/api/chat/message", { message }),
