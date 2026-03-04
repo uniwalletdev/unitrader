@@ -8,21 +8,26 @@ Endpoints:
     GET  /api/trading/performance         — Aggregated statistics
     POST /api/trading/close-position      — Manual close at market
     GET  /api/trading/risk-analysis       — Daily loss, remaining budget
+    POST /api/trading/exchange-keys       — Save encrypted exchange API keys
+    GET  /api/trading/exchange-keys       — List connected exchanges
+    DELETE /api/trading/exchange-keys/{exchange} — Remove exchange keys
 """
 
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import Trade, UserSettings
+from models import ExchangeAPIKey, Trade, UserSettings
 from routers.auth import get_current_user
 from schemas import SuccessResponse, TradeResponse
+from security import encrypt_api_key, hash_api_key
 from src.agents.core.trading_agent import TradingAgent
+from src.integrations.exchange_client import get_exchange_client
 from src.services.trade_monitoring import enforce_loss_limits
 from src.services.subscription import check_free_tier_symbol, check_trade_limit
 
@@ -42,6 +47,140 @@ class ExecuteTradeRequest(BaseModel):
 
 class ClosePositionRequest(BaseModel):
     trade_id: str
+
+
+class ConnectExchangeRequest(BaseModel):
+    exchange: str = Field(..., pattern="^(alpaca|binance|oanda)$")
+    api_key: str = Field(..., min_length=1)
+    api_secret: str = Field(..., min_length=1)
+
+
+VALID_EXCHANGES = {"alpaca", "binance", "oanda"}
+
+
+# ─────────────────────────────────────────────
+# POST /api/trading/exchange-keys — Connect exchange
+# ─────────────────────────────────────────────
+
+@router.post("/exchange-keys")
+async def connect_exchange(
+    body: ConnectExchangeRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Save (or update) encrypted exchange API keys for the current user.
+
+    Validates the keys against the exchange before storing them.
+    """
+    exchange = body.exchange.lower()
+
+    # Validate keys by making a test call to the exchange
+    try:
+        client = get_exchange_client(exchange, body.api_key, body.api_secret)
+        balance = await client.get_account_balance()
+        await client.aclose()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not connect to {exchange}: {exc}",
+        )
+
+    enc_key, enc_secret = encrypt_api_key(body.api_key, body.api_secret)
+    key_hash_val = hash_api_key(body.api_key)
+
+    # Upsert: deactivate old key for this exchange, insert new one
+    existing = await db.execute(
+        select(ExchangeAPIKey).where(
+            ExchangeAPIKey.user_id == current_user.id,
+            ExchangeAPIKey.exchange == exchange,
+            ExchangeAPIKey.is_active == True,  # noqa: E712
+        )
+    )
+    old_key = existing.scalar_one_or_none()
+    if old_key:
+        old_key.is_active = False
+        old_key.rotated_at = datetime.now(timezone.utc)
+
+    new_key = ExchangeAPIKey(
+        user_id=current_user.id,
+        exchange=exchange,
+        encrypted_api_key=enc_key,
+        encrypted_api_secret=enc_secret,
+        key_hash=key_hash_val,
+        is_active=True,
+    )
+    db.add(new_key)
+    await db.commit()
+
+    return {
+        "status": "success",
+        "data": {
+            "exchange": exchange,
+            "balance_usd": round(balance, 2),
+            "message": f"{exchange.title()} connected successfully",
+        },
+    }
+
+
+# ─────────────────────────────────────────────
+# GET /api/trading/exchange-keys — List connected exchanges
+# ─────────────────────────────────────────────
+
+@router.get("/exchange-keys")
+async def list_exchange_keys(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all connected exchanges for the current user (no secrets exposed)."""
+    result = await db.execute(
+        select(ExchangeAPIKey).where(
+            ExchangeAPIKey.user_id == current_user.id,
+            ExchangeAPIKey.is_active == True,  # noqa: E712
+        )
+    )
+    keys = result.scalars().all()
+    return {
+        "status": "success",
+        "data": [
+            {
+                "exchange": k.exchange,
+                "connected_at": k.created_at.isoformat() if k.created_at else None,
+                "last_used": k.last_used_at.isoformat() if k.last_used_at else None,
+            }
+            for k in keys
+        ],
+    }
+
+
+# ─────────────────────────────────────────────
+# DELETE /api/trading/exchange-keys/{exchange} — Disconnect
+# ─────────────────────────────────────────────
+
+@router.delete("/exchange-keys/{exchange}")
+async def disconnect_exchange(
+    exchange: str = Path(..., pattern="^(alpaca|binance|oanda)$"),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Deactivate exchange keys (soft-delete)."""
+    result = await db.execute(
+        select(ExchangeAPIKey).where(
+            ExchangeAPIKey.user_id == current_user.id,
+            ExchangeAPIKey.exchange == exchange.lower(),
+            ExchangeAPIKey.is_active == True,  # noqa: E712
+        )
+    )
+    key_row = result.scalar_one_or_none()
+    if not key_row:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No active {exchange} connection found",
+        )
+
+    key_row.is_active = False
+    key_row.rotated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"status": "success", "data": {"message": f"{exchange.title()} disconnected"}}
 
 
 # ─────────────────────────────────────────────
