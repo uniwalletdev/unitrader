@@ -206,14 +206,18 @@ def check_free_tier_symbol(user: User, symbol: str) -> None:
 async def check_trade_limit(user: User, db: AsyncSession) -> dict:
     """Check whether the user has remaining trades in their free-tier limit.
 
-    Free plan: 10 trades per calendar month.
-    Pro plan: unlimited.
+    Free plan (free trial): 10 trades per calendar month.
+    Pro plan (active paid subscription): unlimited trades.
+    TESTING_MODE: bypasses all limits.
 
     Returns:
-        {"allowed": bool, "trades_used": int, "trades_limit": int | None}
+        {"allowed": bool, "trades_used": int, "trades_limit": int | None, "reason": str | None}
     """
-    if is_pro(user):
-        return {"allowed": True, "trades_used": 0, "trades_limit": None}
+    # Check TESTING_MODE first
+    testing_mode = (getattr(settings, "testing_mode", "false") or "false").lower().strip()
+    if testing_mode == "true":
+        logger.info("TESTING_MODE active — trade limit bypassed for user %s", user.id)
+        return {"allowed": True, "trades_used": 0, "trades_limit": None, "reason": None}
 
     from sqlalchemy import func
     from models import Trade
@@ -222,6 +226,61 @@ async def check_trade_limit(user: User, db: AsyncSession) -> dict:
     now = datetime.now(timezone.utc)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
+    # Log detailed info at DEBUG level
+    subscription_status = user.stripe_subscription_status or "none"
+    trial_status = user.trial_status or "none"
+    trial_end = user.trial_end_date.isoformat() if user.trial_end_date else None
+    logger.debug(
+        "Trade limit check — user=%s subscription=%s trial=%s trial_end=%s",
+        user.id, subscription_status, trial_status, trial_end
+    )
+
+    # Pro users (active paid subscription) have unlimited trades
+    if is_pro(user):
+        logger.debug(
+            "Trade limit — user %s is PRO (subscription=%s) — unlimited",
+            user.id, subscription_status
+        )
+        return {"allowed": True, "trades_used": 0, "trades_limit": None, "reason": None}
+
+    # Active free trial: allow 10 trades/month
+    if user.trial_status == "active" and user.trial_end_date:
+        if now < user.trial_end_date:
+            result = await db.execute(
+                select(func.count()).where(
+                    Trade.user_id == user.id,
+                    Trade.created_at >= month_start,
+                )
+            )
+            used = result.scalar() or 0
+            limit = 10
+            allowed = used < limit
+            logger.debug(
+                "Trade limit — user %s on active trial (ends %s) — %d/%d used",
+                user.id, trial_end, used, limit
+            )
+            if not allowed:
+                logger.warning(
+                    "Trade blocked for user %s — trial_limit_reached (%d/%d trades)",
+                    user.id, used, limit
+                )
+                return {
+                    "allowed": False,
+                    "trades_used": used,
+                    "trades_limit": limit,
+                    "reason": "trial_limit_reached",
+                }
+            return {"allowed": True, "trades_used": used, "trades_limit": limit, "reason": None}
+
+    # Trial expired or not started: check if user has paid subscription
+    if user.subscription_tier == PLAN_PRO:
+        logger.debug(
+            "Trade limit — user %s has PRO tier (subscription=%s) — unlimited",
+            user.id, subscription_status
+        )
+        return {"allowed": True, "trades_used": 0, "trades_limit": None, "reason": None}
+
+    # Free tier (no active trial, no paid subscription)
     result = await db.execute(
         select(func.count()).where(
             Trade.user_id == user.id,
@@ -230,9 +289,20 @@ async def check_trade_limit(user: User, db: AsyncSession) -> dict:
     )
     used = result.scalar() or 0
     limit = 10
-
-    return {
-        "allowed": used < limit,
-        "trades_used": used,
-        "trades_limit": limit,
-    }
+    allowed = used < limit
+    logger.debug(
+        "Trade limit — user %s on free tier — %d/%d used",
+        user.id, used, limit
+    )
+    if not allowed:
+        logger.warning(
+            "Trade blocked for user %s — subscription_required (free tier limit %d/%d trades)",
+            user.id, used, limit
+        )
+        return {
+            "allowed": False,
+            "trades_used": used,
+            "trades_limit": limit,
+            "reason": "subscription_required",
+        }
+    return {"allowed": True, "trades_used": used, "trades_limit": limit, "reason": None}

@@ -836,3 +836,117 @@ class SocialPost(Base):
 
     def __repr__(self) -> str:
         return f"<SocialPost id={self.id} platform={self.platform} type={self.post_type}>"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# AGENT OUTCOME  (symbiotic learning — shared memory layer)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AgentOutcomeModel(Base):
+    """Persisted record of every agent action and its measured result.
+
+    Forms the backbone of Unitrader's symbiotic learning system.  Every agent
+    (trading, conversation, content, sentiment) writes outcomes here so that
+    all other agents can query past behaviour and adapt accordingly.
+
+    Columns
+    -------
+    agent_name    : which agent produced this outcome
+    action_type   : broad category ("trade" | "analysis" | "conversation" | "content")
+    user_id       : the user whose session triggered the action (nullable for
+                    system-level actions like scheduled analysis)
+    context_data  : JSON snapshot of market/sentiment conditions at decision time
+                    (RSI, MACD, sentiment score, trend, fear-greed index, etc.)
+    action_data   : JSON description of what the agent decided to do
+                    (symbol, direction, size, message content, post topic, etc.)
+    result_data   : JSON outcome of the action
+                    (profit/loss, success flag, user engagement score, etc.)
+    confidence    : agent's self-reported confidence at decision time (0.0–1.0)
+    asset         : optional ticker symbol this action related to (for fast lookups)
+    exchange      : optional exchange name (alpaca | binance | oanda)
+    tags          : JSON list of free-form labels for clustering similar patterns
+    """
+
+    __tablename__ = "agent_outcomes"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    action_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, index=True
+        # trade | analysis | conversation | content
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    context_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    action_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.5, nullable=False)
+    asset: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    exchange: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    __table_args__ = (
+        Index("ix_agent_outcomes_agent_asset", "agent_name", "asset"),
+        Index("ix_agent_outcomes_type_asset", "action_type", "asset"),
+        Index("ix_agent_outcomes_user_created", "user_id", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<AgentOutcomeModel id={self.id} agent={self.agent_name} "
+            f"action={self.action_type} asset={self.asset}>"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHARED CONTEXT  (symbiotic learning — inter-agent blackboard)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SharedContextModel(Base):
+    """Key/value blackboard that any agent can read from or write to.
+
+    Models a shared working memory ("blackboard" architecture).  One agent
+    sets a value (e.g. sentiment_agent sets "BTC_sentiment" = -0.7) and any
+    other agent can read it before its next decision.
+
+    Records with expires_at in the past are treated as absent by the
+    SharedMemory class; they are not physically deleted immediately.
+
+    Columns
+    -------
+    key        : unique string key, e.g. "BTC_sentiment", "BTC_trend"
+    value_data : JSON-serialised value (any Python type)
+    set_by     : name of the agent that last wrote this key
+    expires_at : optional UTC expiry; None means "never expires"
+    """
+
+    __tablename__ = "shared_contexts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    key: Mapped[str] = mapped_column(String(128), nullable=False, unique=True, index=True)
+    value_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    set_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return f"<SharedContextModel key={self.key} set_by={self.set_by} expires={self.expires_at}>"

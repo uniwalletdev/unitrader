@@ -1,9 +1,12 @@
 """
 src/integrations/market_data.py — Market data fetching and technical analysis.
 
-All indicator calculations are implemented in pure Python (no pandas/numpy) to
-keep the dependency footprint minimal. For production, replacing these with
-pandas-ta or ta-lib will improve accuracy and performance.
+Symbol routing and exchange validation prevent 404/400 errors:
+- Alpaca: stocks (AAPL) + crypto (BTC/USD)
+- Binance: crypto only (BTCUSDT)
+- OANDA: forex only (EUR_USD)
+
+All indicator calculations are implemented in pure Python (no pandas/numpy).
 """
 
 import logging
@@ -21,34 +24,156 @@ _TIMEOUT = 10.0
 
 
 # ─────────────────────────────────────────────
-# Market Data Fetching
+# STEP 1 — Asset classification constants
+# ─────────────────────────────────────────────
+
+EXCHANGE_CAPABILITIES = {
+    "alpaca": {"stocks": True, "crypto": True, "forex": False},
+    "binance": {"stocks": False, "crypto": True, "forex": False},
+    "oanda": {"stocks": False, "crypto": False, "forex": True},
+}
+
+CRYPTO_SYMBOLS = {
+    "BTC", "ETH", "SOL", "DOGE", "ADA", "XRP",
+    "AVAX", "DOT", "MATIC", "LINK", "LTC", "BCH",
+    "UNI", "ATOM", "ALGO", "XLM", "VET", "FIL", "BNB",
+}
+
+FOREX_PAIRS = {
+    "EUR/USD", "GBP/USD", "USD/JPY", "USD/CHF",
+    "AUD/USD", "USD/CAD", "NZD/USD", "EUR/GBP",
+    "EUR/JPY", "GBP/JPY",
+}
+
+
+def classify_asset(symbol: str) -> str:
+    """
+    Returns "crypto", "forex", or "stock".
+    Works on any symbol format: BTC, BTC/USD, BTCUSDT, EUR/USD, EUR_USD, AAPL.
+    """
+    clean = symbol.upper().strip()
+    parts = clean.split("/")
+    if len(parts) == 3:
+        clean = f"{parts[0]}/{parts[1]}"
+
+    base = clean.split("/")[0].split("_")[0]
+
+    for stable in ["USDT", "USDC", "BUSD", "USD"]:
+        if base.endswith(stable) and len(base) > len(stable):
+            base = base[: -len(stable)]
+            break
+
+    if base in CRYPTO_SYMBOLS:
+        return "crypto"
+
+    normalized = clean.replace("_", "/")
+    if normalized in FOREX_PAIRS:
+        return "forex"
+
+    return "stock"
+
+
+def normalise_symbol(symbol: str, exchange: str) -> str:
+    """
+    Convert any symbol format to what the exchange API expects.
+    Alpaca stocks: AAPL, TSLA. Alpaca crypto: BTC/USD.
+    Binance: BTCUSDT. OANDA: EUR_USD.
+    """
+    clean = symbol.upper().strip()
+    parts = clean.split("/")
+    if len(parts) == 3:
+        clean = f"{parts[0]}/{parts[1]}"
+
+    asset_type = classify_asset(clean)
+    ex = exchange.lower()
+
+    if ex == "alpaca":
+        if asset_type == "crypto":
+            base = clean.split("/")[0].split("_")[0]
+            for s in ["USDT", "USDC", "BUSD"]:
+                if base.endswith(s):
+                    base = base[: -len(s)]
+            return f"{base}/USD"
+        return clean.split("/")[0].split("_")[0]
+
+    if ex == "binance":
+        if asset_type != "crypto":
+            raise ValueError(
+                f"Binance only supports crypto — cannot trade {symbol} ({asset_type})"
+            )
+        base = clean.split("/")[0].split("_")[0]
+        for s in ["USDT", "USDC", "BUSD", "USD"]:
+            if base.endswith(s):
+                base = base[: -len(s)]
+        return f"{base}USDT"
+
+    if ex == "oanda":
+        if asset_type != "forex":
+            raise ValueError(
+                f"OANDA only supports forex — cannot trade {symbol} ({asset_type})"
+            )
+        return clean.replace("/", "_")
+
+    return clean
+
+
+def validate_exchange_for_symbol(symbol: str, exchange: str) -> None:
+    """
+    Raises ValueError if the exchange cannot trade this asset type.
+    Call before making any API request.
+    """
+    asset_type = classify_asset(symbol)
+    capabilities = EXCHANGE_CAPABILITIES.get(exchange.lower(), {})
+
+    if asset_type == "crypto" and not capabilities.get("crypto"):
+        raise ValueError(
+            f"Exchange '{exchange}' does not support crypto trading. "
+            f"Use Binance or Alpaca for {symbol}"
+        )
+    if asset_type == "stock" and not capabilities.get("stocks"):
+        raise ValueError(
+            f"Exchange '{exchange}' does not support stock trading. "
+            f"Use Alpaca for {symbol}"
+        )
+    if asset_type == "forex" and not capabilities.get("forex"):
+        raise ValueError(
+            f"Exchange '{exchange}' does not support forex trading. "
+            f"Use OANDA for {symbol}"
+        )
+
+
+# ─────────────────────────────────────────────
+# Market Data Fetching (routed)
 # ─────────────────────────────────────────────
 
 async def fetch_market_data(symbol: str, exchange: str) -> dict:
-    """Fetch current market snapshot for a symbol from the given exchange.
-
-    Returns:
-        {
-            "symbol": "BTCUSDT",
-            "price": 45000.0,
-            "high_24h": 46500.0,
-            "low_24h": 44000.0,
-            "volume": 150_000_000.0,
-            "price_change_pct": 1.5,
-            "timestamp": datetime,
-        }
     """
-    exchange = exchange.lower()
-    if exchange == "binance":
-        return await _fetch_binance(symbol)
-    if exchange == "alpaca":
-        return await _fetch_alpaca(symbol)
-    if exchange == "oanda":
-        return await _fetch_oanda(symbol)
-    raise ValueError(f"Unsupported exchange for market data: {exchange}")
+    Main entry point. Validates exchange can trade this asset,
+    normalises symbol, then routes to the correct fetcher.
+    """
+    clean_symbol = symbol.upper().strip()
+    parts = clean_symbol.split("/")
+    if len(parts) == 3:
+        clean_symbol = f"{parts[0]}/{parts[1]}"
+
+    ex = exchange.lower()
+    validate_exchange_for_symbol(clean_symbol, ex)
+    normalised = normalise_symbol(clean_symbol, ex)
+    asset_type = classify_asset(clean_symbol)
+
+    if ex == "alpaca" and asset_type == "crypto":
+        return await _fetch_alpaca_crypto(normalised)
+    if ex == "alpaca" and asset_type == "stock":
+        return await _fetch_alpaca_stock(normalised)
+    if ex == "binance":
+        return await _fetch_binance(normalised)
+    if ex == "oanda":
+        return await _fetch_oanda(normalised)
+    raise ValueError(f"Unknown exchange: {exchange}")
 
 
 async def _fetch_binance(symbol: str) -> dict:
+    """Symbol already normalised to BTCUSDT format."""
     base = (settings.binance_base_url or "https://api.binance.com").rstrip("/")
     url = f"{base}/api/v3/ticker/24hr"
     async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -66,13 +191,59 @@ async def _fetch_binance(symbol: str) -> dict:
     }
 
 
-async def _fetch_alpaca(symbol: str) -> dict:
-    base = settings.alpaca_data_url.rstrip("/")
-    headers = {
-        "APCA-API-KEY-ID": settings.alpaca_api_key,
-        "APCA-API-SECRET-KEY": settings.alpaca_api_secret,
+async def _fetch_alpaca_crypto(symbol: str) -> dict:
+    """Symbol already normalised to BTC/USD format. Uses Alpaca crypto data API."""
+    base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
+    headers = {}
+    if getattr(settings, "alpaca_api_key", None):
+        headers["APCA-API-KEY-ID"] = settings.alpaca_api_key
+    if getattr(settings, "alpaca_api_secret", None):
+        headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
+    async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
+        quote_resp = await client.get(
+            f"{base}/v1beta3/crypto/us/latest/quotes",
+            params={"symbols": symbol},
+        )
+        quote_resp.raise_for_status()
+        bars_resp = await client.get(
+            f"{base}/v1beta3/crypto/us/bars",
+            params={"symbols": symbol, "timeframe": "1Day", "limit": 2},
+        )
+        bars_resp.raise_for_status()
+
+    quotes = quote_resp.json().get("quotes", {}).get(symbol, {})
+    bars_data = bars_resp.json().get("bars", {}).get(symbol, [])
+    ap = float(quotes.get("ap", 0) or 0)
+    bp = float(quotes.get("bp", 0) or 0)
+    price = (ap + bp) / 2 if (ap or bp) else 0.0
+
+    high_24h = low_24h = price
+    volume = 0.0
+    if bars_data:
+        high_24h = max(float(b.get("h", price)) for b in bars_data)
+        low_24h = min(float(b.get("l", price)) for b in bars_data)
+        volume = float(bars_data[-1].get("v", 0))
+
+    return {
+        "symbol": symbol,
+        "price": price,
+        "high_24h": high_24h,
+        "low_24h": low_24h,
+        "volume": volume,
+        "price_change_pct": 0.0,
+        "timestamp": datetime.now(timezone.utc),
     }
-    async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers) as client:
+
+
+async def _fetch_alpaca_stock(symbol: str) -> dict:
+    """Symbol already normalised to AAPL format."""
+    base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
+    headers = {}
+    if getattr(settings, "alpaca_api_key", None):
+        headers["APCA-API-KEY-ID"] = settings.alpaca_api_key
+    if getattr(settings, "alpaca_api_secret", None):
+        headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
+    async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
         quote_resp = await client.get(f"{base}/v2/stocks/{symbol}/quotes/latest")
         quote_resp.raise_for_status()
         bars_resp = await client.get(
@@ -104,9 +275,11 @@ async def _fetch_alpaca(symbol: str) -> dict:
 
 
 async def _fetch_oanda(symbol: str) -> dict:
-    base = settings.oanda_base_url.rstrip("/")
-    account_id = settings.oanda_account_id
-    headers = {"Authorization": f"Bearer {settings.oanda_api_key}"}
+    """Symbol already normalised to EUR_USD format."""
+    base = (settings.oanda_base_url or "https://api-fxpractice.oanda.com").rstrip("/")
+    account_id = getattr(settings, "oanda_account_id", "") or ""
+    api_key = getattr(settings, "oanda_api_key", "") or ""
+    headers = {"Authorization": f"Bearer {api_key}"}
     async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers) as client:
         resp = await client.get(
             f"{base}/v3/accounts/{account_id}/pricing",
@@ -133,16 +306,27 @@ async def _fetch_oanda(symbol: str) -> dict:
 
 
 async def fetch_ohlcv(symbol: str, exchange: str, limit: int = 200) -> list[float]:
-    """Fetch the last `limit` closing prices for indicator calculations.
+    """Fetch the last `limit` closing prices. Uses same routing as fetch_market_data."""
+    clean_symbol = symbol.upper().strip()
+    parts = clean_symbol.split("/")
+    if len(parts) == 3:
+        clean_symbol = f"{parts[0]}/{parts[1]}"
+    ex = exchange.lower()
+    try:
+        validate_exchange_for_symbol(clean_symbol, ex)
+        normalised = normalise_symbol(clean_symbol, ex)
+    except ValueError:
+        return []
+    asset_type = classify_asset(clean_symbol)
 
-    Returns a list of floats ordered oldest → newest.
-    """
-    exchange = exchange.lower()
-    if exchange == "binance":
-        return await _fetch_binance_closes(symbol, limit)
-    if exchange == "alpaca":
-        return await _fetch_alpaca_closes(symbol, limit)
-    logger.warning("OHLCV not implemented for %s — returning empty list", exchange)
+    if ex == "binance":
+        return await _fetch_binance_closes(normalised, limit)
+    if ex == "alpaca" and asset_type == "crypto":
+        return await _fetch_alpaca_crypto_closes(normalised, limit)
+    if ex == "alpaca" and asset_type == "stock":
+        return await _fetch_alpaca_stock_closes(normalised, limit)
+    if ex == "oanda":
+        return await _fetch_oanda_closes(normalised, limit)
     return []
 
 
@@ -155,19 +339,57 @@ async def _fetch_binance_closes(symbol: str, limit: int) -> list[float]:
     return [float(candle[4]) for candle in resp.json()]  # index 4 = close
 
 
-async def _fetch_alpaca_closes(symbol: str, limit: int) -> list[float]:
-    base = settings.alpaca_data_url.rstrip("/")
-    headers = {
-        "APCA-API-KEY-ID": settings.alpaca_api_key,
-        "APCA-API-SECRET-KEY": settings.alpaca_api_secret,
-    }
-    async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers) as client:
+async def _fetch_alpaca_crypto_closes(symbol: str, limit: int) -> list[float]:
+    base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
+    headers = {}
+    if getattr(settings, "alpaca_api_key", None):
+        headers["APCA-API-KEY-ID"] = settings.alpaca_api_key
+    if getattr(settings, "alpaca_api_secret", None):
+        headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
+    async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
+        resp = await client.get(
+            f"{base}/v1beta3/crypto/us/bars",
+            params={"symbols": symbol, "timeframe": "5Min", "limit": limit},
+        )
+        resp.raise_for_status()
+    bars = resp.json().get("bars", {}).get(symbol, [])
+    return [float(b["c"]) for b in bars]
+
+
+async def _fetch_alpaca_stock_closes(symbol: str, limit: int) -> list[float]:
+    base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
+    headers = {}
+    if getattr(settings, "alpaca_api_key", None):
+        headers["APCA-API-KEY-ID"] = settings.alpaca_api_key
+    if getattr(settings, "alpaca_api_secret", None):
+        headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
+    async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
         resp = await client.get(
             f"{base}/v2/stocks/{symbol}/bars",
             params={"timeframe": "5Min", "limit": limit},
         )
         resp.raise_for_status()
     return [float(b["c"]) for b in resp.json().get("bars", [])]
+
+
+async def _fetch_oanda_closes(symbol: str, limit: int) -> list[float]:
+    base = (settings.oanda_base_url or "https://api-fxpractice.oanda.com").rstrip("/")
+    account_id = getattr(settings, "oanda_account_id", "") or ""
+    api_key = getattr(settings, "oanda_api_key", "") or ""
+    headers = {"Authorization": f"Bearer {api_key}"}
+    async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers) as client:
+        resp = await client.get(
+            f"{base}/v3/instruments/{symbol}/candles",
+            params={"count": limit, "granularity": "M5"},
+        )
+        resp.raise_for_status()
+    candles = resp.json().get("candles", [])
+    result = []
+    for c in candles:
+        mid = c.get("mid")
+        if mid and "c" in mid:
+            result.append(float(mid["c"]))
+    return result
 
 
 # ─────────────────────────────────────────────

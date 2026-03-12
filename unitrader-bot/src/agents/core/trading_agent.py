@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import anthropic
+import httpx
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +27,7 @@ from database import AsyncSessionLocal
 from models import ExchangeAPIKey, Trade, User, UserSettings
 from security import decrypt_api_key
 from src.integrations.exchange_client import get_exchange_client
-from src.integrations.market_data import full_market_analysis
+from src.integrations.market_data import full_market_analysis, normalise_symbol
 from src.services.trade_execution import build_trade_parameters
 from src.utils.json_parser import parse_claude_json
 from src.services.learning_hub import (
@@ -37,6 +39,23 @@ from src.services.learning_hub import (
 logger = logging.getLogger(__name__)
 
 _CLAUDE_MODEL = "claude-3-haiku-20240307"
+
+class TradingDecision(BaseModel):
+    """Normalized trade decision returned to the orchestrator.
+
+    This is the *decision* stage only — execution is handled separately by the
+    orchestrator + existing TradingAgent execution logic.
+    """
+
+    action: str = Field(..., pattern="^(BUY|SELL|HOLD)$")
+    asset: str
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    reasoning: str
+    suggested_size_pct: float = Field(..., ge=0.0)
+    stop_loss_pct: float = Field(..., ge=0.0)
+    take_profit_pct: float = Field(..., ge=0.0)
+    risk_factors: list[str] = Field(default_factory=list)
+
 
 _SYSTEM_PROMPT = """\
 You are a professional quantitative trading AI assistant named {ai_name}.
@@ -118,18 +137,37 @@ class TradingAgent:
     # Market Analysis
     # ─────────────────────────────────────────────
 
-    async def analyze_market(self, symbol: str, exchange: str) -> dict:
+    async def analyze_market(self, symbol: str, exchange: str) -> dict | None:
         """Fetch live data and compute technical indicators.
 
-        Returns the full market snapshot dict used to build the Claude prompt.
+        Returns the full market snapshot dict, or None if market data
+        is unavailable or routing/exchange errors occur. Never raises.
         """
         try:
-            data = await full_market_analysis(symbol, exchange)
-            logger.info("Market analysis complete: %s @ %.4f", symbol, data.get("price", 0))
+            clean_symbol = symbol
+            if "/" in symbol:
+                parts = symbol.split("/")
+                if len(parts) == 3:
+                    clean_symbol = f"{parts[0]}/{parts[1]}"
+            data = await full_market_analysis(clean_symbol, exchange)
+            logger.info("Market analysis complete: %s/%s @ %.4f", clean_symbol, exchange, data.get("price", 0))
             return data
+        except httpx.HTTPStatusError as exc:
+            status_code = getattr(exc.response, "status_code", None)
+            logger.error(
+                "analyze_market HTTP error for %s/%s: %s (status=%s)",
+                symbol,
+                exchange,
+                exc,
+                status_code,
+            )
+            return None
+        except ValueError as exc:
+            logger.error("analyze_market routing error for %s/%s: %s", symbol, exchange, exc)
+            return None
         except Exception as exc:
             logger.error("analyze_market failed for %s/%s: %s", symbol, exchange, exc)
-            raise
+            return None
 
     # ─────────────────────────────────────────────
     # User History Context
@@ -262,6 +300,168 @@ class TradingAgent:
         except Exception as exc:
             logger.error("Claude API call failed: %s", exc)
             return self._wait_decision(str(exc))
+
+    async def decide_with_context(
+        self,
+        user_id: str,
+        asset: str,
+        market_data: dict,
+        shared_context: dict,
+        similar_past_outcomes: list,
+        user_settings: dict,
+    ) -> TradingDecision:
+        """Return a normalized trading decision using orchestrator-provided context.
+
+        This method is additive: it reuses the existing Claude-decision pipeline
+        but injects shared-memory context and a summary of similar past outcomes
+        into the system prompt via the existing ``learning_context`` slot.
+
+        The orchestrator uses the returned decision to decide whether to execute,
+        scale down size, or skip the trade.
+        """
+        # Prefer orchestrator-provided user_id, but keep backwards compat.
+        self.user_id = user_id or self.user_id
+
+        # Basic risk factor identification (lightweight + deterministic).
+        risk_factors: list[str] = []
+        try:
+            indicators = (market_data or {}).get("indicators", {}) or {}
+            rsi = indicators.get("rsi")
+            trend = (market_data or {}).get("trend")
+            macd = indicators.get("macd", {}) or {}
+            if isinstance(rsi, (int, float)):
+                if rsi >= 70:
+                    risk_factors.append("overbought_RSI")
+                elif rsi <= 30:
+                    risk_factors.append("oversold_RSI")
+            if trend in ("downtrend", "consolidating"):
+                risk_factors.append(f"trend_{trend}")
+            if isinstance(macd.get("histogram"), (int, float)) and macd.get("histogram") < 0:
+                risk_factors.append("bearish_MACD")
+        except Exception:
+            pass
+
+        # Shared context heuristics (avoid patterns + sentiment).
+        try:
+            for k, v in (shared_context or {}).items():
+                if k.startswith("avoid_") and v:
+                    risk_factors.append(k)
+            # Common sentiment key conventions: "<ASSET>_sentiment" or "<ASSET>_sentiment_score"
+            s_key = f"{asset.upper()}_sentiment"
+            s_val = shared_context.get(s_key)
+            if isinstance(s_val, (int, float)) and s_val < -0.1:
+                risk_factors.append("negative_sentiment")
+        except Exception:
+            pass
+
+        # Similar outcomes summary (compact, model-friendly).
+        def _outcome_success(o: Any) -> bool:
+            try:
+                r = getattr(o, "result", None) or getattr(o, "result_data", None) or o.get("result") or o.get("result_data")  # type: ignore[attr-defined]
+            except Exception:
+                r = None
+            r = r or {}
+            if r.get("success") is True:
+                return True
+            profit = r.get("profit_pct") or r.get("profit") or 0
+            try:
+                return float(profit) > 0
+            except Exception:
+                return False
+
+        sim_total = len(similar_past_outcomes or [])
+        sim_wins = sum(1 for o in (similar_past_outcomes or []) if _outcome_success(o))
+        sim_losses = sim_total - sim_wins
+        sim_summary = (
+            f"{sim_total} similar outcomes; {sim_wins} wins / {sim_losses} losses"
+            if sim_total
+            else "no similar outcomes found"
+        )
+
+        # Build the new required context injection block.
+        learning_context = (
+            "\nORCHESTRATOR CONTEXT (apply these learnings):\n"
+            f"Past similar situations: {sim_summary}\n"
+            f"Current shared intelligence: {shared_context}\n"
+            f"Risk factors identified: {risk_factors}\n"
+            "Adjust your decision confidence accordingly.\n"
+        )
+
+        # Load user + exchange keys to compute account_balance (keeps existing logic).
+        exchange_name = (market_data or {}).get("exchange") or (market_data or {}).get("exchange_name") or ""
+        exchange_name = str(exchange_name).lower().strip() or "alpaca"
+
+        raw_key = raw_secret = None
+        account_balance = 0.0
+        open_count = 0
+        user_history: dict = {"win_rate": 50.0, "avg_profit": 0.0, "avg_loss": 0.0, "count": 0}
+        ai_name = "Claude"
+
+        try:
+            async with AsyncSessionLocal() as db:
+                user_result = await db.execute(select(User).where(User.id == self.user_id))
+                user = user_result.scalar_one_or_none()
+                ai_name = user.ai_name if user and user.ai_name else "Claude"
+
+                user_history = await self._get_user_history(db, asset)
+                open_count = await self._get_open_trade_count(db)
+
+                key_result = await db.execute(
+                    select(ExchangeAPIKey).where(
+                        ExchangeAPIKey.user_id == self.user_id,
+                        ExchangeAPIKey.exchange == exchange_name,
+                        ExchangeAPIKey.is_active == True,  # noqa: E712
+                    )
+                )
+                key_row = key_result.scalar_one_or_none()
+                if key_row:
+                    is_paper = getattr(key_row, "is_paper", True)
+                    raw_key, raw_secret = decrypt_api_key(
+                        key_row.encrypted_api_key, key_row.encrypted_api_secret
+                    )
+                    client = get_exchange_client(exchange_name, raw_key, raw_secret, is_paper=is_paper)
+                    raw_key = raw_secret = None
+                    try:
+                        account_balance = await client.get_account_balance()
+                    finally:
+                        await client.aclose()
+        except Exception as exc:
+            raw_key = raw_secret = None
+            logger.warning("decide_with_context: balance/history load failed: %s", exc)
+
+        # Ensure the market_data carries exchange for prompt formatting.
+        market_data = dict(market_data or {})
+        market_data["exchange"] = exchange_name
+
+        decision = await self.get_claude_decision(
+            market_data=market_data,
+            user_history=user_history,
+            account_balance=account_balance,
+            open_trades_count=open_count,
+            ai_name=ai_name,
+            learning_context=learning_context,
+        )
+
+        action = decision.get("decision", "WAIT")
+        normalized_action = "HOLD" if action == "WAIT" else str(action).upper()
+        conf = float(decision.get("confidence", 0)) / 100.0
+        entry = float(decision.get("entry_price") or market_data.get("price") or 0.0)
+        stop = float(decision.get("stop_loss") or 0.0)
+        take = float(decision.get("take_profit") or 0.0)
+
+        stop_loss_pct = round(abs(entry - stop) / entry * 100, 4) if entry and stop else 0.0
+        take_profit_pct = round(abs(take - entry) / entry * 100, 4) if entry and take else 0.0
+
+        return TradingDecision(
+            action=normalized_action if normalized_action in ("BUY", "SELL", "HOLD") else "HOLD",
+            asset=asset,
+            confidence=max(0.0, min(conf, 1.0)),
+            reasoning=str(decision.get("reasoning") or ""),
+            suggested_size_pct=float(decision.get("position_size_pct") or 0.0),
+            stop_loss_pct=float(stop_loss_pct),
+            take_profit_pct=float(take_profit_pct),
+            risk_factors=list(dict.fromkeys(risk_factors)),  # stable de-dupe
+        )
 
     @staticmethod
     def _wait_decision(reason: str) -> dict:
@@ -421,6 +621,11 @@ class TradingAgent:
             {"status": "executed", "trade_id": "..."} or
             {"status": "rejected", "reason": "..."}
         """
+        try:
+            symbol = normalise_symbol(symbol, exchange_name)
+        except ValueError as exc:
+            return {"status": "rejected", "reason": str(exc)}
+
         raw_key = raw_secret = None
         client = None
         try:
@@ -534,6 +739,7 @@ class TradingAgent:
             "status": "executed",
             "trade_id": trade_id,
             "symbol": symbol,
+            "decision": decision["decision"],
             "side": decision["decision"],
             "entry_price": decision["entry_price"],
             "stop_loss": decision["stop_loss"],
@@ -553,7 +759,12 @@ class TradingAgent:
     # Full Cycle (analyze → decide → execute)
     # ─────────────────────────────────────────────
 
-    async def run_cycle(self, symbol: str, exchange_name: str) -> dict:
+    async def run_cycle(
+        self,
+        symbol: str,
+        exchange_name: str,
+        orchestrator_context: str = "",
+    ) -> dict:
         """Run a complete analysis → decision → execution cycle.
 
         Enhanced with Learning Hub insights:
@@ -561,6 +772,13 @@ class TradingAgent:
           2. Inject learning context into Claude's system prompt
           3. Apply hub-guided position sizing / condition filters
           4. Log the outcome back to hub via record_agent_output()
+
+        Args:
+            symbol: Ticker symbol (e.g. BTCUSDT, AAPL).
+            exchange_name: Exchange name (binance, alpaca, oanda).
+            orchestrator_context: Optional extra context from MasterOrchestrator
+                (shared memory learnings, similar past outcomes). Appended to
+                learning_context when provided.
         """
         # ── Step 0: Fetch learning hub insights (non-blocking fallback) ───
         try:
@@ -596,6 +814,9 @@ class TradingAgent:
                     + "\n".join(parts)
                     + "\n"
                 )
+
+        if orchestrator_context:
+            learning_context += "\n" + orchestrator_context
 
         # ── Step 1: Load user + exchange keys ─────────────────────────────
         raw_key = raw_secret = None
@@ -643,6 +864,14 @@ class TradingAgent:
 
         # ── Step 2: Market analysis ───────────────────────────────────────
         market_data = await self.analyze_market(symbol, exchange_name)
+        if market_data is None:
+            logger.warning(f"run_cycle aborting — no market data for {symbol}")
+            return {
+                "status": "error",
+                "reason": "market_data_unavailable",
+                "symbol": symbol,
+                "exchange": exchange_name
+            }
         market_data["exchange"] = exchange_name
 
         # ── Step 3: Claude decision (with learning context injected) ──────
@@ -668,6 +897,8 @@ class TradingAgent:
             return {
                 "status": "wait",
                 "symbol": symbol,
+                "decision": "WAIT",
+                "confidence": decision.get("confidence", 0),
                 "reasoning": decision.get("reasoning", ""),
             }
 

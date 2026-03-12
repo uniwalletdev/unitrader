@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useRouter } from "next/router";
 import {
   Crosshair, Loader2, TrendingUp, TrendingDown, Minus,
   AlertCircle, ChevronRight, Link2, RefreshCw,
@@ -24,15 +25,28 @@ interface TradeResult {
   quantity?: number;
   trade_id?: string;
   market_trend?: string;
+  message?: string;
 }
 
 const POPULAR_SYMBOLS: Record<string, string[]> = {
-  alpaca: ["AAPL", "TSLA", "NVDA", "MSFT", "AMZN", "GOOGL", "META", "SPY"],
+  alpaca: ["AAPL", "TSLA", "NVDA", "MSFT", "AMZN", "GOOGL", "META", "SPY", "BTC/USD"],
   binance: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"],
   oanda: ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD"],
 };
 
+/** Normalise symbol for exchange (e.g. BTC → BTCUSDT for Binance) */
+function normaliseSymbol(sym: string, exchange: string): string {
+  const s = sym.trim().toUpperCase().replace(/\s/g, "");
+  if (!s) return s;
+  const ex = exchange.toLowerCase();
+  if (ex === "binance" && /^BTC$/i.test(s)) return "BTCUSDT";
+  if (ex === "binance" && /^ETH$/i.test(s)) return "ETHUSDT";
+  if (ex === "alpaca" && /^BTC$/i.test(s)) return "BTC/USD";
+  return s;
+}
+
 export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) => void }) {
+  const router = useRouter();
   const [exchanges, setExchanges] = useState<ConnectedExchange[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedExchange, setSelectedExchange] = useState("");
@@ -55,10 +69,24 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
     setResult(null);
     setError("");
     try {
-      const res = await tradingApi.execute(symbol.trim().toUpperCase(), selectedExchange);
-      setResult(res.data.data);
+      const normalised = normaliseSymbol(symbol, selectedExchange);
+      const res = await tradingApi.execute(normalised, selectedExchange);
+      const data = res.data?.data ?? res.data;
+      setResult(data);
+      // Show rejection/error reasons in the error box too so they're visible
+      if (data?.status === "rejected" || data?.status === "error") {
+        setError(data.reason || "Trade was not executed.");
+      } else {
+        setError(""); // Clear on success (executed/wait)
+      }
     } catch (err: any) {
-      setError(err.response?.data?.detail || "Trade execution failed. Please try again.");
+      const detail = err.response?.data?.detail;
+      const msg = typeof detail === "string"
+        ? detail
+        : Array.isArray(detail) && detail[0]?.msg
+          ? detail[0].msg
+          : err.response?.data?.message || err.message || "Trade execution failed. Please try again.";
+      setError(msg);
     } finally {
       setExecuting(false);
     }
@@ -82,11 +110,11 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         </div>
         <h1 className="text-xl font-bold text-white">Connect an Exchange First</h1>
         <p className="text-sm text-dark-400">
-          To start trading, connect your exchange API keys in Settings.
-          Your AI will analyze markets and execute trades on your behalf.
+          To start trading, connect your exchange API keys. Your AI will analyze
+          markets and execute trades on your behalf.
         </p>
-        <button onClick={() => onNavigate?.("settings")} className="btn-primary">
-          Go to Settings <ChevronRight size={14} />
+        <button onClick={() => router.push("/connect-exchange")} className="btn-primary">
+          Connect Exchange <ChevronRight size={14} />
         </button>
       </div>
     );
@@ -186,16 +214,35 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
 
       {/* Error */}
       {error && (
-        <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-400">
-          <AlertCircle size={15} className="shrink-0" />
-          {error}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-400">
+            <AlertCircle size={15} className="shrink-0" />
+            {error}
+          </div>
+          {error.toLowerCase().includes("api key") && (
+            <p className="text-xs text-dark-500">
+              Make sure your exchange is connected in{" "}
+              <button type="button" onClick={() => onNavigate?.("settings")} className="text-brand-400 hover:underline">
+                Settings → Exchanges
+              </button>
+              .
+            </p>
+          )}
         </div>
       )}
 
       {/* Result */}
       {result && (
         <div className="rounded-xl border border-dark-800 bg-dark-950 p-6">
-          <h2 className="mb-4 text-sm font-semibold text-dark-200">Analysis Result</h2>
+          <h2 className="mb-4 text-sm font-semibold text-dark-200">
+            {result.status === "executed"
+              ? "Trade Executed"
+              : result.status === "wait"
+                ? "AI Analysis — No Trade"
+                : result.status === "rejected" || result.status === "error"
+                  ? "Trade Not Executed"
+                  : "Analysis Result"}
+          </h2>
 
           {result.status === "skipped" && (
             <div className="flex items-center gap-3 rounded-lg bg-dark-900 p-4">
@@ -207,26 +254,31 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
             </div>
           )}
 
-          {result.status === "error" && (
+          {(result.status === "error" || result.status === "rejected") && (
             <div className="flex items-center gap-3 rounded-lg bg-red-500/5 p-4">
               <AlertCircle size={20} className="text-red-400" />
               <div>
-                <p className="text-sm font-medium text-red-400">Error</p>
+                <p className="text-sm font-medium text-red-400">
+                  {result.status === "rejected" ? "Trade Rejected" : "Error"}
+                </p>
                 <p className="text-xs text-dark-400">{result.reason}</p>
               </div>
             </div>
           )}
 
-          {(result.status === "executed" || result.decision) && (
+          {(result.status === "executed" || result.status === "wait" || result.decision) && (
             <div className="space-y-4">
+              {result.message && (
+                <p className="text-sm text-dark-300">{result.message}</p>
+              )}
               {/* Decision badge */}
               <div className="flex items-center gap-3">
-                {result.decision === "BUY" ? (
+                {(result.decision || result.side) === "BUY" ? (
                   <div className="flex items-center gap-2 rounded-lg bg-brand-500/10 px-4 py-2">
                     <TrendingUp size={18} className="text-brand-400" />
                     <span className="text-sm font-bold text-brand-400">BUY</span>
                   </div>
-                ) : result.decision === "SELL" ? (
+                ) : (result.decision || result.side) === "SELL" ? (
                   <div className="flex items-center gap-2 rounded-lg bg-red-500/10 px-4 py-2">
                     <TrendingDown size={18} className="text-red-400" />
                     <span className="text-sm font-bold text-red-400">SELL</span>

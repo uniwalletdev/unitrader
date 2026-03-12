@@ -3,9 +3,9 @@ import { useState, useEffect, useRef } from "react";
 import { useAuth, useClerk } from "@clerk/nextjs";
 import { useRouter } from "next/router";
 import {
-  TrendingUp, TrendingDown, MessageSquare, BarChart3, Settings,
+  TrendingUp, TrendingDown, MessageSquare, BarChart3, LineChart, Settings,
   LogOut, RefreshCw, X, Send, ChevronRight, AlertTriangle,
-  Zap, Shield, Activity, Clock, Crosshair, BookOpen, Brain,
+  Zap, Shield, Activity, Clock, Crosshair, BookOpen, Brain, Plug,
 } from "lucide-react";
 import { tradingApi, chatApi, authApi, billingApi, exchangeApi } from "@/lib/api";
 import ExchangeConnections from "@/components/ExchangeConnections";
@@ -42,6 +42,8 @@ const NAV = [
   { id: "chat", icon: MessageSquare, label: "Chat" },
   { id: "positions", icon: TrendingUp, label: "Positions" },
   { id: "history", icon: Activity, label: "History" },
+  { id: "performance", icon: LineChart, label: "Performance" },
+  { id: "connect-exchange", icon: Plug, label: "Exchanges" },
   { id: "content", icon: BookOpen, label: "Content" },
   { id: "learning", icon: Brain, label: "Learning" },
   { id: "settings", icon: Settings, label: "Settings" },
@@ -374,6 +376,132 @@ function Chat({ user }: { user: User | null }) {
 }
 
 // ─────────────────────────────────────────────
+// Performance
+// ─────────────────────────────────────────────
+
+function Performance() {
+  const [perf, setPerf] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [symbol, setSymbol] = useState("");
+  const [marketCondition, setMarketCondition] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const params: Record<string, string> = {};
+      if (symbol) params.symbol = symbol.toUpperCase();
+      if (marketCondition) params.market_condition = marketCondition;
+      const res = await tradingApi.performance(symbol || marketCondition ? { symbol: symbol || undefined, market_condition: marketCondition || undefined } : undefined);
+      setPerf(res.data.data);
+    } catch {
+      setPerf(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20 text-sm text-dark-500">
+        <RefreshCw size={16} className="mr-2 animate-spin" /> Loading performance...
+      </div>
+    );
+  }
+
+  const d = perf ?? {};
+  if (d.message && !d.total_trades) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-xl font-bold text-white">Performance</h1>
+        <div className="rounded-xl border border-dark-800 bg-dark-950 p-8 text-center">
+          <LineChart size={40} className="mx-auto mb-3 text-dark-500" />
+          <p className="text-dark-400">{d.message}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h1 className="text-xl font-bold text-white">Performance</h1>
+        <div className="flex flex-wrap gap-2">
+          <input
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value)}
+            placeholder="Filter by symbol"
+            className="input w-32 text-sm"
+          />
+          <select
+            value={marketCondition}
+            onChange={(e) => setMarketCondition(e.target.value)}
+            className="input w-40 text-sm"
+          >
+            <option value="">All conditions</option>
+            <option value="uptrend">Uptrend</option>
+            <option value="downtrend">Downtrend</option>
+            <option value="consolidating">Consolidating</option>
+          </select>
+          <button onClick={load} className="btn-outline gap-2 py-2 text-xs">
+            <RefreshCw size={13} /> Refresh
+          </button>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard label="Total Trades" value={String(d.total_trades ?? 0)} />
+        <StatCard
+          label="Win Rate"
+          value={d.win_rate_pct !== undefined ? `${d.win_rate_pct}%` : "—"}
+          sub={`${d.wins ?? 0}W / ${d.losses ?? 0}L`}
+          positive={d.win_rate_pct >= 50}
+        />
+        <StatCard
+          label="Net P&L"
+          value={d.net_pnl_usd !== undefined ? `${d.net_pnl_usd >= 0 ? "+" : ""}$${d.net_pnl_usd?.toFixed(2)}` : "—"}
+          positive={d.net_pnl_usd >= 0}
+        />
+        <StatCard
+          label="Avg Profit / Loss %"
+          value={d.avg_profit_pct !== undefined && d.avg_loss_pct !== undefined
+            ? `${d.avg_profit_pct}% / ${d.avg_loss_pct}%`
+            : "—"}
+        />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
+          <h2 className="mb-3 text-sm font-semibold text-dark-200">Best Trade</h2>
+          {d.best_trade ? (
+            <div className="space-y-1 text-sm">
+              <p className="font-mono text-white">{d.best_trade.symbol} {d.best_trade.side}</p>
+              <p className="text-brand-400 font-bold">+${(d.best_trade.profit ?? 0).toFixed(2)}</p>
+              <p className="text-xs text-dark-500">{d.best_trade.profit_percent?.toFixed(2)}%</p>
+            </div>
+          ) : (
+            <p className="text-dark-500 text-sm">—</p>
+          )}
+        </div>
+        <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
+          <h2 className="mb-3 text-sm font-semibold text-dark-200">Worst Trade</h2>
+          {d.worst_trade ? (
+            <div className="space-y-1 text-sm">
+              <p className="font-mono text-white">{d.worst_trade.symbol} {d.worst_trade.side}</p>
+              <p className="text-red-400 font-bold">-${(d.worst_trade.loss ?? 0).toFixed(2)}</p>
+              <p className="text-xs text-dark-500">{d.worst_trade.profit_percent?.toFixed(2)}%</p>
+            </div>
+          ) : (
+            <p className="text-dark-500 text-sm">—</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // Trade History
 // ─────────────────────────────────────────────
 
@@ -607,7 +735,13 @@ export default function AppPage() {
       <div className="flex h-screen overflow-hidden bg-[#0d1117]">
         <Sidebar
           active={activeTab}
-          onChange={setActiveTab}
+          onChange={(id) => {
+            if (id === "connect-exchange") {
+              router.push("/connect-exchange");
+            } else {
+              setActiveTab(id);
+            }
+          }}
           aiName={user?.ai_name || "Your AI"}
           onLogout={logout}
         />
@@ -649,6 +783,7 @@ export default function AppPage() {
             )}
             {activeTab === "positions" && <PositionsPanel onNavigate={setActiveTab} />}
             {activeTab === "history" && <History />}
+            {activeTab === "performance" && <Performance />}
             {activeTab === "content" && <ContentPanel />}
             {activeTab === "learning" && <LearningPanel user={user} />}
             {activeTab === "settings" && <SettingsPanel user={user} />}

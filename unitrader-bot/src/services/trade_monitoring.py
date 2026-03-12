@@ -7,12 +7,17 @@ The monitor_loop() runs every 60 seconds and checks every open position against:
   - Trailing stop update
   - Daily / weekly / monthly loss limits
   - Anomaly / circuit-breaker conditions
+
+No decrypted API keys are cached. Each connectivity check uses a fresh DB session
+and loads ExchangeAPIKey by ID; missing keys are dropped from monitoring.
+401 backoff: two consecutive 401s for a key pause that key for 60s.
 """
 
 import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +28,11 @@ from src.integrations.exchange_client import get_exchange_client
 
 logger = logging.getLogger(__name__)
 
+# Backoff state only (no credentials). key_id -> {consecutive_401: int, backoff_until: datetime | None}
+_key_backoff: dict[str, dict] = {}
+# Key IDs currently being monitored; removed when key no longer exists in DB.
+_monitored_key_ids: set[str] = set()
+
 
 # ─────────────────────────────────────────────
 # Position Monitoring
@@ -31,7 +41,8 @@ logger = logging.getLogger(__name__)
 async def monitor_positions(user_id: str) -> None:
     """Check every open position for stop/target hits and trailing stop updates.
 
-    Called by the background monitor loop every minute.
+    Uses fresh DB session per key; no cached credentials. Key IDs are resolved
+    from active keys for this user, then each key is loaded by ID in its own session.
     """
     async with AsyncSessionLocal() as db:
         trades_result = await db.execute(
@@ -41,78 +52,138 @@ async def monitor_positions(user_id: str) -> None:
             )
         )
         open_trades = trades_result.scalars().all()
-
         if not open_trades:
             return
-
-        user_result = await db.execute(select(User).where(User.id == user_id))
-        user = user_result.scalar_one_or_none()
-        ai_name = user.ai_name if user else "Claude"
-
-        # Load best available exchange key
         key_result = await db.execute(
-            select(ExchangeAPIKey).where(
+            select(ExchangeAPIKey.id).where(
                 ExchangeAPIKey.user_id == user_id,
                 ExchangeAPIKey.is_active == True,  # noqa: E712
             )
         )
-        key_rows = key_result.scalars().all()
-        if not key_rows:
-            logger.warning("No exchange API keys for user %s — skipping monitoring", user_id)
-            return
-
-        for trade in open_trades:
-            await _check_position(db, trade, key_rows, ai_name)
-
-        await db.commit()
-
-
-async def _check_position(
-    db: AsyncSession,
-    trade: Trade,
-    key_rows: list,
-    ai_name: str,
-) -> None:
-    """Evaluate a single open position and close it if stop/target is hit."""
-    trade_exchange = getattr(trade, "exchange", None)
-    key_row = next(
-        (k for k in key_rows if k.exchange == trade_exchange),
-        key_rows[0] if key_rows else None,
-    )
-    if not key_row:
+        key_ids = [row[0] for row in key_result.all()]
+    if not key_ids:
+        logger.warning("No exchange API keys for user %s — skipping monitoring", user_id)
         return
 
+    _monitored_key_ids.update(key_ids)
+    for key_id in key_ids:
+        await _run_position_checks_for_key(key_id)
+
+
+async def _run_position_checks_for_key(key_id: str) -> None:
+    """Run position checks for one exchange key. Fresh session per key; decrypt once per check."""
+    now = datetime.now(timezone.utc)
+    backoff = _key_backoff.get(key_id, {})
+    if backoff.get("backoff_until") and now < backoff["backoff_until"]:
+        return
+
+    async with AsyncSessionLocal() as db:
+        key_result = await db.execute(
+            select(ExchangeAPIKey).where(ExchangeAPIKey.id == key_id)
+        )
+        key_row = key_result.scalar_one_or_none()
+        if key_row is None:
+            _monitored_key_ids.discard(key_id)
+            logger.info(
+                "Exchange key %s no longer exists, removing from monitoring",
+                key_id,
+            )
+            return
+        user_result = await db.execute(select(User).where(User.id == key_row.user_id))
+        user = user_result.scalar_one_or_none()
+        ai_name = user.ai_name if user else "Claude"
+        trades_result = await db.execute(
+            select(Trade).where(
+                Trade.user_id == key_row.user_id,
+                Trade.status == "open",
+                Trade.exchange == key_row.exchange,
+            )
+        )
+        trades = trades_result.scalars().all()
+        # Copy minimal data so we don't hold session or ORM refs
+        trade_data = [
+            {
+                "id": t.id,
+                "symbol": t.symbol,
+                "side": t.side,
+                "stop_loss": t.stop_loss,
+                "take_profit": t.take_profit,
+            }
+            for t in trades
+        ]
+
+    if not trade_data:
+        return
+
+    raw_key = raw_secret = None
     try:
         raw_key, raw_secret = decrypt_api_key(
             key_row.encrypted_api_key, key_row.encrypted_api_secret
         )
-        client = get_exchange_client(key_row.exchange, raw_key, raw_secret)
-        current_price = await client.get_current_price(trade.symbol)
-        await client.aclose()
+        client = get_exchange_client(
+            key_row.exchange, raw_key, raw_secret,
+            is_paper=getattr(key_row, "is_paper", True),
+        )
+        raw_key = raw_secret = None
     except Exception as exc:
-        logger.error("Could not fetch price for %s: %s", trade.symbol, exc)
+        logger.error("Could not decrypt key %s: %s", key_id, exc)
         return
 
-    should_close = False
-    close_reason = ""
+    try:
+        for td in trade_data:
+            try:
+                current_price = await client.get_current_price(td["symbol"])
+                _clear_key_backoff(key_id)
+            except httpx.HTTPStatusError as exc:
+                if getattr(exc.response, "status_code", None) == 401:
+                    _key_backoff.setdefault(key_id, {"consecutive_401": 0, "backoff_until": None})
+                    _key_backoff[key_id]["consecutive_401"] = (
+                        _key_backoff[key_id].get("consecutive_401", 0) + 1
+                    )
+                    if _key_backoff[key_id]["consecutive_401"] >= 2:
+                        _key_backoff[key_id]["backoff_until"] = now + timedelta(seconds=60)
+                        logger.warning(
+                            "Exchange key %s received repeated 401s — pausing for 60s",
+                            key_id,
+                        )
+                    return
+                logger.error("Could not fetch price for %s: %s", td["symbol"], exc)
+                return
+            except Exception as exc:
+                logger.error("Could not fetch price for %s: %s", td["symbol"], exc)
+                return
 
-    if trade.side == "BUY":
-        if current_price <= (trade.stop_loss or 0):
-            should_close = True
-            close_reason = "stop-loss hit"
-        elif current_price >= (trade.take_profit or float("inf")):
-            should_close = True
-            close_reason = "take-profit hit"
-    else:  # SELL
-        if current_price >= (trade.stop_loss or float("inf")):
-            should_close = True
-            close_reason = "stop-loss hit"
-        elif current_price <= (trade.take_profit or 0):
-            should_close = True
-            close_reason = "take-profit hit"
+            should_close = False
+            close_reason = ""
+            if td["side"] == "BUY":
+                if current_price <= (td["stop_loss"] or 0):
+                    should_close = True
+                    close_reason = "stop-loss hit"
+                elif current_price >= (td["take_profit"] or float("inf")):
+                    should_close = True
+                    close_reason = "take-profit hit"
+            else:
+                if current_price >= (td["stop_loss"] or float("inf")):
+                    should_close = True
+                    close_reason = "stop-loss hit"
+                elif current_price <= (td["take_profit"] or 0):
+                    should_close = True
+                    close_reason = "take-profit hit"
 
-    if should_close:
-        await _close_position_at_price(db, trade, current_price, close_reason, ai_name)
+            if should_close:
+                async with AsyncSessionLocal() as db2:
+                    trade_refresh = await db2.get(Trade, td["id"])
+                    if trade_refresh and trade_refresh.status == "open":
+                        await _close_position_at_price(
+                            db2, trade_refresh, current_price, close_reason, ai_name
+                        )
+                        await db2.commit()
+    finally:
+        await client.aclose()
+
+
+def _clear_key_backoff(key_id: str) -> None:
+    _key_backoff[key_id] = {"consecutive_401": 0, "backoff_until": None}
 
 
 async def _close_position_at_price(
@@ -146,6 +217,36 @@ async def _close_position_at_price(
         msg = f"{ai_name} closed {trade.symbol} ({reason}). Loss: -${abs(pnl):.2f}"
 
     logger.info(msg)
+    # Feed the outcome back into shared memory (symbiotic learning).
+    try:
+        from src.agents.orchestrator import MasterOrchestrator
+
+        orch = MasterOrchestrator(db=db, user_id=trade.user_id)
+        await orch.learn_from_outcome(
+            workflow="trade_monitor_close",
+            action={
+                "trade_id": trade.id,
+                "asset": trade.symbol,
+                "exchange": getattr(trade, "exchange", None),
+                "side": trade.side,
+                "reason": reason,
+            },
+            result={
+                "success": pnl >= 0,
+                "profit_pct": round(pnl_pct, 4),
+                "profit_usd": round(pnl, 2),
+                "exit_price": exit_price,
+                "closed_by": "monitor_loop",
+            },
+            context={
+                "entry_price": trade.entry_price,
+                "stop_loss": trade.stop_loss,
+                "take_profit": trade.take_profit,
+            },
+            confidence=1.0,
+        )
+    except Exception as exc:
+        logger.debug("Shared memory learning after close failed: %s", exc)
 
 
 # ─────────────────────────────────────────────
@@ -171,25 +272,36 @@ async def enforce_loss_limits(user_id: str) -> dict:
         user_settings = settings_result.scalar_one_or_none()
 
         key_result = await db.execute(
-            select(ExchangeAPIKey).where(
+            select(ExchangeAPIKey.id).where(
                 ExchangeAPIKey.user_id == user_id,
                 ExchangeAPIKey.is_active == True,  # noqa: E712
-            )
+            ).limit(1)
         )
-        key_row = key_result.scalars().first()
+        key_id_row = key_result.first()
+        key_id = key_id_row[0] if key_id_row else None
 
-        balance = 10_000.0  # fallback
+    balance = 10_000.0  # fallback
+    if key_id:
+        async with AsyncSessionLocal() as db_key:
+            key_result = await db_key.execute(
+                select(ExchangeAPIKey).where(ExchangeAPIKey.id == key_id)
+            )
+            key_row = key_result.scalar_one_or_none()
         if key_row:
             try:
                 raw_key, raw_secret = decrypt_api_key(
                     key_row.encrypted_api_key, key_row.encrypted_api_secret
                 )
-                client = get_exchange_client(key_row.exchange, raw_key, raw_secret)
+                client = get_exchange_client(
+                    key_row.exchange, raw_key, raw_secret,
+                    is_paper=getattr(key_row, "is_paper", True),
+                )
                 balance = await client.get_account_balance()
                 await client.aclose()
             except Exception:
                 pass
 
+    async with AsyncSessionLocal() as db:
         async def _sum_losses(since: datetime) -> float:
             result = await db.execute(
                 select(func.sum(Trade.loss)).where(
@@ -257,28 +369,37 @@ async def detect_anomalies(user_id: str) -> dict:
     """Detect rapid loss, unusual trade frequency, or exchange connectivity issues.
 
     Triggers position closure and logs an alert if anomaly is found.
-
-    Returns:
-        {"anomaly_detected": bool, "type": str | None, "action_taken": str}
+    Uses fresh DB session and key-by-ID load for balance; no cached credentials.
     """
     one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
 
+    key_id = None
     async with AsyncSessionLocal() as db:
         key_result = await db.execute(
-            select(ExchangeAPIKey).where(
+            select(ExchangeAPIKey.id).where(
                 ExchangeAPIKey.user_id == user_id,
                 ExchangeAPIKey.is_active == True,  # noqa: E712
-            )
+            ).limit(1)
         )
-        key_row = key_result.scalars().first()
+        key_id_row = key_result.first()
+        key_id = key_id_row[0] if key_id_row else None
 
-        balance = 10_000.0
+    balance = 10_000.0
+    if key_id:
+        async with AsyncSessionLocal() as db_key:
+            key_result = await db_key.execute(
+                select(ExchangeAPIKey).where(ExchangeAPIKey.id == key_id)
+            )
+            key_row = key_result.scalar_one_or_none()
         if key_row:
             try:
                 raw_key, raw_secret = decrypt_api_key(
                     key_row.encrypted_api_key, key_row.encrypted_api_secret
                 )
-                client = get_exchange_client(key_row.exchange, raw_key, raw_secret)
+                client = get_exchange_client(
+                    key_row.exchange, raw_key, raw_secret,
+                    is_paper=getattr(key_row, "is_paper", True),
+                )
                 balance = await client.get_account_balance()
                 await client.aclose()
             except Exception as exc:
@@ -289,6 +410,7 @@ async def detect_anomalies(user_id: str) -> dict:
                     "action_taken": "no_action_taken",
                 }
 
+    async with AsyncSessionLocal() as db:
         # Rapid loss: more than 3% of balance lost in the last hour
         result = await db.execute(
             select(func.sum(Trade.loss)).where(

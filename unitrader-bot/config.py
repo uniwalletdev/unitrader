@@ -189,6 +189,7 @@ class Settings(BaseSettings):
     feature_ai_analysis_enabled: bool = True
     feature_email_verification: bool = True
     feature_stripe_billing: bool = False  # enable when Stripe is configured
+    testing_mode: str = "false"  # Set to "true" to bypass trade limits
 
     # ─────────────────────────────────────────────
     # Validators

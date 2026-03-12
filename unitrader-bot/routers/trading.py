@@ -27,6 +27,7 @@ from routers.auth import get_current_user
 from schemas import SuccessResponse, TradeResponse
 from security import encrypt_api_key, hash_api_key
 from src.agents.core.trading_agent import TradingAgent
+from src.agents.orchestrator import MasterOrchestrator, TaskType
 from src.integrations.exchange_client import (
     get_exchange_client,
     validate_alpaca_keys,
@@ -34,7 +35,7 @@ from src.integrations.exchange_client import (
     validate_oanda_keys,
 )
 from src.services.trade_monitoring import enforce_loss_limits
-from src.services.subscription import check_free_tier_symbol, check_trade_limit
+from src.services.subscription import check_trade_limit
 
 logger = logging.getLogger(__name__)
 
@@ -253,29 +254,74 @@ async def execute_trade(
 ):
     """Run a full market analysis cycle and execute a trade if conditions are met.
 
-    Free-tier users (trial ended + chose free) are restricted to BTC/USD
-    and 10 trades per calendar month.
+    All exchanges can trade all products they offer. Free-tier users have
+    a limit of 10 trades per calendar month.
     """
-    # ── Free tier enforcement ─────────────────────────────────────────────
-    check_free_tier_symbol(current_user, body.symbol)
+    try:
+        # ── Trade limit (free tier: 10/month) ─────────────────────────────────
+        trade_check = await check_trade_limit(current_user, db)
+        if not trade_check["allowed"]:
+            reason = trade_check.get("reason", "unknown")
+            used = trade_check.get("trades_used", 0)
+            limit = trade_check.get("trades_limit", 10)
+            
+            if reason == "trial_limit_reached":
+                detail = f"Free trial limit reached: {used}/{limit} trades used this month. Upgrade to Pro for unlimited trades."
+            elif reason == "subscription_required":
+                detail = f"Free plan limit reached: {used}/{limit} trades used this month. Upgrade to Pro for unlimited trades."
+            else:
+                detail = "Trade limit reached. Upgrade to Pro for unlimited trades."
+            
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=detail,
+            )
 
-    trade_check = await check_trade_limit(current_user, db)
-    if not trade_check["allowed"]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                f"Free plan limit reached: {trade_check['trades_used']} / "
-                f"{trade_check['trades_limit']} trades used this month. "
-                "Upgrade to Pro for unlimited trades."
-            ),
+        orchestrator = MasterOrchestrator(db=db, user_id=current_user.id)
+        orch_result = await orchestrator.route(
+            TaskType.TRADE_SIGNAL,
+            {"asset": body.symbol.upper(), "exchange": body.exchange.lower()},
         )
+        result = orch_result.result
 
-    agent = TradingAgent(current_user.id)
-    result = await agent.run_cycle(
-        symbol=body.symbol.upper(),
-        exchange_name=body.exchange.lower(),
-    )
-    return {"status": "success", "data": result}
+        # Agent/orchestrator returned no result
+        if result is None:
+            logger.error(
+                "Trading agent returned no result for user %s on %s/%s",
+                current_user.id,
+                body.symbol,
+                body.exchange,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="agent_unavailable",
+            )
+
+        # Propagate explicit agent errors (e.g. market_data_unavailable)
+        if isinstance(result, dict) and result.get("status") == "error":
+            reason = result.get("reason", "market_data_unavailable")
+            logger.error(
+                "Trading agent error for user %s on %s/%s: %s",
+                current_user.id,
+                body.symbol,
+                body.exchange,
+                reason,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=reason,
+            )
+
+        # Keep existing UI contract: return the trade result directly.
+        return {"status": "success", "data": result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Trade execute failed for user %s: %s", current_user.id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc) or "Trade execution failed. Please try again.",
+        )
 
 
 # ─────────────────────────────────────────────

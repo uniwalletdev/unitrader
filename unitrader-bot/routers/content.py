@@ -23,13 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import BlogPost, SocialPost
 from routers.auth import get_current_user
+from src.agents.orchestrator import MasterOrchestrator, TaskType
 from src.agents.marketing.content_writer import (
     SUGGESTED_TOPICS,
-    generate_blog_post,
 )
 from src.agents.marketing.social_media import (
     PLATFORMS,
-    generate_social_posts,
     get_social_calendar,
 )
 
@@ -147,11 +146,12 @@ async def generate_blog(
 
     Note: generation takes ~20–40 seconds due to the Claude API call.
     """
-    result = await generate_blog_post(
-        topic=body.topic,
-        save_to_db=True,
-        db=db,
+    orchestrator = MasterOrchestrator(db=db, user_id=current_user.id)
+    orch_result = await orchestrator.route(
+        TaskType.CONTENT_CREATE,
+        {"content_type": "blog", "topic": body.topic},
     )
+    result = orch_result.result
     if result.get("error"):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -238,6 +238,7 @@ async def get_calendar(
 async def generate_social(
     body: GenerateSocialRequest,
     current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Generate a batch of social media posts for the given topic.
 
@@ -252,12 +253,17 @@ async def generate_social(
                 detail=f"Invalid platforms: {invalid}. Valid: {PLATFORMS}",
             )
 
-    results = await generate_social_posts(
-        topic=body.topic,
-        count=body.count,
-        platforms=body.platforms,
-        save_to_db=True,
+    orchestrator = MasterOrchestrator(db=db, user_id=current_user.id)
+    orch_result = await orchestrator.route(
+        TaskType.CONTENT_CREATE,
+        {
+            "content_type": "social",
+            "topic": body.topic,
+            "count": body.count,
+            "platforms": body.platforms,
+        },
     )
+    results = orch_result.result.get("posts", []) if isinstance(orch_result.result, dict) else []
 
     return {
         "status": "success",

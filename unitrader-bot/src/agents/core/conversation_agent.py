@@ -4,13 +4,20 @@ src/agents/core/conversation_agent.py — Multi-context AI conversation agent.
 Automatically detects the user's intent, selects the appropriate tone,
 injects short-term memory from conversation history, and responds using
 the user's personalised AI name throughout.
+
+When the user asks about a specific asset or market, the agent fetches live
+price data and technical indicators and injects them into the system prompt
+so responses reference real numbers.
 """
 
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
+from typing import Any
 
 import anthropic
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,6 +46,155 @@ logger = logging.getLogger(__name__)
 _CLAUDE_MODEL = "claude-3-haiku-20240307"
 _MAX_TOKENS = 1024
 _HISTORY_TURNS = 10  # number of past exchanges to include
+
+_MARKET_CONTEXTS = {TRADING_QUESTION, MARKET_ANALYSIS}
+
+
+# ─────────────────────────────────────────────
+# Asset extraction from free-text messages
+# ─────────────────────────────────────────────
+
+_CRYPTO_ALIASES: dict[str, str] = {
+    "btc": "BTCUSDT", "bitcoin": "BTCUSDT",
+    "eth": "ETHUSDT", "ethereum": "ETHUSDT",
+    "sol": "SOLUSDT", "solana": "SOLUSDT",
+    "bnb": "BNBUSDT",
+    "xrp": "XRPUSDT", "ripple": "XRPUSDT",
+    "doge": "DOGEUSDT", "dogecoin": "DOGEUSDT",
+    "ada": "ADAUSDT", "cardano": "ADAUSDT",
+    "dot": "DOTUSDT", "polkadot": "DOTUSDT",
+    "matic": "MATICUSDT", "polygon": "MATICUSDT",
+    "avax": "AVAXUSDT", "avalanche": "AVAXUSDT",
+    "link": "LINKUSDT", "chainlink": "LINKUSDT",
+    "ltc": "LTCUSDT", "litecoin": "LTCUSDT",
+    "atom": "ATOMUSDT", "cosmos": "ATOMUSDT",
+    "uni": "UNIUSDT", "uniswap": "UNIUSDT",
+    "shib": "SHIBUSDT",
+    "pepe": "PEPEUSDT",
+}
+
+_STOCK_TICKERS = {
+    "aapl", "tsla", "googl", "goog", "amzn", "msft", "meta", "nvda",
+    "amd", "nflx", "dis", "baba", "intc", "pypl", "crm", "uber",
+    "shop", "sq", "snap", "coin", "pltr", "sofi", "nio", "rivn",
+    "spy", "qqq", "iwm", "dia", "arkk", "voo",
+}
+
+_FOREX_RE = re.compile(
+    r"\b(EUR|GBP|USD|JPY|AUD|CAD|CHF|NZD)[/_-]?"
+    r"(EUR|GBP|USD|JPY|AUD|CAD|CHF|NZD)\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_assets(message: str) -> list[tuple[str, str]]:
+    """Parse a user message and return ``[(symbol, exchange), ...]``.
+
+    Handles crypto names/tickers, US stock tickers, and forex pairs.
+    Returns at most 3 assets to avoid excessive API calls.
+    """
+    text = message.lower()
+    found: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    for alias, symbol in _CRYPTO_ALIASES.items():
+        if re.search(rf"\b{re.escape(alias)}\b", text):
+            if symbol not in seen:
+                found.append((symbol, "binance"))
+                seen.add(symbol)
+
+    for ticker in _STOCK_TICKERS:
+        if re.search(rf"\b{re.escape(ticker)}\b", text):
+            sym = ticker.upper()
+            if sym not in seen:
+                found.append((sym, "alpaca"))
+                seen.add(sym)
+
+    for m in _FOREX_RE.finditer(message):
+        pair = f"{m.group(1).upper()}_{m.group(2).upper()}"
+        if pair not in seen:
+            found.append((pair, "oanda"))
+            seen.add(pair)
+
+    return found[:3]
+
+
+# ─────────────────────────────────────────────
+# Live market data injection
+# ─────────────────────────────────────────────
+
+async def _fetch_market_snippet(symbol: str, exchange: str) -> str | None:
+    """Fetch price + indicators for one asset and format as a prompt snippet.
+
+    Returns ``None`` on any failure so the caller can silently skip.
+    """
+    from src.integrations.market_data import (
+        calculate_indicators,
+        detect_trend,
+        fetch_market_data,
+        fetch_ohlcv,
+    )
+
+    try:
+        snapshot = await fetch_market_data(symbol, exchange)
+        price = snapshot.get("price", 0)
+        change_pct = snapshot.get("price_change_pct", 0)
+
+        closes = await fetch_ohlcv(symbol, exchange, limit=200)
+        indicators: dict = {}
+        trend = "unknown"
+        if closes:
+            indicators = calculate_indicators(closes)
+            trend = detect_trend(closes)
+
+        rsi = indicators.get("rsi", "N/A")
+        macd = indicators.get("macd", {})
+        macd_signal = "bullish" if macd.get("histogram", 0) > 0 else "bearish"
+
+        return (
+            f"{symbol} ({exchange}): "
+            f"price ${price:,.4f}, "
+            f"24h change {change_pct:+.2f}%, "
+            f"RSI {rsi}, "
+            f"MACD {macd_signal}, "
+            f"trend {trend}"
+        )
+    except Exception as exc:
+        logger.debug("Market data fetch failed for %s/%s: %s", symbol, exchange, exc)
+        return None
+
+
+async def _build_market_data_block(
+    assets: list[tuple[str, str]],
+) -> tuple[str, str | None]:
+    """Fetch market data for all extracted assets concurrently.
+
+    Returns:
+        (prompt_block, data_freshness_iso)
+        ``prompt_block`` is an empty string when no data could be fetched.
+    """
+    if not assets:
+        return "", None
+
+    tasks = [_fetch_market_snippet(sym, exch) for sym, exch in assets]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    lines: list[str] = []
+    for r in results:
+        if isinstance(r, str):
+            lines.append(r)
+
+    if not lines:
+        return "", None
+
+    now = datetime.now(timezone.utc)
+    block = (
+        f"\n\nLIVE MARKET DATA (as of {now.strftime('%Y-%m-%d %H:%M UTC')}):\n"
+        + "\n".join(f"• {line}" for line in lines)
+        + "\n\nUse this data to give concrete, up-to-date answers. "
+        "Cite specific numbers when relevant."
+    )
+    return block, now.isoformat()
 
 
 # ─────────────────────────────────────────────
@@ -208,11 +364,13 @@ class ConversationAgent:
         1. Load user profile (AI name, subscription).
         2. Detect conversation context.
         3. Analyse sentiment.
-        4. Fetch short-term memory (last N turns).
-        5. Optionally inject performance data.
-        6. Build the Claude prompt and call the API.
-        7. Persist the exchange to the database.
-        8. Return structured response.
+        4. Extract asset mentions and fetch live market data.
+        5. Fetch short-term memory (last N turns).
+        6. Optionally inject performance data.
+        7. Inject live market data into the system prompt.
+        8. Build the Claude prompt and call the API.
+        9. Persist the exchange to the database.
+        10. Return structured response with ``data_freshness``.
 
         Args:
             user_message: The raw text from the user.
@@ -227,6 +385,7 @@ class ConversationAgent:
                 "user_ai_name": str,
                 "conversation_id": str,
                 "timestamp": str,
+                "data_freshness": str | None,
             }
         """
         if not settings.anthropic_api_key:
@@ -248,6 +407,17 @@ class ConversationAgent:
         context = detect_context(user_message)
         sentiment = analyze_sentiment(user_message)
 
+        # ── Extract assets and fetch live market data ──────────────────────
+        assets = _extract_assets(user_message)
+        data_freshness: str | None = None
+        market_block = ""
+
+        if assets or context in _MARKET_CONTEXTS:
+            try:
+                market_block, data_freshness = await _build_market_data_block(assets)
+            except Exception as exc:
+                logger.warning("Market data injection failed: %s", exc)
+
         # ── Build message history for Claude ──────────────────────────────
         history = await get_recent_messages_for_claude(
             self.user_id, limit=_HISTORY_TURNS, db=db
@@ -260,6 +430,10 @@ class ConversationAgent:
             async with AsyncSessionLocal() as _db2:
                 perf = await _get_performance_summary(self.user_id, _db2)
             system_prompt += f"\n\nCURRENT PERFORMANCE DATA:\n{perf}"
+
+        # ── Inject live market data ────────────────────────────────────────
+        if market_block:
+            system_prompt += market_block
 
         # ── Build Claude messages ──────────────────────────────────────────
         messages = [*history, {"role": "user", "content": user_message}]
@@ -297,6 +471,154 @@ class ConversationAgent:
             "user_ai_name": ai_name,
             "conversation_id": conv.id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "data_freshness": data_freshness,
+        }
+
+    class ConversationResponse(BaseModel):
+        """Orchestrator-enriched conversation response."""
+
+        message: str
+        context_used: list[str] = Field(default_factory=list)
+        suggested_actions: list[str] | None = None
+        market_data_freshness: datetime | None = None
+
+    async def respond_with_context(
+        self,
+        user_id: str,
+        message: str,
+        conversation_history: list,
+        market_context: dict,
+        portfolio_context: dict,
+        agent_insights: dict,
+    ) -> dict:
+        """Respond to a user message using orchestrator-provided context.
+
+        Keeps existing context detection + sentiment + persistence logic intact,
+        but adds an extra injection layer before the Claude API call.
+
+        Returns a dict compatible with the existing API contract (includes
+        ``response``) and adds:
+          - context_used
+          - suggested_actions
+          - market_data_freshness
+        """
+        self.user_id = user_id or self.user_id
+
+        if not settings.anthropic_api_key:
+            r = self._fallback_response(message)
+            r.update(
+                {
+                    "context_used": [],
+                    "suggested_actions": None,
+                    "market_data_freshness": None,
+                }
+            )
+            return r
+
+        # Load user profile (AI name)
+        async with AsyncSessionLocal() as _db:
+            user_result = await _db.execute(select(User).where(User.id == self.user_id))
+            user = user_result.scalar_one_or_none()
+        if not user:
+            r = self._fallback_response(message, reason="User not found")
+            r.update({"context_used": [], "suggested_actions": None, "market_data_freshness": None})
+            return r
+
+        ai_name = user.ai_name or "Claude"
+
+        # Existing context & sentiment detection
+        context = detect_context(message)
+        sentiment = analyze_sentiment(message)
+
+        system_prompt = _build_system_prompt(context, ai_name, user.email)
+
+        # Performance injection unchanged
+        if context == AI_PERFORMANCE:
+            async with AsyncSessionLocal() as _db2:
+                perf = await _get_performance_summary(self.user_id, _db2)
+            system_prompt += f"\n\nCURRENT PERFORMANCE DATA:\n{perf}"
+
+        context_used: list[str] = ["conversation_history"]
+
+        # Inject orchestrator context layers
+        if market_context:
+            context_used.append("market_context")
+            system_prompt += (
+                "\n\nLIVE MARKET CONTEXT (from orchestrator):\n"
+                + "\n".join(f"- {k}: {v}" for k, v in list(market_context.items())[:20])
+            )
+
+        if portfolio_context:
+            context_used.append("portfolio_context")
+            system_prompt += (
+                "\n\nPORTFOLIO CONTEXT (from DB):\n"
+                + "\n".join(f"- {k}: {v}" for k, v in list(portfolio_context.items())[:20])
+            )
+
+        if agent_insights:
+            context_used.append("agent_insights")
+            system_prompt += (
+                "\n\nAGENT INSIGHTS (shared intelligence from other agents):\n"
+                + "\n".join(f"- {k}: {v}" for k, v in list(agent_insights.items())[:30])
+            )
+
+        # Build Claude messages
+        history = conversation_history or []
+        messages = [*history, {"role": "user", "content": message}]
+
+        # Call Claude
+        try:
+            claude_response = await self._claude.messages.create(
+                model=_CLAUDE_MODEL,
+                max_tokens=_MAX_TOKENS,
+                system=system_prompt,
+                messages=messages,
+            )
+            response_text = claude_response.content[0].text.strip()
+        except Exception as exc:
+            logger.error("Claude API error in respond_with_context: %s", exc)
+            r = self._fallback_response(message, reason=str(exc))
+            r.update({"context_used": context_used, "suggested_actions": None, "market_data_freshness": None})
+            return r
+
+        # Persist conversation (same as respond)
+        conv = await save_conversation(
+            user_id=self.user_id,
+            message=message,
+            response=response_text,
+            context=context,
+            sentiment=sentiment,
+            db=None,  # persist via internal session management
+        )
+
+        from src.services.context_detection import get_context_label
+
+        # Market data freshness extraction (best-effort)
+        freshness: datetime | None = None
+        ts = market_context.get("timestamp") if isinstance(market_context, dict) else None
+        if isinstance(ts, datetime):
+            freshness = ts
+        elif isinstance(ts, str):
+            try:
+                freshness = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            except Exception:
+                freshness = None
+
+        return {
+            "response": response_text,
+            "context": context,
+            "context_label": get_context_label(context),
+            "sentiment": sentiment,
+            "user_ai_name": ai_name,
+            "conversation_id": getattr(conv, "id", None),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            # existing field (kept)
+            "data_freshness": market_context.get("timestamp") if isinstance(market_context, dict) else None,
+            # new fields
+            "message": message,
+            "context_used": context_used,
+            "suggested_actions": None,
+            "market_data_freshness": freshness,
         }
 
     # ─────────────────────────────────────────
@@ -320,5 +642,6 @@ class ConversationAgent:
             "user_ai_name": "Claude",
             "conversation_id": None,
             "timestamp": datetime.now(timezone.utc).isoformat(),
+            "data_freshness": None,
             "error": reason,
         }

@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import Conversation
 from routers.auth import get_current_user
-from src.agents.core.conversation_agent import ConversationAgent
+from src.agents.orchestrator import MasterOrchestrator, TaskType
 from src.services.context_detection import (
     ALL_CONTEXTS,
     detect_context,
@@ -70,9 +70,10 @@ async def send_message(
     - Refers to itself by your custom AI name
     - Saves the exchange to the database
     """
-    agent = ConversationAgent(current_user.id)
-    result = await agent.respond(body.message, db=db)
-    return {"status": "success", "data": result}
+    orchestrator = MasterOrchestrator(db=db, user_id=current_user.id)
+    orch_result = await orchestrator.route(TaskType.USER_QUESTION, {"message": body.message})
+    # Keep the existing API contract: return the conversation payload directly.
+    return {"status": "success", "data": orch_result.result}
 
 
 # ─────────────────────────────────────────────

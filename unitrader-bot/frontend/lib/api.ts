@@ -52,21 +52,47 @@ export const authApi = {
 export const tradingApi = {
   openPositions: () => api.get("/api/trading/open-positions"),
   history: (params?: object) => api.get("/api/trading/history", { params }),
-  performance: () => api.get("/api/trading/performance"),
+  performance: (params?: { symbol?: string; market_condition?: string }) =>
+    api.get("/api/trading/performance", { params }),
   riskAnalysis: () => api.get("/api/trading/risk-analysis"),
   execute: (symbol: string, exchange: string) =>
-    api.post("/api/trading/execute", { symbol, exchange }),
+    api.post("/api/trading/execute", { symbol, exchange }, { timeout: 90000 }),
   closePosition: (trade_id: string) =>
     api.post("/api/trading/close-position", { trade_id }),
 };
 
 // ── Exchange Keys ────────────────────────────────────────────────────────────
+
+export interface ConnectedExchange {
+  exchange: string;
+  connected_at: string | null;
+  is_paper: boolean;
+  last_used: string | null;
+}
+
+export interface ConnectExchangeResponse {
+  exchange: string;
+  connected_at: string;
+  is_paper: boolean;
+  balance_usd: number;
+  message: string;
+}
+
 export const exchangeApi = {
-  list: () => api.get("/api/trading/exchange-keys"),
-  connect: (exchange: string, api_key: string, api_secret: string) =>
-    api.post("/api/trading/exchange-keys", { exchange, api_key, api_secret }),
+  list: () => api.get<{ status: string; data: ConnectedExchange[] }>("/api/trading/exchange-keys"),
+
+  connect: (exchange: string, apiKey: string, secretKey: string, isPaper: boolean = true) =>
+    api.post<{ status: string; data: ConnectExchangeResponse }>("/api/trading/exchange-keys", {
+      exchange,
+      api_key: apiKey,
+      api_secret: secretKey,
+      is_paper: isPaper,
+    }),
+
   disconnect: (exchange: string) =>
-    api.delete(`/api/trading/exchange-keys/${exchange}`),
+    api.delete<{ status: string; data: { exchange: string; message: string } }>(
+      `/api/trading/exchange-keys/${exchange}`
+    ),
 };
 
 // ── Chat ─────────────────────────────────────────────────────────────────────
@@ -118,3 +144,73 @@ export const learningApi = {
   dashboard: () => api.get("/api/learning/dashboard"),
   trigger: () => api.post("/api/learning/trigger"),
 };
+
+// ── Trading (typed, matches backend routers/trading.py) ────────────────────────
+// Endpoints: execute, open-positions, history, performance, close-position, risk-analysis, exchange-keys
+
+export const tradingAPI = {
+  getOpenPositions: () =>
+    api.get<{ status: string; data: { positions: BackendTrade[]; count: number } }>(
+      "/api/trading/open-positions",
+    ),
+
+  getTradeHistory: (params?: {
+    symbol?: string;
+    from_date?: string;
+    to_date?: string;
+    outcome?: "profit" | "loss";
+    limit?: number;
+    offset?: number;
+  }) =>
+    api.get<{
+      status: string;
+      data: { trades: BackendTrade[]; total: number; limit: number; offset: number };
+    }>("/api/trading/history", { params }),
+
+  getPerformance: (params?: { symbol?: string; market_condition?: string }) =>
+    api.get<{
+      status: string;
+      data: PerformanceData;
+    }>("/api/trading/performance", { params }),
+
+  closePosition: (tradeId: string) =>
+    api.post("/api/trading/close-position", { trade_id: tradeId }),
+};
+
+/** Backend trade shape from routers/trading._trade_to_dict */
+export interface BackendTrade {
+  id: string;
+  symbol: string;
+  side: string;
+  quantity: number;
+  entry_price: number;
+  exit_price: number | null;
+  stop_loss: number;
+  take_profit: number;
+  profit: number | null;
+  loss: number | null;
+  profit_percent: number | null;
+  status: string;
+  claude_confidence: number | null;
+  market_condition: string | null;
+  execution_time_ms: number | null;
+  created_at: string | null;
+  closed_at: string | null;
+}
+
+/** Backend performance response data */
+export interface PerformanceData {
+  message?: string;
+  total_trades?: number;
+  wins?: number;
+  losses?: number;
+  win_rate_pct?: number;
+  total_profit_usd?: number;
+  total_loss_usd?: number;
+  net_pnl_usd?: number;
+  avg_profit_pct?: number;
+  avg_loss_pct?: number;
+  best_trade?: BackendTrade;
+  worst_trade?: BackendTrade;
+}
+

@@ -2,11 +2,12 @@
 routers/health.py — Health check endpoints for Unitrader.
 
 Endpoints:
-    GET /health           — Basic application liveness
-    GET /health/database  — Database connectivity
-    GET /health/ai        — Anthropic Claude API connectivity
-    GET /health/email     — Resend email API connectivity
-    GET /health/payment   — Stripe API connectivity
+    GET /health             — Basic application liveness
+    GET /health/database    — Database connectivity
+    GET /health/ai          — Anthropic Claude API connectivity
+    GET /health/email       — Resend email API connectivity
+    GET /health/payment     — Stripe API connectivity
+    GET /health/orchestrator — Agent performance metrics and shared memory summary
 """
 
 import logging
@@ -160,3 +161,32 @@ async def payment_health():
         timestamp=datetime.now(timezone.utc),
         services={"payment": stripe_status},
     )
+
+
+# ─────────────────────────────────────────────
+# GET /health/orchestrator
+# ─────────────────────────────────────────────
+
+@router.get("/orchestrator", summary="Orchestrator and agent performance")
+async def orchestrator_health(db: AsyncSession = Depends(get_db)):
+    """Return agent performance metrics, shared context summary, and recent outcomes.
+
+    Used for monitoring the symbiotic learning system.
+    """
+    try:
+        from src.agents.orchestrator import MasterOrchestrator
+
+        orchestrator = MasterOrchestrator(db=db, user_id="system")
+        health_data = await orchestrator.get_system_health()
+        return {
+            "status": "healthy",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "data": health_data,
+        }
+    except Exception as exc:
+        logger.error("Orchestrator health check failed: %s", exc)
+        return {
+            "status": "degraded",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "error": str(exc)[:200],
+        }

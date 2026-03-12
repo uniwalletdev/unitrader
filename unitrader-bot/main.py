@@ -43,9 +43,8 @@ from routers.whatsapp_webhooks import (
     set_whatsapp_bot_service,
     webhook_router as whatsapp_webhook_router,
 )
-from src.agents.core.trading_agent import TradingAgent
+from src.agents.orchestrator import MasterOrchestrator, TaskType
 from src.agents.marketing.content_writer import generate_weekly_posts, generate_monthly_guide
-from src.agents.marketing.social_media import generate_daily_posts
 from src.services.trade_monitoring import monitor_loop
 from src.services.email_sequences import send_trial_emails_for_all_users
 from src.services.learning_hub import learning_hub
@@ -289,37 +288,19 @@ async def _trading_loop() -> None:
                     if not approved:
                         continue
 
-                    agent = TradingAgent(user.id)
-
-                    for asset_config in approved:
-                        if isinstance(asset_config, dict):
-                            symbol = asset_config.get("symbol")
-                            exchange = asset_config.get("exchange", "binance")
-                        else:
-                            symbol = str(asset_config)
-                            exchange = "binance"
-
-                        if not symbol:
-                            continue
-
-                        if exchange not in connected_exchanges:
-                            logger.warning(
-                                "User %s wants to trade %s on %s but has no keys — skipping",
-                                user.id, symbol, exchange,
-                            )
-                            continue
-
-                        try:
-                            result = await agent.run_cycle(symbol, exchange)
-                            logger.info(
-                                "Trading cycle: user=%s symbol=%s status=%s",
-                                user.id, symbol, result.get("status"),
-                            )
-                        except Exception as exc:
-                            logger.error(
-                                "Trading cycle error: user=%s symbol=%s: %s",
-                                user.id, symbol, exc,
-                            )
+                    async with AsyncSessionLocal() as db:
+                        orchestrator = MasterOrchestrator(db=db, user_id=user.id)
+                        orch = await orchestrator.route(
+                            TaskType.TRADE_SIGNAL,
+                            {"exchanges": list(connected_exchanges), "assets": approved},
+                        )
+                        await db.commit()
+                        logger.info(
+                            "Trading loop: user=%s batch_status=%s count=%s",
+                            user.id,
+                            orch.result.get("status") if isinstance(orch.result, dict) else "unknown",
+                            orch.result.get("count") if isinstance(orch.result, dict) else None,
+                        )
 
                 except Exception as exc:
                     logger.error("Trading loop error for user %s: %s", user.id, exc)
@@ -360,8 +341,15 @@ async def _content_scheduler() -> None:
             # ── Daily social posts ────────────────────────────────────────
             if last_daily is None or (now - last_daily).total_seconds() >= 86_400:
                 try:
-                    posts = await generate_daily_posts(count=5)
-                    logger.info("Content scheduler: generated %d daily social posts", len(posts))
+                    async with AsyncSessionLocal() as db:
+                        orchestrator = MasterOrchestrator(db=db, user_id="system")
+                        orch = await orchestrator.route(
+                            TaskType.CONTENT_CREATE,
+                            {"content_type": "social", "topic": "Daily market trends", "count": 5, "use_market_trends": True},
+                        )
+                        posts = orch.result.get("posts", []) if isinstance(orch.result, dict) else []
+                        await db.commit()
+                    logger.info("Content scheduler: generated %d daily social posts (orchestrated)", len(posts))
                     last_daily = now
                 except Exception as exc:
                     logger.error("Daily social post generation failed: %s", exc)

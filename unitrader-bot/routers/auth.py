@@ -862,6 +862,272 @@ async def link_telegram_account(
         "message": "Telegram account linked successfully",
     }
 
+# ─────────────────────────────────────────────
+# POST /api/auth/telegram/webhook
+# ─────────────────────────────────────────────
+
+@router.post("/telegram/webhook")
+async def telegram_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Telegram Bot incoming message webhook.
+    Telegram sends JSON POST.
+
+    Handles:
+    - /start          → welcome message
+    - /link {code}    → links Telegram account to Unitrader user
+    - /status         → shows current trading status
+    - /positions      → shows open positions
+    - /pause          → pauses AI trading
+    - /resume         → resumes AI trading
+    - Any other msg   → passes to conversation agent for AI response
+    """
+
+    # ── Parse Telegram JSON payload ────────────────────────────────
+    try:
+        data = await request.json()
+    except Exception:
+        return {"status": "ok"}  # always return 200 to Telegram
+
+    # Extract message details
+    message = data.get("message") or data.get("edited_message")
+    if not message:
+        return {"status": "ok"}  # ignore non-message updates (polls etc)
+
+    chat_id      = str(message.get("chat", {}).get("id", ""))
+    telegram_uid = str(message.get("from", {}).get("id", ""))
+    username     = message.get("from", {}).get("username")
+    text         = (message.get("text") or "").strip()
+
+    if not chat_id or not text:
+        return {"status": "ok"}
+
+    # ── Command router ─────────────────────────────────────────────
+
+    # /start
+    if text.lower() == "/start":
+        reply = (
+            "👋 Welcome to Unitrader!\n\n"
+            "I'm your AI trading assistant. To get started:\n\n"
+            "1️⃣ Log into unitraderai.vercel.app\n"
+            "2️⃣ Go to Settings → Connect Telegram\n"
+            "3️⃣ Send me: /link YOUR_CODE\n\n"
+            "Once linked I'll send you trade alerts and you "
+            "can chat with your AI trader here anytime."
+        )
+
+    # /link CODE
+    elif text.lower().startswith("/link "):
+        code = text.split(" ", 1)[1].strip()
+        try:
+            link_body = LinkTelegramAccountRequest(
+                code=code,
+                telegram_user_id=telegram_uid,
+                telegram_username=username,
+            )
+            await link_telegram_account(link_body, db)
+            reply = (
+                "✅ Your Telegram is now linked to Unitrader!\n\n"
+                "You'll receive trade alerts here and can chat "
+                "with your AI trader anytime.\n\n"
+                "Try asking: 'What is Bitcoin doing today?'"
+            )
+        except HTTPException as e:
+            if e.status_code == 400:
+                reply = (
+                    "❌ Invalid or expired code.\n\n"
+                    "Please generate a new code from your "
+                    "Unitrader dashboard and try again."
+                )
+            elif e.status_code == 409:
+                reply = (
+                    "⚠️ This Telegram account is already linked "
+                    "to another Unitrader account."
+                )
+            else:
+                reply = "Something went wrong. Please try again."
+
+    # /status — show trading status
+    elif text.lower() == "/status":
+        account = (await db.execute(
+            select(UserExternalAccount).where(
+                UserExternalAccount.external_id == telegram_uid,
+                UserExternalAccount.platform    == "telegram",
+                UserExternalAccount.is_linked   == True,  # noqa: E712
+            )
+        )).scalar_one_or_none()
+
+        if not account:
+            reply = "⚠️ Please link your account first. Send /link YOUR_CODE"
+        else:
+            user = (await db.execute(
+                select(User).where(User.id == account.user_id)
+            )).scalar_one_or_none()
+
+            if user:
+                reply = (
+                    f"🤖 {user.ai_name} Status\n\n"
+                    f"Account: {user.email}\n"
+                    f"Subscription: {user.subscription_tier}\n"
+                    f"Trial: {user.trial_status}\n\n"
+                    "Send /positions to see open trades."
+                )
+            else:
+                reply = "⚠️ Could not find your account. Please contact support."
+
+    # /positions — show open positions
+    elif text.lower() == "/positions":
+        account = (await db.execute(
+            select(UserExternalAccount).where(
+                UserExternalAccount.external_id == telegram_uid,
+                UserExternalAccount.platform    == "telegram",
+                UserExternalAccount.is_linked   == True,  # noqa: E712
+            )
+        )).scalar_one_or_none()
+
+        if not account:
+            reply = "⚠️ Please link your account first. Send /link YOUR_CODE"
+        else:
+            from models import Trade
+            trades = (await db.execute(
+                select(Trade).where(
+                    Trade.user_id == account.user_id,
+                    Trade.status  == "open",
+                )
+            )).scalars().all()
+
+            if not trades:
+                reply = "📊 No open positions right now."
+            else:
+                lines = ["📊 *Open Positions*\n"]
+                for t in trades:
+                    pnl_sign = "+" if (t.pnl or 0) >= 0 else ""
+                    lines.append(
+                        f"• {t.symbol} {t.side} "
+                        f"@ ${t.entry_price:.2f} "
+                        f"P&L: {pnl_sign}${t.pnl or 0:.2f}"
+                    )
+                reply = "\n".join(lines)
+
+    # /pause — pause AI trading
+    elif text.lower() == "/pause":
+        account = (await db.execute(
+            select(UserExternalAccount).where(
+                UserExternalAccount.external_id == telegram_uid,
+                UserExternalAccount.platform    == "telegram",
+                UserExternalAccount.is_linked   == True,  # noqa: E712
+            )
+        )).scalar_one_or_none()
+
+        if not account:
+            reply = "⚠️ Please link your account first. Send /link YOUR_CODE"
+        else:
+            from models import UserSettings
+            user_settings = (await db.execute(
+                select(UserSettings).where(
+                    UserSettings.user_id == account.user_id
+                )
+            )).scalar_one_or_none()
+
+            if user_settings:
+                user_settings.trading_enabled = False
+                await db.commit()
+                reply = (
+                    "⏸ Trading paused.\n\n"
+                    "Your AI trader will not open new positions "
+                    "until you send /resume."
+                )
+            else:
+                reply = "⚠️ Could not find your settings. Please contact support."
+
+    # /resume — resume AI trading
+    elif text.lower() == "/resume":
+        account = (await db.execute(
+            select(UserExternalAccount).where(
+                UserExternalAccount.external_id == telegram_uid,
+                UserExternalAccount.platform    == "telegram",
+                UserExternalAccount.is_linked   == True,  # noqa: E712
+            )
+        )).scalar_one_or_none()
+
+        if not account:
+            reply = "⚠️ Please link your account first. Send /link YOUR_CODE"
+        else:
+            from models import UserSettings
+            user_settings = (await db.execute(
+                select(UserSettings).where(
+                    UserSettings.user_id == account.user_id
+                )
+            )).scalar_one_or_none()
+
+            if user_settings:
+                user_settings.trading_enabled = True
+                await db.commit()
+                reply = (
+                    "▶️ Trading resumed!\n\n"
+                    "Your AI trader is now active and watching "
+                    "the markets again."
+                )
+            else:
+                reply = "⚠️ Could not find your settings. Please contact support."
+
+    # Any other message — pass to conversation agent
+    else:
+        account = (await db.execute(
+            select(UserExternalAccount).where(
+                UserExternalAccount.external_id == telegram_uid,
+                UserExternalAccount.platform    == "telegram",
+                UserExternalAccount.is_linked   == True,  # noqa: E712
+            )
+        )).scalar_one_or_none()
+
+        if not account:
+            reply = (
+                "👋 I don't recognise you yet!\n\n"
+                "Log into unitraderai.vercel.app, go to "
+                "Settings → Connect Telegram, then send "
+                "me /link YOUR_CODE to get started."
+            )
+        else:
+            try:
+                from src.agents.core.conversation_agent import ConversationAgent
+                agent  = ConversationAgent()
+                result = await agent.chat(
+                    user_id=str(account.user_id),
+                    message=text,
+                    db=db,
+                )
+                reply = result.get(
+                    "response",
+                    "I'm thinking... try again in a moment."
+                )
+            except Exception as e:
+                logger.error(f"Telegram conversation agent error: {e}")
+                reply = (
+                    "⚠️ Your AI trader is busy right now. "
+                    "Try again in a moment."
+                )
+
+    # ── Send reply via Telegram Bot API ───────────────────────────
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                f"https://api.telegram.org/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": reply,
+                    "parse_mode": "Markdown",
+                },
+            )
+    except Exception as e:
+        logger.error(f"Telegram send error: {e}")
+
+    # Always return 200 — if Telegram gets non-200 it retries repeatedly
+    return {"status": "ok"}
+    
 
 # ─────────────────────────────────────────────
 # GET /api/auth/external-accounts
@@ -1060,3 +1326,140 @@ async def link_whatsapp_account(
 
 # Resolve forward reference used in login endpoint
 from fastapi.responses import JSONResponse  # noqa: E402 (intentional late import)
+
+# ─────────────────────────────────────────────
+# POST /api/auth/whatsapp/webhook
+# ─────────────────────────────────────────────
+
+from twilio.request_validator import RequestValidator
+from fastapi import Form
+
+@router.post("/whatsapp/webhook")
+async def whatsapp_webhook(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    Body: str = Form(default=""),
+    From: str = Form(default=""),
+    To: str = Form(default=""),
+    ProfileName: str = Form(default=""),
+    MessageSid: str = Form(default=""),
+    WaId: str = Form(default=""),
+):
+    """
+    Twilio WhatsApp incoming message webhook.
+    Twilio sends form-encoded POST — NOT JSON.
+    
+    Handles:
+    - LINK {code}     → links WhatsApp account to Unitrader user
+    - Any other msg   → passes to conversation agent for AI response
+    """
+
+    # ── Optional: validate the request actually came from Twilio ──
+    # Uncomment when TWILIO_AUTH_TOKEN is in env vars
+    # validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
+    # url = str(request.url)
+    # form_data = dict(await request.form())
+    # signature = request.headers.get("X-Twilio-Signature", "")
+    # if not validator.validate(url, form_data, signature):
+    #     raise HTTPException(status_code=403, detail="Invalid Twilio signature")
+
+    whatsapp_number = From.replace("whatsapp:", "").strip()
+    message_text    = Body.strip()
+
+    # ── LINK flow ──────────────────────────────────────────────────
+    if message_text.upper().startswith("LINK "):
+        code = message_text.split(" ", 1)[1].strip()
+
+        try:
+            link_request = LinkWhatsAppAccountRequest(
+                code=code,
+                whatsapp_number=whatsapp_number,
+            )
+            await link_whatsapp_account(link_request, db)
+
+            reply = (
+                "✅ Your WhatsApp is now linked to Unitrader!\n\n"
+                "You'll receive trade alerts and can chat with "
+                "your AI trader here anytime."
+            )
+
+        except HTTPException as e:
+            if e.status_code == 400:
+                reply = (
+                    "❌ Invalid or expired code.\n\n"
+                    "Please generate a new code from your "
+                    "Unitrader dashboard and try again."
+                )
+            elif e.status_code == 409:
+                reply = (
+                    "⚠️ This WhatsApp number is already linked "
+                    "to another Unitrader account."
+                )
+            else:
+                reply = "Something went wrong. Please try again."
+
+    # ── AI conversation flow ───────────────────────────────────────
+    else:
+        # Find the linked user for this WhatsApp number
+        account = (await db.execute(
+            select(UserExternalAccount).where(
+                UserExternalAccount.external_id == whatsapp_number,
+                UserExternalAccount.platform    == "whatsapp",
+                UserExternalAccount.is_linked   == True,  # noqa: E712
+            )
+        )).scalar_one_or_none()
+
+        if not account:
+            reply = (
+                "👋 Welcome to Unitrader!\n\n"
+                "To get started, log into unitraderai.vercel.app, "
+                "go to Settings → Connect WhatsApp, and send the "
+                "LINK code you receive here."
+            )
+        else:
+            # User is linked — pass message to conversation agent
+            try:
+                from src.agents.core.conversation_agent import ConversationAgent
+                agent  = ConversationAgent()
+                result = await agent.chat(
+                    user_id=str(account.user_id),
+                    message=message_text,
+                    db=db,
+                )
+                reply = result.get("response", "I'm thinking... try again in a moment.")
+            except Exception as e:
+                logger.error(f"WhatsApp conversation agent error: {e}")
+                reply = (
+                    "⚠️ Your AI trader is busy right now. "
+                    "Try again in a moment."
+                )
+
+    # ── Send reply via Twilio ──────────────────────────────────────
+    try:
+        from twilio.rest import Client as TwilioClient
+        twilio = TwilioClient(
+            settings.TWILIO_ACCOUNT_SID,
+            settings.TWILIO_AUTH_TOKEN,
+        )
+        twilio.messages.create(
+            from_=f"whatsapp:{settings.TWILIO_WHATSAPP_NUMBER}",
+            to=f"whatsapp:{whatsapp_number}",
+            body=reply,
+        )
+    except Exception as e:
+        logger.error(f"Twilio send error: {e}")
+
+    # Always return 200 to Twilio — if you return non-200,
+    # Twilio retries repeatedly
+    return {"status": "ok"}
+```
+
+---
+
+## Check Your env Vars in Railway
+
+Make sure these exist in Railway Variables:
+```
+TWILIO_ACCOUNT_SID=AC__REDACTED__
+TWILIO_AUTH_TOKEN=your_auth_token
+TWILIO_WHATSAPP_NUMBER=+15558979656
