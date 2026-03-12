@@ -141,6 +141,8 @@ def setup_auth():
     )
     is_reg_ok = code in (200, 201) or (code == 400 and "already" in str(body).lower()) or code == 409
     print(f"  Register: HTTP {code} {'(ok or already exists)' if is_reg_ok else '(ERROR)'}")
+    if not is_reg_ok:
+        print(f"    Response: {str(body)[:300]}")
     
     # Login
     code, body = post_request(
@@ -154,7 +156,7 @@ def setup_auth():
         print(f"  Login: HTTP {code} ✓ (token obtained)")
     else:
         print(f"  Login: HTTP {code} ✗ (FAILED)")
-        print(f"    Response: {str(body)[:150]}")
+        print(f"    Response: {str(body)[:300]}")
         sys.exit(1)
     
     return TOKEN
