@@ -149,24 +149,43 @@ class TradingAgent:
                 parts = symbol.split("/")
                 if len(parts) == 3:
                     clean_symbol = f"{parts[0]}/{parts[1]}"
+            
+            # Log the request details for debugging
+            logger.debug("Market analysis request: symbol=%s, exchange=%s, cleaned=%s", 
+                        symbol, exchange, clean_symbol)
+            
             data = await full_market_analysis(clean_symbol, exchange)
             logger.info("Market analysis complete: %s/%s @ %.4f", clean_symbol, exchange, data.get("price", 0))
             return data
         except httpx.HTTPStatusError as exc:
             status_code = getattr(exc.response, "status_code", None)
+            url = getattr(exc.response, "url", "unknown")
+            
+            # Provide specific guidance for common errors
+            error_detail = ""
+            if status_code == 401:
+                error_detail = " — Check Alpaca API credentials (APCA-API-KEY-ID/APCA-API-SECRET-KEY)"
+            elif status_code == 404:
+                # Common case: crypto symbol routed to stock endpoint
+                if symbol and ("/" in symbol or symbol.upper() in ["BTC", "ETH", "SOL"]):
+                    error_detail = f" — Symbol {symbol} appears to be crypto but routed to stock endpoint. Ensure routing is correct."
+                else:
+                    error_detail = f" — Symbol '{symbol}' not found on {exchange}"
+            
             logger.error(
-                "analyze_market HTTP error for %s/%s: %s (status=%s)",
+                "analyze_market HTTP error for %s/%s (status=%s): %s%s",
                 symbol,
                 exchange,
-                exc,
                 status_code,
+                exc,
+                error_detail,
             )
             return None
         except ValueError as exc:
             logger.error("analyze_market routing error for %s/%s: %s", symbol, exchange, exc)
             return None
         except Exception as exc:
-            logger.error("analyze_market failed for %s/%s: %s", symbol, exchange, exc)
+            logger.error("analyze_market failed for %s/%s: %s", symbol, exchange, exc, exc_info=True)
             return None
 
     # ─────────────────────────────────────────────

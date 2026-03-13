@@ -232,13 +232,9 @@ async def trigger_learning_cycle(
     """Manually trigger one learning hub analysis cycle.
 
     Useful for testing and for admin users who want to refresh patterns immediately.
+    Now available to all users (Pro restriction removed).
     """
-    if current_user.subscription_tier != "pro" and not getattr(current_user, "is_admin", False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only pro users or admins can manually trigger a learning cycle",
-        )
-
+    # All users can now trigger learning analysis
     logger.info("Manual learning cycle triggered by user %s", current_user.id)
     try:
         summary = await learning_hub.analyze_all_data()

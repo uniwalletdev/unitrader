@@ -116,24 +116,25 @@ export default function ContentPanel() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4 md:space-y-6">
       <div className="flex items-center gap-2">
-        <BookOpen size={18} className="text-brand-400" />
-        <h1 className="text-xl font-bold text-white">Content</h1>
+        <BookOpen size={16} className="md:size-[18px] text-brand-400" />
+        <h1 className="text-base md:text-xl font-bold text-white">Content</h1>
       </div>
 
       {/* Sub-tabs */}
-      <div className="flex gap-1 rounded-lg bg-dark-900 p-1">
+      <div className="flex gap-1 rounded-lg bg-dark-900 p-1 text-xs md:text-sm">
         {(["blog", "social"] as SubTab[]).map((t) => (
           <button
             key={t}
             onClick={() => setSubTab(t)}
-            className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition ${
+            className={`flex items-center gap-2 rounded-md px-2 md:px-4 py-1 md:py-2 text-xs md:text-sm font-medium transition ${
               subTab === t ? "bg-dark-800 text-white" : "text-dark-400 hover:text-dark-200"
             }`}
           >
-            {t === "blog" ? <FileText size={14} /> : <Share2 size={14} />}
-            {t === "blog" ? "Blog Posts" : "Social Posts"}
+            {t === "blog" ? <FileText size={13} className="md:size-[14px]" /> : <Share2 size={13} className="md:size-[14px]" />}
+            <span className="hidden md:inline">{t === "blog" ? "Blog Posts" : "Social Posts"}</span>
+            <span className="md:hidden text-xs">{t === "blog" ? "Blog" : "Social"}</span>
           </button>
         ))}
       </div>
@@ -147,22 +148,23 @@ export default function ContentPanel() {
       )}
 
       {/* Generate form */}
-      <div className="flex gap-2">
+      <div className="flex flex-col md:flex-row gap-2">
         <input
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !generating && (subTab === "blog" ? handleGenerateBlog() : handleGenerateSocial())}
           placeholder={subTab === "blog" ? "Enter a blog topic..." : "Enter a topic (optional)..."}
-          className="input flex-1"
+          className="input flex-1 text-xs md:text-sm"
           disabled={generating}
         />
         <button
           onClick={subTab === "blog" ? handleGenerateBlog : handleGenerateSocial}
           disabled={generating || (subTab === "blog" && !topic.trim())}
-          className="btn-primary gap-2 whitespace-nowrap px-4 disabled:opacity-50"
+          className="btn-primary gap-2 whitespace-nowrap px-3 md:px-4 py-2 text-xs md:text-sm disabled:opacity-50 touch-target w-full md:w-auto"
         >
-          {generating ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-          {generating ? "Generating..." : subTab === "blog" ? "Generate Blog" : "Generate Posts"}
+          {generating ? <Loader2 size={13} className="md:size-[14px] animate-spin" /> : <Plus size={13} className="md:size-[14px]" />}
+          <span className="hidden md:inline">{generating ? "Generating..." : subTab === "blog" ? "Generate Blog" : "Generate Posts"}</span>
+          <span className="md:hidden">{generating ? "..." : "Generate"}</span>
         </button>
       </div>
 
@@ -176,14 +178,14 @@ export default function ContentPanel() {
             No blog posts yet. Generate your first one above.
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2 md:space-y-3">
             {blogPosts.map((post) => (
-              <div key={post.id} className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                <div className="flex items-start justify-between gap-4">
+              <div key={post.id} className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-4">
+                <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-2 md:gap-4">
                   <div className="min-w-0 flex-1">
-                    <h3 className="truncate text-sm font-medium text-white">{post.title}</h3>
-                    <div className="mt-1 flex items-center gap-3 text-xs text-dark-500">
-                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                    <h3 className="truncate text-xs md:text-sm font-medium text-white">{post.title}</h3>
+                    <div className="mt-1 flex flex-col md:flex-row md:items-center gap-2 md:gap-3 text-xs text-dark-500">
+                      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium w-fit ${
                         post.status === "published"
                           ? "bg-brand-500/10 text-brand-400"
                           : "bg-yellow-500/10 text-yellow-400"
@@ -191,9 +193,9 @@ export default function ContentPanel() {
                         {post.status === "published" ? <Check size={9} /> : <Clock size={9} />}
                         {post.status}
                       </span>
-                      <span>{new Date(post.created_at).toLocaleDateString()}</span>
+                      <span className="text-xs">{new Date(post.created_at).toLocaleDateString()}</span>
                       {post.seo_keywords && post.seo_keywords.length > 0 && (
-                        <span className="truncate text-dark-600">{post.seo_keywords.join(", ")}</span>
+                        <span className="truncate text-dark-600 text-xs">{post.seo_keywords.join(", ")}</span>
                       )}
                     </div>
                   </div>
@@ -201,7 +203,7 @@ export default function ContentPanel() {
                     <button
                       onClick={() => handlePublish(post.id)}
                       disabled={publishing === post.id}
-                      className="flex shrink-0 items-center gap-1 rounded-md border border-brand-500/30 px-3 py-1.5 text-xs text-brand-400 transition hover:bg-brand-500/10 disabled:opacity-50"
+                      className="flex shrink-0 items-center gap-1 rounded-md border border-brand-500/30 px-2 md:px-3 py-1 md:py-1.5 text-xs text-brand-400 transition hover:bg-brand-500/10 disabled:opacity-50 touch-target mt-2 md:mt-0 w-full md:w-auto justify-center md:justify-start"
                     >
                       {publishing === post.id ? <Loader2 size={11} className="animate-spin" /> : <ExternalLink size={11} />}
                       Publish
@@ -218,21 +220,21 @@ export default function ContentPanel() {
             No social posts yet. Generate some above.
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-2 md:space-y-3">
             {socialPosts.map((post) => {
               const PlatformIcon = PLATFORM_ICON[post.platform] || Share2;
               const color = PLATFORM_COLOR[post.platform] || "text-dark-400";
               return (
-                <div key={post.id} className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                  <div className="mb-2 flex items-center gap-2">
-                    <PlatformIcon size={14} className={color} />
+                <div key={post.id} className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-4">
+                  <div className="mb-2 flex flex-wrap items-center gap-1 md:gap-2">
+                    <PlatformIcon size={13} className={`md:size-[14px] ${color}`} />
                     <span className={`text-xs font-medium capitalize ${color}`}>{post.platform}</span>
                     {post.post_type && (
                       <span className="rounded-full bg-dark-800 px-2 py-0.5 text-[10px] text-dark-400">{post.post_type}</span>
                     )}
                     <span className="ml-auto text-xs text-dark-600">{new Date(post.created_at).toLocaleDateString()}</span>
                   </div>
-                  <p className="text-sm leading-relaxed text-dark-300">{post.content}</p>
+                  <p className="text-xs md:text-sm leading-relaxed text-dark-300">{post.content}</p>
                 </div>
               );
             })}

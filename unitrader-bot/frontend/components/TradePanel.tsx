@@ -108,12 +108,12 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-dark-900">
           <Link2 size={28} className="text-dark-500" />
         </div>
-        <h1 className="text-xl font-bold text-white">Connect an Exchange First</h1>
-        <p className="text-sm text-dark-400">
+        <h1 className="text-base md:text-xl font-bold text-white">Connect an Exchange First</h1>
+        <p className="text-xs md:text-sm text-dark-400">
           To start trading, connect your exchange API keys. Your AI will analyze
           markets and execute trades on your behalf.
         </p>
-        <button onClick={() => router.push("/connect-exchange")} className="btn-primary">
+        <button onClick={() => router.push("/connect-exchange")} className="btn-primary text-xs md:text-sm py-2 md:py-3 w-full md:w-auto">
           Connect Exchange <ChevronRight size={14} />
         </button>
       </div>
@@ -121,23 +121,23 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="w-full space-y-4 md:space-y-6">
       <div className="flex items-center gap-2">
-        <Crosshair size={18} className="text-brand-400" />
-        <h1 className="text-xl font-bold text-white">AI Trade Execution</h1>
+        <Crosshair size={16} className="md:size-[18px] text-brand-400" />
+        <h1 className="text-base md:text-xl font-bold text-white">AI Trade Execution</h1>
       </div>
 
-      <div className="rounded-xl border border-dark-800 bg-dark-950 p-6">
+      <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-4 md:p-6">
         <div className="space-y-4">
           {/* Exchange selector */}
           <div>
             <label className="mb-1.5 block text-xs font-medium text-dark-400">Exchange</label>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               {exchanges.map((ex) => (
                 <button
                   key={ex.exchange}
                   onClick={() => { setSelectedExchange(ex.exchange); setSymbol(""); setResult(null); }}
-                  className={`rounded-lg border px-4 py-2 text-sm font-medium transition ${
+                  className={`rounded-lg border px-3 md:px-4 py-1.5 md:py-2 text-xs md:text-sm font-medium transition touch-target ${
                     selectedExchange === ex.exchange
                       ? "border-brand-500 bg-brand-500/10 text-brand-400"
                       : "border-dark-700 text-dark-400 hover:border-dark-600"
@@ -157,7 +157,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
               onChange={(e) => setSymbol(e.target.value.toUpperCase())}
               onKeyDown={(e) => e.key === "Enter" && !executing && handleExecute()}
               placeholder={selectedExchange === "alpaca" ? "e.g. AAPL" : selectedExchange === "binance" ? "e.g. BTCUSDT" : "e.g. EUR_USD"}
-              className="input font-mono"
+              className="input font-mono text-xs md:text-sm"
               disabled={executing}
             />
           </div>
@@ -172,7 +172,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
                     key={s}
                     onClick={() => setSymbol(s)}
                     disabled={executing}
-                    className={`rounded-md border px-2.5 py-1 text-xs font-mono transition ${
+                    className={`rounded-md border px-2 md:px-2.5 py-1 text-xs font-mono transition touch-target ${
                       symbol === s
                         ? "border-brand-500/50 bg-brand-500/10 text-brand-400"
                         : "border-dark-700 text-dark-500 hover:text-dark-300"
@@ -189,16 +189,16 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
           <button
             onClick={handleExecute}
             disabled={!symbol.trim() || executing}
-            className="btn-primary w-full py-3 text-sm disabled:opacity-50"
+            className="btn-primary w-full py-2 md:py-3 text-xs md:text-sm disabled:opacity-50"
           >
             {executing ? (
               <>
-                <Loader2 size={15} className="animate-spin" />
-                Analyzing market data...
+                <Loader2 size={14} className="md:size-[15px] animate-spin" />
+                Analyzing...
               </>
             ) : (
               <>
-                <Crosshair size={15} />
+                <Crosshair size={14} className="md:size-[15px]" />
                 Analyze & Trade
               </>
             )}
@@ -206,7 +206,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
 
           {executing && (
             <p className="text-center text-xs text-dark-500">
-              Your AI is fetching live data, running technical analysis, and consulting Claude. This may take 30-60 seconds.
+              Your AI is fetching live data and analyzing. This may take a moment.
             </p>
           )}
         </div>
@@ -215,8 +215,8 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
       {/* Error */}
       {error && (
         <div className="space-y-2">
-          <div className="flex items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-400">
-            <AlertCircle size={15} className="shrink-0" />
+          <div className="flex items-center gap-2 rounded-lg md:rounded-xl border border-red-500/30 bg-red-500/5 px-3 md:px-4 py-2 md:py-3 text-xs md:text-sm text-red-400">
+            <AlertCircle size={14} className="md:size-[15px] shrink-0" />
             {error}
           </div>
           {error.toLowerCase().includes("api key") && (
@@ -233,8 +233,8 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
 
       {/* Result */}
       {result && (
-        <div className="rounded-xl border border-dark-800 bg-dark-950 p-6">
-          <h2 className="mb-4 text-sm font-semibold text-dark-200">
+        <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-4 md:p-6">
+          <h2 className="mb-4 text-xs md:text-sm font-semibold text-dark-200">
             {result.status === "executed"
               ? "Trade Executed"
               : result.status === "wait"
@@ -245,20 +245,20 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
           </h2>
 
           {result.status === "skipped" && (
-            <div className="flex items-center gap-3 rounded-lg bg-dark-900 p-4">
-              <Minus size={20} className="text-yellow-400" />
+            <div className="flex items-center gap-3 rounded-lg bg-dark-900 p-3 md:p-4">
+              <Minus size={18} className="md:size-[20px] text-yellow-400" />
               <div>
-                <p className="text-sm font-medium text-yellow-400">Skipped</p>
+                <p className="text-xs md:text-sm font-medium text-yellow-400">Skipped</p>
                 <p className="text-xs text-dark-400">{result.reason}</p>
               </div>
             </div>
           )}
 
           {(result.status === "error" || result.status === "rejected") && (
-            <div className="flex items-center gap-3 rounded-lg bg-red-500/5 p-4">
-              <AlertCircle size={20} className="text-red-400" />
+            <div className="flex items-center gap-3 rounded-lg bg-red-500/5 p-3 md:p-4">
+              <AlertCircle size={18} className="md:size-[20px] text-red-400" />
               <div>
-                <p className="text-sm font-medium text-red-400">
+                <p className="text-xs md:text-sm font-medium text-red-400">
                   {result.status === "rejected" ? "Trade Rejected" : "Error"}
                 </p>
                 <p className="text-xs text-dark-400">{result.reason}</p>
@@ -269,64 +269,64 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
           {(result.status === "executed" || result.status === "wait" || result.decision) && (
             <div className="space-y-4">
               {result.message && (
-                <p className="text-sm text-dark-300">{result.message}</p>
+                <p className="text-xs md:text-sm text-dark-300">{result.message}</p>
               )}
               {/* Decision badge */}
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-2 md:gap-3">
                 {(result.decision || result.side) === "BUY" ? (
-                  <div className="flex items-center gap-2 rounded-lg bg-brand-500/10 px-4 py-2">
-                    <TrendingUp size={18} className="text-brand-400" />
-                    <span className="text-sm font-bold text-brand-400">BUY</span>
+                  <div className="flex items-center gap-2 rounded-lg bg-brand-500/10 px-3 md:px-4 py-1.5 md:py-2">
+                    <TrendingUp size={15} className="md:size-[18px] text-brand-400" />
+                    <span className="text-xs md:text-sm font-bold text-brand-400">BUY</span>
                   </div>
                 ) : (result.decision || result.side) === "SELL" ? (
-                  <div className="flex items-center gap-2 rounded-lg bg-red-500/10 px-4 py-2">
-                    <TrendingDown size={18} className="text-red-400" />
-                    <span className="text-sm font-bold text-red-400">SELL</span>
+                  <div className="flex items-center gap-2 rounded-lg bg-red-500/10 px-3 md:px-4 py-1.5 md:py-2">
+                    <TrendingDown size={15} className="md:size-[18px] text-red-400" />
+                    <span className="text-xs md:text-sm font-bold text-red-400">SELL</span>
                   </div>
                 ) : (
-                  <div className="flex items-center gap-2 rounded-lg bg-yellow-500/10 px-4 py-2">
-                    <Minus size={18} className="text-yellow-400" />
-                    <span className="text-sm font-bold text-yellow-400">WAIT</span>
+                  <div className="flex items-center gap-2 rounded-lg bg-yellow-500/10 px-3 md:px-4 py-1.5 md:py-2">
+                    <Minus size={15} className="md:size-[18px] text-yellow-400" />
+                    <span className="text-xs md:text-sm font-bold text-yellow-400">WAIT</span>
                   </div>
                 )}
 
                 {result.confidence !== undefined && (
-                  <div className="rounded-lg border border-dark-700 px-3 py-2">
+                  <div className="rounded-lg border border-dark-700 px-2 md:px-3 py-1 md:py-2">
                     <span className="text-xs text-dark-500">Confidence</span>
-                    <span className="ml-2 text-sm font-bold text-white">{result.confidence}%</span>
+                    <span className="ml-2 text-xs md:text-sm font-bold text-white">{result.confidence}%</span>
                   </div>
                 )}
 
                 {result.market_trend && (
-                  <div className="rounded-lg border border-dark-700 px-3 py-2">
+                  <div className="rounded-lg border border-dark-700 px-2 md:px-3 py-1 md:py-2">
                     <span className="text-xs text-dark-500">Trend</span>
-                    <span className="ml-2 text-sm font-medium text-dark-200">{result.market_trend}</span>
+                    <span className="ml-2 text-xs md:text-sm font-medium text-dark-200">{result.market_trend}</span>
                   </div>
                 )}
               </div>
 
               {/* Reasoning */}
               {result.reasoning && (
-                <div className="rounded-lg bg-dark-900 p-4">
+                <div className="rounded-lg bg-dark-900 p-3 md:p-4">
                   <p className="mb-1 text-xs font-medium text-dark-500">AI Reasoning</p>
-                  <p className="text-sm leading-relaxed text-dark-300">{result.reasoning}</p>
+                  <p className="text-xs md:text-sm leading-relaxed text-dark-300">{result.reasoning}</p>
                 </div>
               )}
 
               {/* Trade details */}
               {result.entry_price && (
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="rounded-lg border border-dark-700 p-3 text-center">
+                <div className="grid grid-cols-3 gap-2 md:gap-3">
+                  <div className="rounded-lg border border-dark-700 p-2 md:p-3 text-center">
                     <p className="text-[10px] text-dark-500">Entry</p>
-                    <p className="font-mono text-sm font-bold text-white">${result.entry_price.toLocaleString()}</p>
+                    <p className="font-mono text-xs md:text-sm font-bold text-white">${result.entry_price.toFixed(2)}</p>
                   </div>
-                  <div className="rounded-lg border border-red-500/20 p-3 text-center">
+                  <div className="rounded-lg border border-red-500/20 p-2 md:p-3 text-center">
                     <p className="text-[10px] text-dark-500">Stop Loss</p>
-                    <p className="font-mono text-sm font-bold text-red-400">${result.stop_loss?.toLocaleString()}</p>
+                    <p className="font-mono text-xs md:text-sm font-bold text-red-400">${result.stop_loss?.toFixed(2)}</p>
                   </div>
-                  <div className="rounded-lg border border-brand-500/20 p-3 text-center">
+                  <div className="rounded-lg border border-brand-500/20 p-2 md:p-3 text-center">
                     <p className="text-[10px] text-dark-500">Take Profit</p>
-                    <p className="font-mono text-sm font-bold text-brand-400">${result.take_profit?.toLocaleString()}</p>
+                    <p className="font-mono text-xs md:text-sm font-bold text-brand-400">${result.take_profit?.toFixed(2)}</p>
                   </div>
                 </div>
               )}
@@ -336,7 +336,8 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
                   Trade executed successfully. View it in{" "}
                   <button onClick={() => onNavigate?.("positions")} className="text-brand-400 hover:underline">
                     Positions
-                  </button>.
+                  </button>
+                  .
                 </p>
               )}
             </div>

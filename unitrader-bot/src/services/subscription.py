@@ -178,131 +178,24 @@ FREE_TRADES_PER_MONTH = 10
 
 
 def check_free_tier_symbol(user: User, symbol: str) -> None:
-    """Raise HTTPException if a free-tier user tries to trade a non-BTC symbol.
+    """Symbol restriction disabled — all users can trade all symbols.
 
-    During the 14-day trial users get unlimited symbols.  Once the trial ends
-    and the user has chosen the free tier (trial_status == "downgraded") they
-    are limited to BTC only.
+    Previously limited free-tier users to BTC only, but now all users
+    have complete free access to all symbols.
     """
-    from fastapi import HTTPException, status as http_status
-
-    # Pro users and active trials have no restriction
-    if user.subscription_tier == "pro":
-        return
-    if user.trial_status == "active":
-        return
-
-    normalised = symbol.upper().replace("-", "").replace("_", "").replace("/", "")
-    if not any(normalised.startswith(btc) for btc in ("BTCUSDT", "BTCUSD", "BTC")):
-        raise HTTPException(
-            status_code=http_status.HTTP_403_FORBIDDEN,
-            detail=(
-                f"Free plan is limited to BTC/USD. "
-                f"Upgrade to Pro to trade {symbol}."
-            ),
-        )
+    # No restrictions — all symbols allowed for all users
+    return
 
 
 async def check_trade_limit(user: User, db: AsyncSession) -> dict:
     """Check whether the user has remaining trades in their free-tier limit.
 
-    Free plan (free trial): 10 trades per calendar month.
-    Pro plan (active paid subscription): unlimited trades.
-    TESTING_MODE: bypasses all limits.
+    All users now have unlimited trades — trade limits disabled.
+    Previously: Free plan (10 trades/month), Pro plan (unlimited).
 
     Returns:
         {"allowed": bool, "trades_used": int, "trades_limit": int | None, "reason": str | None}
     """
-    # Check TESTING_MODE first
-    testing_mode = (getattr(settings, "testing_mode", "false") or "false").lower().strip()
-    if testing_mode == "true":
-        logger.info("TESTING_MODE active — trade limit bypassed for user %s", user.id)
-        return {"allowed": True, "trades_used": 0, "trades_limit": None, "reason": None}
-
-    from sqlalchemy import func
-    from models import Trade
-    from datetime import timedelta
-
-    now = datetime.now(timezone.utc)
-    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-
-    # Log detailed info at DEBUG level
-    subscription_status = user.stripe_subscription_status or "none"
-    trial_status = user.trial_status or "none"
-    trial_end = user.trial_end_date.isoformat() if user.trial_end_date else None
-    logger.debug(
-        "Trade limit check — user=%s subscription=%s trial=%s trial_end=%s",
-        user.id, subscription_status, trial_status, trial_end
-    )
-
-    # Pro users (active paid subscription) have unlimited trades
-    if is_pro(user):
-        logger.debug(
-            "Trade limit — user %s is PRO (subscription=%s) — unlimited",
-            user.id, subscription_status
-        )
-        return {"allowed": True, "trades_used": 0, "trades_limit": None, "reason": None}
-
-    # Active free trial: allow 10 trades/month
-    if user.trial_status == "active" and user.trial_end_date:
-        if now < user.trial_end_date:
-            result = await db.execute(
-                select(func.count()).where(
-                    Trade.user_id == user.id,
-                    Trade.created_at >= month_start,
-                )
-            )
-            used = result.scalar() or 0
-            limit = 10
-            allowed = used < limit
-            logger.debug(
-                "Trade limit — user %s on active trial (ends %s) — %d/%d used",
-                user.id, trial_end, used, limit
-            )
-            if not allowed:
-                logger.warning(
-                    "Trade blocked for user %s — trial_limit_reached (%d/%d trades)",
-                    user.id, used, limit
-                )
-                return {
-                    "allowed": False,
-                    "trades_used": used,
-                    "trades_limit": limit,
-                    "reason": "trial_limit_reached",
-                }
-            return {"allowed": True, "trades_used": used, "trades_limit": limit, "reason": None}
-
-    # Trial expired or not started: check if user has paid subscription
-    if user.subscription_tier == PLAN_PRO:
-        logger.debug(
-            "Trade limit — user %s has PRO tier (subscription=%s) — unlimited",
-            user.id, subscription_status
-        )
-        return {"allowed": True, "trades_used": 0, "trades_limit": None, "reason": None}
-
-    # Free tier (no active trial, no paid subscription)
-    result = await db.execute(
-        select(func.count()).where(
-            Trade.user_id == user.id,
-            Trade.created_at >= month_start,
-        )
-    )
-    used = result.scalar() or 0
-    limit = 10
-    allowed = used < limit
-    logger.debug(
-        "Trade limit — user %s on free tier — %d/%d used",
-        user.id, used, limit
-    )
-    if not allowed:
-        logger.warning(
-            "Trade blocked for user %s — subscription_required (free tier limit %d/%d trades)",
-            user.id, used, limit
-        )
-        return {
-            "allowed": False,
-            "trades_used": used,
-            "trades_limit": limit,
-            "reason": "subscription_required",
-        }
-    return {"allowed": True, "trades_used": used, "trades_limit": limit, "reason": None}
+    # All users have unlimited trades (feature now free for all)
+    logger.info("Trade limit check — user=%s — unlimited trades enabled for all users", user.id)
+    return {"allowed": True, "trades_used": 0, "trades_limit": None, "reason": None}

@@ -33,20 +33,25 @@
 }
 
 @layer components {
+  /* Touch targets for mobile - minimum 44x44 for accessibility */
+  .touch-target {
+    @apply min-h-11 md:min-h-auto min-w-11 md:min-w-auto;
+  }
+
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-semibold text-dark-950 transition-all hover:bg-brand-400 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-semibold text-dark-950 transition-all hover:bg-brand-400 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed touch-target;
   }
 
   .btn-outline {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-dark-700 px-5 py-2.5 text-sm font-semibold text-dark-200 transition-all hover:border-brand-500 hover:text-brand-500 active:scale-95;
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-dark-700 px-5 py-2.5 text-sm font-semibold text-dark-200 transition-all hover:border-brand-500 hover:text-brand-500 active:scale-95 touch-target;
   }
 
   .card {
-    @apply rounded-xl border border-dark-800 bg-dark-950 p-6;
+    @apply rounded-xl border border-dark-800 bg-dark-950 p-4 md:p-6;
   }
 
   .input {
-    @apply w-full rounded-lg border border-dark-700 bg-dark-900 px-4 py-2.5 text-sm text-dark-100 placeholder-dark-500 outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500;
+    @apply w-full rounded-lg border border-dark-700 bg-dark-900 px-3 md:px-4 py-2 md:py-2.5 text-sm text-dark-100 placeholder-dark-500 outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500 touch-target;
   }
 
   .badge-green {
@@ -64,4 +69,27 @@
   .glow-green {
     box-shadow: 0 0 30px #0adb6a22;
   }
+
+  /* Mobile-friendly table scrolling */
+  @media (max-width: 768px) {
+    .table-container {
+      @apply overflow-x-auto -mx-3 px-3;
+    }
+
+    table {
+      @apply text-xs;
+    }
+
+    th, td {
+      @apply px-2 py-1.5;
+    }
+  }
 }
+
+/* Smooth scrolling for mobile */
+@media (max-width: 768px) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+

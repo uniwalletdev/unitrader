@@ -293,6 +293,13 @@ async def login(
     access_token = create_access_token(user.id)
     refresh_token_str, expires_at = create_refresh_token(user.id)
 
+    # Delete any existing refresh tokens for this user to avoid unique constraint violations
+    existing_tokens = (await db.execute(
+        select(RefreshToken).where(RefreshToken.user_id == user.id)
+    )).scalars().all()
+    for token in existing_tokens:
+        await db.delete(token)
+
     db.add(
         RefreshToken(
             token=refresh_token_str,
@@ -628,6 +635,13 @@ async def clerk_sync(
     access_token = create_access_token(user.id)
     refresh_token_str, refresh_expires = create_refresh_token(user.id)
 
+    # Delete any existing refresh tokens for this user to avoid unique constraint violations
+    existing_tokens = (await db.execute(
+        select(RefreshToken).where(RefreshToken.user_id == user.id)
+    )).scalars().all()
+    for token in existing_tokens:
+        await db.delete(token)
+
     rt = RefreshToken(
         token=refresh_token_str,
         user_id=user.id,
@@ -707,6 +721,13 @@ async def clerk_setup(
 
     access_token = create_access_token(user.id)
     refresh_token_str, refresh_expires = create_refresh_token(user.id)
+
+    # Delete any existing refresh tokens for this user to avoid unique constraint violations
+    existing_tokens = (await db.execute(
+        select(RefreshToken).where(RefreshToken.user_id == user.id)
+    )).scalars().all()
+    for token in existing_tokens:
+        await db.delete(token)
 
     rt = RefreshToken(
         token=refresh_token_str,
@@ -1452,14 +1473,3 @@ async def whatsapp_webhook(
     # Always return 200 to Twilio — if you return non-200,
     # Twilio retries repeatedly
     return {"status": "ok"}
-```
-
----
-
-## Check Your env Vars in Railway
-
-Make sure these exist in Railway Variables:
-```
-TWILIO_ACCOUNT_SID=AC__REDACTED__
-TWILIO_AUTH_TOKEN=your_auth_token
-TWILIO_WHATSAPP_NUMBER=+15558979656

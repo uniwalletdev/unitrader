@@ -50,7 +50,12 @@ def classify_asset(symbol: str) -> str:
     """
     Returns "crypto", "forex", or "stock".
     Works on any symbol format: BTC, BTC/USD, BTCUSDT, EUR/USD, EUR_USD, AAPL.
+    
+    Prioritizes detection in order: crypto, forex, stock (default).
     """
+    if not symbol:
+        return "stock"  # Default to stock if empty
+    
     clean = symbol.upper().strip()
     parts = clean.split("/")
     if len(parts) == 3:
@@ -58,18 +63,25 @@ def classify_asset(symbol: str) -> str:
 
     base = clean.split("/")[0].split("_")[0]
 
+    # Strip stablecoin suffixes to get the actual symbol
     for stable in ["USDT", "USDC", "BUSD", "USD"]:
         if base.endswith(stable) and len(base) > len(stable):
             base = base[: -len(stable)]
             break
 
+    # Check if it's a known cryptocurrency
     if base in CRYPTO_SYMBOLS:
+        logger.debug("Classified %s as crypto (base: %s)", symbol, base)
         return "crypto"
 
+    # Check if it's a known forex pair
     normalized = clean.replace("_", "/")
     if normalized in FOREX_PAIRS:
+        logger.debug("Classified %s as forex", symbol)
         return "forex"
 
+    # Default to stock
+    logger.debug("Classified %s as stock (base: %s)", symbol, base)
     return "stock"
 
 
@@ -150,7 +162,13 @@ async def fetch_market_data(symbol: str, exchange: str) -> dict:
     """
     Main entry point. Validates exchange can trade this asset,
     normalises symbol, then routes to the correct fetcher.
+    
+    For Alpaca, explicitly detects crypto (contains "/" or is in CRYPTO_SYMBOLS)
+    to prevent routing to stock endpoint with invalid symbols like "BTC/USD".
     """
+    if not symbol or not exchange:
+        raise ValueError("symbol and exchange are required")
+    
     clean_symbol = symbol.upper().strip()
     parts = clean_symbol.split("/")
     if len(parts) == 3:
@@ -158,17 +176,29 @@ async def fetch_market_data(symbol: str, exchange: str) -> dict:
 
     ex = exchange.lower()
     validate_exchange_for_symbol(clean_symbol, ex)
-    normalised = normalise_symbol(clean_symbol, ex)
     asset_type = classify_asset(clean_symbol)
-
-    if ex == "alpaca" and asset_type == "crypto":
-        return await _fetch_alpaca_crypto(normalised)
-    if ex == "alpaca" and asset_type == "stock":
-        return await _fetch_alpaca_stock(normalised)
+    
+    # CRITICAL: For Alpaca, explicitly route crypto symbols to crypto endpoint
+    # to prevent "GET .../v2/stocks/BTC/USD/... 404 Not Found" errors
+    if ex == "alpaca":
+        if asset_type == "crypto":
+            normalised = normalise_symbol(clean_symbol, ex)
+            logger.debug("Routing Alpaca crypto: %s → %s (crypto)", clean_symbol, normalised)
+            return await _fetch_alpaca_crypto(normalised)
+        elif asset_type == "stock":
+            normalised = normalise_symbol(clean_symbol, ex)
+            logger.debug("Routing Alpaca stock: %s → %s (stock)", clean_symbol, normalised)
+            return await _fetch_alpaca_stock(normalised)
+        else:
+            raise ValueError(f"Unsupported asset type '{asset_type}' for Alpaca: {clean_symbol}")
+    
+    normalised = normalise_symbol(clean_symbol, ex)
+    
     if ex == "binance":
         return await _fetch_binance(normalised)
     if ex == "oanda":
         return await _fetch_oanda(normalised)
+    
     raise ValueError(f"Unknown exchange: {exchange}")
 
 
@@ -192,24 +222,54 @@ async def _fetch_binance(symbol: str) -> dict:
 
 
 async def _fetch_alpaca_crypto(symbol: str) -> dict:
-    """Symbol already normalised to BTC/USD format. Uses Alpaca crypto data API."""
+    """Symbol already normalised to BTC/USD format. Uses Alpaca crypto data API.
+    
+    Raises httpx.HTTPStatusError on API failures (401, 404, etc).
+    Returns dict with price, high_24h, low_24h, volume, price_change_pct, timestamp.
+    """
+    if not symbol or "/" not in symbol:
+        raise ValueError(f"Alpaca crypto symbol must be in X/USD format, got: {symbol}")
+    
     base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
     headers = {}
     if getattr(settings, "alpaca_api_key", None):
         headers["APCA-API-KEY-ID"] = settings.alpaca_api_key
     if getattr(settings, "alpaca_api_secret", None):
         headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
-    async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
-        quote_resp = await client.get(
-            f"{base}/v1beta3/crypto/us/latest/quotes",
-            params={"symbols": symbol},
-        )
-        quote_resp.raise_for_status()
-        bars_resp = await client.get(
-            f"{base}/v1beta3/crypto/us/bars",
-            params={"symbols": symbol, "timeframe": "1Day", "limit": 2},
-        )
-        bars_resp.raise_for_status()
+    
+    if not headers:
+        logger.warning("No Alpaca API credentials configured for crypto fetch of %s", symbol)
+    
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
+            # Fetch latest quote
+            quote_resp = await client.get(
+                f"{base}/v1beta3/crypto/us/latest/quotes",
+                params={"symbols": symbol},
+            )
+            quote_resp.raise_for_status()
+            
+            # Fetch 1-day bars for 24h metrics
+            bars_resp = await client.get(
+                f"{base}/v1beta3/crypto/us/bars",
+                params={"symbols": symbol, "timeframe": "1Day", "limit": 2},
+            )
+            bars_resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            logger.error(
+                "Alpaca crypto auth failed (401) for %s - check API credentials. "
+                "Key: %s, Secret configured: %s",
+                symbol,
+                bool(headers.get("APCA-API-KEY-ID")),
+                bool(headers.get("APCA-API-SECRET-KEY")),
+            )
+        elif e.response.status_code == 404:
+            logger.error(
+                "Alpaca crypto symbol not found (404): %s - ensure it's in X/USD format",
+                symbol,
+            )
+        raise
 
     quotes = quote_resp.json().get("quotes", {}).get(symbol, {})
     bars_data = bars_resp.json().get("bars", {}).get(symbol, [])
@@ -236,21 +296,48 @@ async def _fetch_alpaca_crypto(symbol: str) -> dict:
 
 
 async def _fetch_alpaca_stock(symbol: str) -> dict:
-    """Symbol already normalised to AAPL format."""
+    """Symbol already normalised to AAPL format. Uses Alpaca stock data API.
+    
+    Raises httpx.HTTPStatusError on API failures (401, 404, etc).
+    Returns dict with price, high_24h, low_24h, volume, price_change_pct, timestamp.
+    """
+    if not symbol or "/" in symbol:
+        raise ValueError(f"Alpaca stock symbol must NOT contain '/', got: {symbol}")
+    
     base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
     headers = {}
     if getattr(settings, "alpaca_api_key", None):
         headers["APCA-API-KEY-ID"] = settings.alpaca_api_key
     if getattr(settings, "alpaca_api_secret", None):
         headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
-    async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
-        quote_resp = await client.get(f"{base}/v2/stocks/{symbol}/quotes/latest")
-        quote_resp.raise_for_status()
-        bars_resp = await client.get(
-            f"{base}/v2/stocks/{symbol}/bars",
-            params={"timeframe": "1Day", "limit": 2},
-        )
-        bars_resp.raise_for_status()
+    
+    if not headers:
+        logger.warning("No Alpaca API credentials configured for stock fetch of %s", symbol)
+    
+    try:
+        async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
+            quote_resp = await client.get(f"{base}/v2/stocks/{symbol}/quotes/latest")
+            quote_resp.raise_for_status()
+            bars_resp = await client.get(
+                f"{base}/v2/stocks/{symbol}/bars",
+                params={"timeframe": "1Day", "limit": 2},
+            )
+            bars_resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            logger.error(
+                "Alpaca stock auth failed (401) for %s - check API credentials. "
+                "Key: %s, Secret configured: %s",
+                symbol,
+                bool(headers.get("APCA-API-KEY-ID")),
+                bool(headers.get("APCA-API-SECRET-KEY")),
+            )
+        elif e.response.status_code == 404:
+            logger.error(
+                "Alpaca stock symbol not found (404): %s - check symbol validity",
+                symbol,
+            )
+        raise
 
     quote = quote_resp.json().get("quote", {})
     bars = bars_resp.json().get("bars", [])
@@ -269,7 +356,7 @@ async def _fetch_alpaca_stock(symbol: str) -> dict:
         "high_24h": high_24h,
         "low_24h": low_24h,
         "volume": volume,
-        "price_change_pct": 0.0,
+        "price_change_pct": float(quote.get("pc", 0) or 0),
         "timestamp": datetime.now(timezone.utc),
     }
 

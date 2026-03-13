@@ -1,0 +1,421 @@
+---
+description: Unitrader full project context — always read this before writing any code
+globs: ["**/*.py", "**/*.ts", "**/*.tsx", "**/*.js"]
+alwaysApply: true
+---
+
+# Unitrader — Full Project Context
+
+> Read this entire file before writing any code. This is a production SaaS platform
+> with real users and real money. Every decision matters.
+
+---
+
+## What Unitrader Is
+
+**Company:** Unitrading (UK-based, global market)
+**Product:** Unitrader — AI-powered trading SaaS platform
+**Target market:** 650M+ global traders
+**Business model:** $9.99/month subscription, 14-day free trial, users keep 100% of profits
+**Vision:** Unicorn-scale — 28 AI agents in a unified symbiotic learning system
+
+**Core concept:** Users sign up, name their own AI trader companion (e.g. "TradeMaster",
+"CryptoKing"), connect their exchange account, and the AI trades crypto/stocks/forex
+automatically on their behalf. Users keep all profits. Unitrader charges only the subscription.
+
+---
+
+## Production URLs
+
+| Service | URL | Platform |
+|---|---|---|
+| Backend API | `unitrader-production.up.railway.app` | Railway |
+| Frontend | `unitraderai.vercel.app` | Vercel |
+| Database | Supabase PostgreSQL 17.6 | Supabase |
+| Custom domain (pending) | `unitrader.ai` | DNS not yet pointed |
+
+---
+
+## Tech Stack
+
+### Backend
+- **Framework:** FastAPI (async)
+- **ORM:** async SQLAlchemy
+- **Database:** Supabase PostgreSQL 17.6
+  - Session Pooler, port 5432
+  - NullPool (required for PgBouncer transaction mode)
+  - Never use regular pool — causes prepared statement conflicts
+- **Auth:** Clerk (never build custom auth — always use Clerk)
+- **Payments:** Stripe
+- **Monitoring:** Sentry
+- **Email:** Resend (NOT SendGrid — this decision is final)
+- **Deployment:** Railway (auto-deploys from GitHub)
+
+### Frontend
+- **Framework:** Next.js 14
+- **Styling:** Tailwind CSS
+- **Auth:** Clerk (`@clerk/nextjs`)
+- **API client:** Axios (typed, in `lib/api.ts`)
+- **Deployment:** Vercel (root directory: `unitrader-bot/frontend`)
+
+### AI
+- **Provider:** Anthropic Claude API
+- **Model:** claude-sonnet (latest)
+- **Usage:** 3 agents currently — trading, conversation, content/social
+
+### Exchanges (Paper Trading in dev, Live in prod)
+- **Stocks/ETFs:** Alpaca
+  - Paper: `https://paper-api.alpaca.markets`
+  - Live: `https://api.alpaca.markets`
+- **Crypto:** Binance (primary), Coinbase Advanced Trade (adding)
+  - Paper: `https://testnet.binance.vision`
+  - Live: `https://api.binance.com`
+- **Forex:** OANDA
+  - Paper: `https://api-fxpractice.oanda.com`
+  - Live: `https://api-fxtrade.oanda.com`
+
+---
+
+## Full File Structure
+
+```
+unitrader/
+├── .cursor/rules/unitrader-context.mdc     <- YOU ARE HERE
+├── .gitignore
+├── Dockerfile                              <- Multi-stage Docker build
+├── railway.toml                            <- Railway deployment config
+└── unitrader-bot/
+    ├── main.py                             <- FastAPI app, CORS, Sentry, background loops
+    ├── config.py                           <- Pydantic Settings, all env vars, validators
+    ├── database.py                         <- Async engine, NullPool, session factory
+    ├── models.py                           <- 15 DB models (see below)
+    ├── schemas.py                          <- All Pydantic request/response schemas
+    ├── security.py                         <- bcrypt, Fernet encryption, JWT, TOTP/2FA
+    ├── requirements.txt
+    ├── .env.example
+    ├── test_production.py                  <- 11-check production test script
+    ├── routers/
+    │   ├── auth.py                         <- 21 endpoints
+    │   ├── health.py                       <- 5 endpoints
+    │   ├── trading.py                      <- 9 endpoints (incl exchange key management)
+    │   ├── chat.py                         <- 5 endpoints
+    │   ├── content.py                      <- 8 endpoints
+    │   ├── billing.py                      <- 5 endpoints
+    │   ├── trial.py                        <- 3 endpoints
+    │   ├── learning.py                     <- 5 endpoints
+    │   ├── telegram_webhooks.py
+    │   └── whatsapp_webhooks.py
+    ├── src/
+    │   ├── agents/
+    │   │   ├── core/
+    │   │   │   ├── trading_agent.py        <- Claude-powered: analyse->decide->execute
+    │   │   │   └── conversation_agent.py   <- Per-context system prompts, history
+    │   │   └── marketing/
+    │   │       ├── content_writer.py       <- Blog post generator with SEO
+    │   │       └── social_media.py         <- Social posts for 4 platforms
+    │   ├── integrations/
+    │   │   ├── exchange_client.py          <- Binance, Alpaca, OANDA clients
+    │   │   ├── market_data.py              <- Live data, RSI, MACD, MAs, trend detection
+    │   │   ├── stripe_client.py            <- Stripe integration
+    │   │   ├── telegram_bot.py             <- Telegram bot (full trading commands)
+    │   │   └── whatsapp_bot.py             <- WhatsApp bot via Twilio
+    │   └── services/
+    │       ├── trade_execution.py          <- Position sizing, stop-loss, take-profit
+    │       ├── trade_monitoring.py         <- Monitor loop, loss limits, circuit breakers
+    │       ├── context_detection.py        <- 8-context keyword/pattern scoring engine
+    │       ├── conversation_memory.py      <- Save/load conversations, sentiment analysis
+    │       ├── subscription.py             <- Subscription management
+    │       ├── learning_hub.py             <- Cross-agent learning system
+    │       └── email_sequences.py          <- Trial reminders, onboarding emails
+    ├── tests/
+    │   ├── test_trading.py                 <- 35+ tests
+    │   ├── test_chat.py                    <- 50+ tests
+    │   ├── test_content.py                 <- 55+ tests
+    │   ├── test_telegram_bot.py            <- 40+ tests
+    │   └── test_whatsapp_bot.py            <- 50+ tests
+    └── frontend/
+        ├── pages/
+        │   ├── index.tsx                   <- Landing page (hero, features, pricing, FAQ)
+        │   ├── app.tsx                     <- Dashboard (sidebar, stats, chat, trades, settings)
+        │   ├── _app.tsx                    <- ClerkProvider wrapper
+        │   ├── onboarding.tsx              <- AI name setup
+        │   ├── trial-countdown.tsx         <- Trial countdown with performance stats
+        │   ├── login/[[...index]].tsx      <- Clerk login
+        │   └── register/[[...index]].tsx   <- Clerk register
+        ├── components/
+        │   ├── ExchangeConnections.tsx     <- Connect/disconnect Alpaca/Binance/OANDA
+        │   └── TrialChoiceModal.tsx        <- Pro/Free/Cancel choice modal
+        ├── hooks/
+        │   └── useTrialStatus.ts           <- Trial status with caching
+        ├── lib/
+        │   └── api.ts                      <- Typed Axios client for all backend routes
+        ├── middleware.ts                    <- Clerk middleware
+        ├── styles/globals.css              <- Tailwind + dark theme
+        ├── vercel.json
+        ├── package.json
+        ├── next.config.js
+        ├── tailwind.config.js
+        └── tsconfig.json
+```
+
+---
+
+## Database Models
+
+| Model | Key Fields |
+|---|---|
+| `User` | id, clerk_id, email, ai_name, subscription_status, trial_end |
+| `Trade` | id, user_id, exchange, symbol, side, quantity, price, status |
+| `Conversation` | id, user_id, messages (JSON), context_type, sentiment |
+| `ExchangeAPIKey` | id, user_id, exchange, encrypted_api_key, encrypted_secret |
+| `UserSettings` | id, user_id, risk_level, max_trade_size, trading_enabled |
+| `AuditLog` | id, user_id, action, details, ip_address, timestamp |
+| `RefreshToken` | id, user_id, token_hash, expires_at |
+| `UserExternalAccount` | id, user_id, platform, external_id |
+| `BotMessage` | id, user_id, platform, message, direction |
+| `TelegramLinkingCode` | id, user_id, code, expires_at |
+| `Pattern` | id, agent_type, pattern_data, confidence |
+| `AgentInstruction` | id, agent_name, instruction, priority |
+| `AgentOutput` | id, agent_name, output_type, content, outcome |
+| `BlogPost` | id, title, content, seo_keywords, published_at |
+| `SocialPost` | id, platform, content, scheduled_at, posted_at |
+
+---
+
+## Security Rules (NON-NEGOTIABLE)
+
+1. **Exchange API keys** — ALWAYS encrypt with Fernet before storing in DB
+   ```python
+   from security import encrypt_api_key
+   encrypted_key, encrypted_secret = encrypt_api_key(api_key, api_secret)
+   ```
+
+2. **Never log API keys** — not in print(), not in logger, not in Sentry
+
+3. **Never return API keys to frontend** after initial save — write-only
+
+4. **Never hardcode any API key** — always use environment variables via `config.py`
+
+5. **Auth** — always use Clerk JWT verification via `get_current_user` dependency
+
+6. **Trading mode** — always check `TRADING_MODE` env var before executing real trades
+
+---
+
+## Environment Variables (all in Railway)
+
+```bash
+# Core
+DATABASE_URL=postgresql+asyncpg://...  # Supabase Session Pooler
+TRADING_MODE=paper                      # "paper" or "live"
+ALLOWED_ORIGINS=https://unitraderai.vercel.app,https://unitrader.ai
+
+# AI
+ANTHROPIC_API_KEY=...
+
+# Auth
+CLERK_SECRET_KEY=...
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=...
+
+# Payments
+STRIPE_SECRET_KEY=...
+STRIPE_PUBLISHABLE_KEY=...
+STRIPE_WEBHOOK_SECRET=...              # whsec_... from Stripe dashboard
+
+# Email
+RESEND_API_KEY=...
+
+# Exchanges — Paper
+ALPACA_API_KEY=...
+ALPACA_SECRET_KEY=...
+ALPACA_BASE_URL=https://paper-api.alpaca.markets
+
+BINANCE_API_KEY=...
+BINANCE_SECRET=...
+BINANCE_BASE_URL=https://testnet.binance.vision
+
+OANDA_API_TOKEN=...
+OANDA_ACCOUNT_ID=...
+OANDA_BASE_URL=https://api-fxpractice.oanda.com
+
+# Monitoring
+SENTRY_DSN=...
+
+# Messaging
+TELEGRAM_BOT_TOKEN=...
+TWILIO_ACCOUNT_SID=...
+TWILIO_AUTH_TOKEN=...
+```
+
+---
+
+## AI Agent Architecture
+
+### Current (3 agents + learning hub)
+```
+trading_agent.py        -> analyse market -> decide -> execute trades
+conversation_agent.py   -> chat with user, 8 context types, history
+content_writer.py       -> blog posts with SEO
+social_media.py         -> posts for Twitter, LinkedIn, Instagram, Facebook
+learning_hub.py         -> cross-agent pattern discovery and instruction dispatch
+```
+
+### Target (28 agents — symbiotic learning system)
+Agents learn from each other's outcomes. A master orchestrator routes tasks.
+Next agents to build:
+- Market sentiment agent (pulls live news + social sentiment)
+- Risk management agent (cross-portfolio risk assessment)
+- Portfolio optimisation agent
+- Agent orchestrator (routes between all agents)
+
+### Agent Pattern (always follow this)
+```python
+async def run(self, user_id: str, context: dict) -> dict:
+    # 1. Gather context
+    # 2. Build system prompt
+    # 3. Call Claude API
+    # 4. Parse response
+    # 5. Execute action
+    # 6. Log to AuditLog
+    # 7. Return result
+```
+
+---
+
+## API Router Patterns
+
+### Always follow this pattern for new endpoints:
+```python
+@router.post("/endpoint-name")
+async def endpoint_name(
+    request: RequestSchema,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        # logic here
+        await db.commit()
+        return {"status": "success", "data": {...}}
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+### DB operations — always async:
+```python
+result = await db.execute(select(Model).where(Model.user_id == user_id))
+items = result.scalars().all()
+```
+
+---
+
+## Exchange Key Flow (User Journey)
+
+```
+User connects exchange in Settings -> ExchangeConnections component
+           |
+POST /api/trading/exchange-keys
+{exchange: "alpaca", api_key: "...", api_secret: "..."}
+           |
+Backend validates keys against exchange API (get_account_balance)
+           |
+Fernet encrypt both keys
+           |
+Store in ExchangeAPIKey table
+           |
+Return {success, exchange, balance_usd} — NEVER return the keys
+           |
+Trading agent decrypts in memory only when executing trades
+```
+
+**How exchanges work for users:**
+- Users bring their OWN exchange accounts (Alpaca/Binance/OANDA)
+- Their money stays in THEIR exchange account — Unitrader never holds funds
+- Unitrader is a software tool — not a broker, no FCA licence required
+- Each exchange covers different asset classes:
+  - Alpaca -> US stocks & ETFs
+  - Binance/Coinbase -> Crypto
+  - OANDA -> Forex
+
+---
+
+## Outstanding Items (Build These Next)
+
+### DONE (completed)
+- [x] CORS: `unitraderai.vercel.app` added to `ALLOWED_ORIGINS` in Railway
+- [x] Exchange key endpoints in trading.py (POST/GET/DELETE)
+- [x] Connect Exchange UI in frontend (ExchangeConnections component in Settings)
+- [x] Fix trial period mismatch (14 days everywhere now)
+- [x] Fix Alpaca double /v2 URL bug
+- [x] Fix Supabase SSL + NullPool for PgBouncer
+- [x] Frontend TypeScript build errors fixed
+
+### URGENT
+- [ ] API key rotation: keys were exposed in chat — rotate in each platform
+- [ ] Stripe webhook: configure at `dashboard.stripe.com` -> Developers -> Webhooks
+  - URL: `https://unitrader-production.up.railway.app/api/billing/webhook`
+  - Events: checkout.session.completed, customer.subscription.*, invoice.payment_*
+- [ ] Update ALPACA_BASE_URL in Railway to `https://paper-api.alpaca.markets` (no /v2)
+
+### High Priority
+- [ ] Upgrade Next.js from 14.2.3 (security advisory)
+- [ ] Wire live market data into conversation_agent.py
+- [ ] Add Coinbase Advanced Trade to exchange_client.py
+- [ ] Write tests for billing.py and trial.py routers
+- [ ] Fix `input-field` CSS class in onboarding.tsx (should be `input`)
+
+### Architecture
+- [ ] Design agent orchestration layer
+- [ ] Build market sentiment agent
+- [ ] DNS: point unitrader.ai to production
+
+---
+
+## Coding Standards
+
+1. **Python:** async everywhere, type hints always, Pydantic for validation
+2. **TypeScript:** strict mode, typed API responses, no `any`
+3. **Tests:** every new endpoint needs a test in `/tests/`
+4. **Error handling:** always try/catch, always rollback DB on error
+5. **Logging:** use `logger = logging.getLogger(__name__)` — never `print()`
+6. **Comments:** explain WHY not WHAT
+7. **No debug code** in production (no `fix_*.py` scripts in root)
+
+---
+
+## Background Loops (in main.py)
+
+```
+# Trading loop — runs every 5 minutes
+# Fetches market data -> runs trading_agent -> executes trades for active users
+
+# Monitor loop — runs every 1 minute
+# Checks open positions -> enforces stop-loss/take-profit -> circuit breakers
+
+# Content scheduler — hourly
+# Daily: social posts | Weekly: blog posts | Monthly: performance reports
+
+# Email scheduler — daily 9am UTC
+# Trial drip emails at day 7, 3, 1, 0
+
+# Learning hub — hourly
+# Cross-agent pattern discovery and instruction updates
+```
+
+---
+
+## When Adding New Features — Checklist
+
+- [ ] Does it need a DB model change? -> update `models.py` + migration
+- [ ] Does it need new env vars? -> add to `config.py` + `.env.example` + Railway
+- [ ] Does it need auth? -> use `get_current_user` dependency
+- [ ] Does it handle user funds/keys? -> use Fernet encryption
+- [ ] Does it call an exchange? -> check `TRADING_MODE` first
+- [ ] Does it need tests? -> yes, always
+- [ ] Does it need a frontend component? -> follow existing Tailwind dark theme
+- [ ] Does it affect billing/trial? -> test Stripe webhook flow
+
+---
+
+*Last updated: March 2026 | Production: Live | 11/11 health checks passing*

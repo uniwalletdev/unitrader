@@ -49,18 +49,34 @@ const NAV = [
   { id: "settings", icon: Settings, label: "Settings" },
 ];
 
-function Sidebar({ active, onChange, aiName, onLogout }: {
+function Sidebar({ active, onChange, aiName, onLogout, isMobile, onClose }: {
   active: string; onChange: (id: string) => void;
   aiName: string; onLogout: () => void;
+  isMobile?: boolean; onClose?: () => void;
 }) {
   return (
-    <aside className="flex h-full w-56 shrink-0 flex-col border-r border-dark-800 bg-dark-950">
-      {/* Logo */}
-      <div className="flex items-center gap-2 border-b border-dark-800 px-5 py-4">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500">
-          <TrendingUp size={15} className="text-dark-950" />
+    <aside className={`flex h-full flex-col border-r border-dark-800 bg-dark-950 ${
+      isMobile 
+        ? 'fixed inset-y-0 left-0 z-40 w-64 translate-x-0 transition-transform duration-300 ease-out overflow-y-auto' 
+        : 'w-56 shrink-0'
+    }`}>
+      {/* Header with close button for mobile */}
+      <div className="flex items-center justify-between border-b border-dark-800 px-5 py-4">
+        <div className="flex items-center gap-2">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500">
+            <TrendingUp size={15} className="text-dark-950" />
+          </div>
+          <span className="font-bold text-white">Unitrader</span>
         </div>
-        <span className="font-bold text-white">Unitrader</span>
+        {isMobile && (
+          <button
+            onClick={onClose}
+            className="rounded-lg p-2 text-dark-400 hover:bg-dark-800 hover:text-white"
+            aria-label="Close menu"
+          >
+            <X size={18} />
+          </button>
+        )}
       </div>
 
       {/* AI status */}
@@ -77,7 +93,13 @@ function Sidebar({ active, onChange, aiName, onLogout }: {
         {NAV.map(({ id, icon: Icon, label }) => (
           <button
             key={id}
-            onClick={() => onChange(id)}
+            onClick={() => {
+              onChange(id);
+              // Close mobile sidebar after selection
+              if (isMobile && onClose) {
+                setTimeout(onClose, 300);
+              }
+            }}
             className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition ${
               active === id
                 ? "bg-brand-500/10 font-medium text-brand-400"
@@ -85,7 +107,7 @@ function Sidebar({ active, onChange, aiName, onLogout }: {
             }`}
           >
             <Icon size={16} />
-            {label}
+            <span className="truncate">{label}</span>
           </button>
         ))}
       </nav>
@@ -93,7 +115,7 @@ function Sidebar({ active, onChange, aiName, onLogout }: {
       {/* Logout */}
       <button
         onClick={onLogout}
-        className="flex items-center gap-3 border-t border-dark-800 px-6 py-4 text-sm text-dark-500 hover:text-red-400"
+        className="flex items-center gap-3 border-t border-dark-800 px-6 py-4 text-sm text-dark-500 hover:text-red-400 w-full"
       >
         <LogOut size={16} />
         Log Out
@@ -110,12 +132,12 @@ function StatCard({ label, value, sub, positive }: {
   label: string; value: string; sub?: string; positive?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
-      <p className="mb-1 text-xs text-dark-500">{label}</p>
-      <p className={`text-2xl font-bold ${positive === undefined ? "text-white" : positive ? "text-brand-400" : "text-red-400"}`}>
+    <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-5">
+      <p className="mb-1 text-xs text-dark-500 truncate">{label}</p>
+      <p className={`text-lg md:text-2xl font-bold ${positive === undefined ? "text-white" : positive ? "text-brand-400" : "text-red-400"}`}>
         {value}
       </p>
-      {sub && <p className="mt-1 text-xs text-dark-500">{sub}</p>}
+      {sub && <p className="mt-1 text-xs text-dark-500 truncate">{sub}</p>}
     </div>
   );
 }
@@ -151,18 +173,18 @@ function Dashboard({ user }: { user: User | null }) {
   const r = risk?.data ?? risk ?? {};
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-white">
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <h1 className="text-lg md:text-xl font-bold text-white truncate">
           {user?.ai_name ? `${user.ai_name}'s Dashboard` : "Dashboard"}
         </h1>
-        <button onClick={load} className="btn-outline gap-2 py-2 text-xs">
+        <button onClick={load} className="btn-outline gap-2 py-2 text-xs w-full md:w-auto">
           <RefreshCw size={13} /> Refresh
         </button>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 md:gap-4 lg:grid-cols-4">
         <StatCard label="Balance" value={r.balance_usd ? `$${r.balance_usd.toLocaleString()}` : "—"} />
         <StatCard
           label="Net P&L"
@@ -178,7 +200,7 @@ function Dashboard({ user }: { user: User | null }) {
         <StatCard
           label="Open Positions"
           value={String(openPositions.length)}
-          sub={d.total_trades ? `${d.total_trades} total trades` : undefined}
+          sub={d.total_trades ? `${d.total_trades} trades` : undefined}
         />
       </div>
 
@@ -215,27 +237,26 @@ function Dashboard({ user }: { user: User | null }) {
 
       {/* Open positions */}
       {openPositions.length > 0 && (
-        <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
+        <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-5">
           <h2 className="mb-4 text-sm font-semibold text-dark-200">Open Positions</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+          <div className="overflow-x-auto -mx-3 md:mx-0">
+            <table className="w-full text-xs md:text-sm px-3">
               <thead>
                 <tr className="border-b border-dark-800 text-left text-dark-500">
-                  {["Symbol", "Side", "Entry", "Stop", "Target", "Conf.", "Time"].map((h) => (
-                    <th key={h} className="pb-2 pr-4 font-medium">{h}</th>
+                  {["Symbol", "Side", "Entry", "Stop", "Target", "Conf."].map((h) => (
+                    <th key={h} className="pb-2 pr-3 md:pr-4 font-medium">{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {openPositions.map((t) => (
                   <tr key={t.id} className="border-b border-dark-900 text-dark-300">
-                    <td className="py-2 pr-4 font-mono font-medium text-white">{t.symbol}</td>
-                    <td className={`py-2 pr-4 font-semibold ${t.side === "BUY" ? "text-brand-400" : "text-red-400"}`}>{t.side}</td>
-                    <td className="py-2 pr-4 font-mono">${t.entry_price?.toLocaleString()}</td>
-                    <td className="py-2 pr-4 font-mono text-red-400">${t.stop_loss?.toLocaleString()}</td>
-                    <td className="py-2 pr-4 font-mono text-brand-400">${t.take_profit?.toLocaleString()}</td>
-                    <td className="py-2 pr-4">{t.claude_confidence?.toFixed(0)}%</td>
-                    <td className="py-2 text-dark-500">{new Date(t.created_at).toLocaleTimeString()}</td>
+                    <td className="py-2 pr-3 md:pr-4 font-mono font-medium text-white">{t.symbol}</td>
+                    <td className={`py-2 pr-3 md:pr-4 font-semibold ${t.side === "BUY" ? "text-brand-400" : "text-red-400"}`}>{t.side}</td>
+                    <td className="py-2 pr-3 md:pr-4 font-mono text-xs">${(t.entry_price || 0).toFixed(2)}</td>
+                    <td className="py-2 pr-3 md:pr-4 font-mono text-xs text-red-400">${(t.stop_loss || 0).toFixed(2)}</td>
+                    <td className="py-2 pr-3 md:pr-4 font-mono text-xs text-brand-400">${(t.take_profit || 0).toFixed(2)}</td>
+                    <td className="py-2 pr-3 md:pr-4">{t.claude_confidence?.toFixed(0)}%</td>
                   </tr>
                 ))}
               </tbody>
@@ -311,18 +332,18 @@ function Chat({ user }: { user: User | null }) {
   const SUGGESTIONS = ["Analyse BTC right now", "Show my performance", "What is RSI?", "Feeling worried about losses"];
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="mb-4 flex items-center gap-2">
-        <MessageSquare size={18} className="text-brand-400" />
-        <h1 className="text-xl font-bold text-white">Chat with {user?.ai_name || "your AI"}</h1>
+    <div className="flex h-full flex-col gap-2 md:gap-4">
+      <div className="flex items-center gap-2">
+        <MessageSquare size={16} className="text-brand-400" />
+        <h1 className="text-base md:text-xl font-bold text-white truncate">Chat with {user?.ai_name || "your AI"}</h1>
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto rounded-xl border border-dark-800 bg-dark-950 p-4">
-        <div className="space-y-4">
+      <div className="flex-1 overflow-y-auto rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-4">
+        <div className="space-y-3 md:space-y-4">
           {messages.map((m, i) => (
             <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div className={`max-w-[75%] rounded-xl px-4 py-3 text-sm leading-relaxed ${
+              <div className={`max-w-[85%] md:max-w-[75%] rounded-lg md:rounded-xl px-3 md:px-4 py-2 md:py-3 text-xs md:text-sm leading-relaxed ${
                 m.role === "user"
                   ? "bg-brand-500/20 text-dark-100"
                   : "bg-dark-900 text-dark-200"
@@ -336,7 +357,7 @@ function Chat({ user }: { user: User | null }) {
           ))}
           {loading && (
             <div className="flex justify-start">
-              <div className="rounded-xl bg-dark-900 px-4 py-3 text-sm text-dark-400">
+              <div className="rounded-lg md:rounded-xl bg-dark-900 px-3 md:px-4 py-2 md:py-3 text-xs md:text-sm text-dark-400">
                 <span className="animate-pulse">{user?.ai_name || "AI"} is thinking...</span>
               </div>
             </div>
@@ -346,12 +367,12 @@ function Chat({ user }: { user: User | null }) {
       </div>
 
       {/* Suggestions */}
-      <div className="my-3 flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2">
         {SUGGESTIONS.map((s) => (
           <button
             key={s}
             onClick={() => setInput(s)}
-            className="rounded-full border border-dark-700 px-3 py-1 text-xs text-dark-400 transition hover:border-brand-500/50 hover:text-brand-400"
+            className="rounded-full border border-dark-700 px-2 md:px-3 py-1 text-xs text-dark-400 transition hover:border-brand-500/50 hover:text-brand-400 truncate"
           >
             {s}
           </button>
@@ -365,9 +386,9 @@ function Chat({ user }: { user: User | null }) {
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
           placeholder={`Message ${user?.ai_name || "your AI"}...`}
-          className="input flex-1"
+          className="input flex-1 text-xs md:text-sm"
         />
-        <button onClick={send} disabled={!input.trim() || loading} className="btn-primary px-4">
+        <button onClick={send} disabled={!input.trim() || loading} className="btn-primary px-3 md:px-4 touch-target">
           <Send size={16} />
         </button>
       </div>
@@ -424,33 +445,33 @@ function Performance() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-xl font-bold text-white">Performance</h1>
-        <div className="flex flex-wrap gap-2">
+    <div className="space-y-4 md:space-y-6">
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-4">
+        <h1 className="text-base md:text-xl font-bold text-white">Performance</h1>
+        <div className="flex flex-col md:flex-row flex-wrap gap-2">
           <input
             value={symbol}
             onChange={(e) => setSymbol(e.target.value)}
             placeholder="Filter by symbol"
-            className="input w-32 text-sm"
+            className="input w-full md:w-32 text-xs md:text-sm"
           />
           <select
             value={marketCondition}
             onChange={(e) => setMarketCondition(e.target.value)}
-            className="input w-40 text-sm"
+            className="input w-full md:w-40 text-xs md:text-sm"
           >
             <option value="">All conditions</option>
             <option value="uptrend">Uptrend</option>
             <option value="downtrend">Downtrend</option>
             <option value="consolidating">Consolidating</option>
           </select>
-          <button onClick={load} className="btn-outline gap-2 py-2 text-xs">
+          <button onClick={load} className="btn-outline gap-2 py-2 text-xs touch-target w-full md:w-auto">
             <RefreshCw size={13} /> Refresh
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-2 md:gap-4 lg:grid-cols-4">
         <StatCard label="Total Trades" value={String(d.total_trades ?? 0)} />
         <StatCard
           label="Win Rate"
@@ -471,29 +492,29 @@ function Performance() {
         />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
-          <h2 className="mb-3 text-sm font-semibold text-dark-200">Best Trade</h2>
+      <div className="grid gap-2 md:gap-4 grid-cols-1 md:grid-cols-2">
+        <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-5">
+          <h2 className="mb-3 text-xs md:text-sm font-semibold text-dark-200">Best Trade</h2>
           {d.best_trade ? (
-            <div className="space-y-1 text-sm">
+            <div className="space-y-1 text-xs md:text-sm">
               <p className="font-mono text-white">{d.best_trade.symbol} {d.best_trade.side}</p>
               <p className="text-brand-400 font-bold">+${(d.best_trade.profit ?? 0).toFixed(2)}</p>
               <p className="text-xs text-dark-500">{d.best_trade.profit_percent?.toFixed(2)}%</p>
             </div>
           ) : (
-            <p className="text-dark-500 text-sm">—</p>
+            <p className="text-dark-500 text-xs md:text-sm">—</p>
           )}
         </div>
-        <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
-          <h2 className="mb-3 text-sm font-semibold text-dark-200">Worst Trade</h2>
+        <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-5">
+          <h2 className="mb-3 text-xs md:text-sm font-semibold text-dark-200">Worst Trade</h2>
           {d.worst_trade ? (
-            <div className="space-y-1 text-sm">
+            <div className="space-y-1 text-xs md:text-sm">
               <p className="font-mono text-white">{d.worst_trade.symbol} {d.worst_trade.side}</p>
               <p className="text-red-400 font-bold">-${(d.worst_trade.loss ?? 0).toFixed(2)}</p>
               <p className="text-xs text-dark-500">{d.worst_trade.profit_percent?.toFixed(2)}%</p>
             </div>
           ) : (
-            <p className="text-dark-500 text-sm">—</p>
+            <p className="text-dark-500 text-xs md:text-sm">—</p>
           )}
         </div>
       </div>
@@ -521,13 +542,13 @@ function History() {
 
   return (
     <div>
-      <h1 className="mb-6 text-xl font-bold text-white">Trade History</h1>
-      <div className="overflow-x-auto rounded-xl border border-dark-800 bg-dark-950">
-        <table className="w-full text-xs">
+      <h1 className="mb-6 text-base md:text-xl font-bold text-white">Trade History</h1>
+      <div className="overflow-x-auto rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 -mx-3 md:mx-0">
+        <table className="w-full text-xs md:text-sm">
           <thead>
             <tr className="border-b border-dark-800 text-left text-dark-500">
               {["Symbol", "Side", "Entry", "Exit", "P&L", "Conf.", "Date"].map((h) => (
-                <th key={h} className="px-4 py-3 font-medium">{h}</th>
+                <th key={h} className="px-2 md:px-4 py-2 md:py-3 font-medium">{h}</th>
               ))}
             </tr>
           </thead>
@@ -536,15 +557,15 @@ function History() {
               const pnl = (t.profit || 0) - (t.loss || 0);
               return (
                 <tr key={t.id} className="border-b border-dark-900 hover:bg-dark-900/50">
-                  <td className="px-4 py-3 font-mono font-medium text-white">{t.symbol}</td>
-                  <td className={`px-4 py-3 font-semibold ${t.side === "BUY" ? "text-brand-400" : "text-red-400"}`}>{t.side}</td>
-                  <td className="px-4 py-3 font-mono">${t.entry_price?.toLocaleString()}</td>
-                  <td className="px-4 py-3 font-mono text-dark-400">{t.exit_price ? `$${t.exit_price.toLocaleString()}` : "—"}</td>
-                  <td className={`px-4 py-3 font-mono font-bold ${pnl >= 0 ? "text-brand-400" : "text-red-400"}`}>
+                  <td className="px-2 md:px-4 py-2 md:py-3 font-mono font-medium text-white">{t.symbol}</td>
+                  <td className={`px-2 md:px-4 py-2 md:py-3 font-semibold ${t.side === "BUY" ? "text-brand-400" : "text-red-400"}`}>{t.side}</td>
+                  <td className="px-2 md:px-4 py-2 md:py-3 font-mono text-xs md:text-sm">${t.entry_price?.toFixed(2)}</td>
+                  <td className="px-2 md:px-4 py-2 md:py-3 font-mono text-dark-400 text-xs md:text-sm">{t.exit_price ? `$${t.exit_price.toFixed(2)}` : "—"}</td>
+                  <td className={`px-2 md:px-4 py-2 md:py-3 font-mono font-bold text-xs md:text-sm ${pnl >= 0 ? "text-brand-400" : "text-red-400"}`}>
                     {pnl >= 0 ? "+" : ""}${pnl.toFixed(2)}
                   </td>
-                  <td className="px-4 py-3 text-dark-400">{t.claude_confidence?.toFixed(0)}%</td>
-                  <td className="px-4 py-3 text-dark-500">{new Date(t.created_at).toLocaleDateString()}</td>
+                  <td className="px-2 md:px-4 py-2 md:py-3 text-dark-400 text-xs md:text-sm">{t.claude_confidence?.toFixed(0)}%</td>
+                  <td className="px-2 md:px-4 py-2 md:py-3 text-dark-500 text-xs md:text-sm">{new Date(t.created_at).toLocaleDateString()}</td>
                 </tr>
               );
             })}
@@ -575,55 +596,42 @@ function SettingsPanel({ user }: { user: User | null }) {
   };
 
   return (
-    <div className="max-w-2xl space-y-6">
-      <h1 className="text-xl font-bold text-white">Settings</h1>
+    <div className="w-full space-y-4 md:space-y-6">
+      <h1 className="text-base md:text-xl font-bold text-white">Settings</h1>
 
-      <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
-        <h2 className="mb-3 text-sm font-semibold text-dark-200">Account</h2>
-        <div className="space-y-2 text-sm text-dark-400">
-          <div className="flex justify-between"><span>Email</span><span className="text-dark-200">{user?.email}</span></div>
-          <div className="flex justify-between"><span>AI Name</span><span className="text-brand-400 font-medium">{user?.ai_name}</span></div>
-          <div className="flex justify-between">
+      <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-5">
+        <h2 className="mb-3 text-xs md:text-sm font-semibold text-dark-200">Account</h2>
+        <div className="space-y-2 text-xs md:text-sm text-dark-400">
+          <div className="flex justify-between gap-2"><span>Email</span><span className="text-dark-200 text-right truncate">{user?.email}</span></div>
+          <div className="flex justify-between gap-2"><span>AI Name</span><span className="text-brand-400 font-medium text-right">{user?.ai_name}</span></div>
+          <div className="flex justify-between gap-2">
             <span>Plan</span>
-            <span className={`font-semibold capitalize ${user?.subscription_tier === "pro" ? "text-brand-400" : "text-dark-200"}`}>
-              {user?.subscription_tier}
+            <span className={`font-semibold capitalize text-right text-brand-400`}>
+              Pro (Free)
             </span>
           </div>
         </div>
       </div>
 
       {/* Exchange Connections */}
-      <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
+      <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-5">
         <ExchangeConnections />
       </div>
 
       {/* Security & Connected Apps */}
-      <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
+      <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-5">
         <SecuritySettings />
       </div>
 
-      {user?.subscription_tier !== "pro" ? (
-        <div className="rounded-xl border border-brand-500/30 bg-brand-500/5 p-5">
-          <div className="mb-3 flex items-center gap-2">
-            <Zap size={16} className="text-brand-400" />
-            <h2 className="text-sm font-semibold text-brand-300">Upgrade to Pro</h2>
-          </div>
-          <p className="mb-4 text-xs text-dark-400">
-            Unlimited AI trades, all exchanges, advanced analytics. 14-day free trial included.
-          </p>
-          <button onClick={handleUpgrade} className="btn-primary w-full">
-            Start 14-Day Free Trial — $9.99/mo
-          </button>
+      <div className="rounded-lg md:rounded-xl border border-brand-500/30 bg-brand-500/5 p-3 md:p-5">
+        <div className="mb-3 flex items-center gap-2">
+          <Zap size={16} className="text-brand-400" />
+          <h2 className="text-xs md:text-sm font-semibold text-brand-300">All Features Unlocked</h2>
         </div>
-      ) : (
-        <div className="rounded-xl border border-dark-800 bg-dark-950 p-5">
-          <h2 className="mb-3 text-sm font-semibold text-dark-200">Billing</h2>
-          <p className="mb-4 text-xs text-dark-400">Manage subscription, invoices, and payment method.</p>
-          <button onClick={handlePortal} className="btn-outline w-full">
-            Open Billing Portal
-          </button>
-        </div>
-      )}
+        <p className="text-xs text-dark-400">
+          You have access to unlimited AI trades, all exchanges, and advanced analytics — completely free.
+        </p>
+      </div>
     </div>
   );
 }
@@ -637,10 +645,25 @@ export default function AppPage() {
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [showTrialModal, setShowTrialModal] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [isMobileView, setIsMobileView] = useState(false);
 
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { signOut } = useClerk();
   const router = useRouter();
+
+  // ── Detect mobile view on mount and resize ───────────────────────────────
+  useEffect(() => {
+    const checkMobile = () => {
+      const isMobile = window.innerWidth < 768; // md breakpoint
+      setIsMobileView(isMobile);
+      if (!isMobile) setIsMobileSidebarOpen(false);
+    };
+
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
 
   // ── Trial status via hook ─────────────────────────────────────────────────
   const {
@@ -699,7 +722,8 @@ export default function AppPage() {
 
   // ── Force modal when trial expired + no choice made ──────────────────────
   useEffect(() => {
-    if (mustShowModal) setShowTrialModal(true);
+    // Disabled: All users have free access now
+    // if (mustShowModal) setShowTrialModal(true);
   }, [mustShowModal]);
 
   const logout = async () => {
@@ -730,29 +754,79 @@ export default function AppPage() {
     <>
       <Head>
         <title>{user?.ai_name ? `${user.ai_name} — Unitrader` : "Unitrader App"}</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover" />
       </Head>
 
       <div className="flex h-screen overflow-hidden bg-[#0d1117]">
-        <Sidebar
-          active={activeTab}
-          onChange={(id) => {
-            if (id === "connect-exchange") {
-              router.push("/connect-exchange");
-            } else {
-              setActiveTab(id);
-            }
-          }}
-          aiName={user?.ai_name || "Your AI"}
-          onLogout={logout}
-        />
+        {/* Mobile Sidebar Overlay */}
+        {isMobileView && isMobileSidebarOpen && (
+          <button
+            className="fixed inset-0 z-30 bg-black/50 transition-opacity"
+            onClick={() => setIsMobileSidebarOpen(false)}
+            aria-label="Close sidebar"
+          />
+        )}
+
+        {/* Desktop Sidebar (hidden on mobile) */}
+        <div className="hidden md:block">
+          <Sidebar
+            active={activeTab}
+            onChange={(id) => {
+              if (id === "connect-exchange") {
+                router.push("/connect-exchange");
+              } else {
+                setActiveTab(id);
+              }
+            }}
+            aiName={user?.ai_name || "Your AI"}
+            onLogout={logout}
+          />
+        </div>
+
+        {/* Mobile Sidebar (overlay) */}
+        {isMobileView && (
+          <Sidebar
+            active={activeTab}
+            onChange={(id) => {
+              if (id === "connect-exchange") {
+                router.push("/connect-exchange");
+              } else {
+                setActiveTab(id);
+              }
+            }}
+            aiName={user?.ai_name || "Your AI"}
+            onLogout={logout}
+            isMobile={true}
+            onClose={() => setIsMobileSidebarOpen(false)}
+          />
+        )}
 
         <div className="flex flex-1 flex-col overflow-hidden">
-          {/* Trial banner */}
-          {showBanner && trial && (
-            <div className={`flex items-center justify-between border-b px-5 py-2 text-xs ${bannerStyle}`}>
+          {/* Mobile Header */}
+          <div className="md:hidden flex items-center justify-between border-b border-dark-800 bg-dark-950 px-4 py-3 gap-3">
+            <button
+              onClick={() => setIsMobileSidebarOpen(true)}
+              className="rounded-lg p-2 text-dark-400 hover:bg-dark-800 hover:text-white touch-target"
+              aria-label="Open menu"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+            <span className="text-sm font-semibold text-white flex-1 truncate">
+              {NAV.find(n => n.id === activeTab)?.label || "Unitrader"}
+            </span>
+            <div className="flex h-6 w-6 items-center justify-center rounded bg-brand-500/20">
+              <TrendingUp size={14} className="text-brand-400" />
+            </div>
+          </div>
+
+          {/* Trial banner - disabled for free access */}
+          {false && showBanner && trial && (
+            <div className={`flex items-center justify-between border-b px-4 md:px-5 py-2 text-xs gap-2 ${bannerStyle}`}>
               <div className="flex items-center gap-2 min-w-0">
                 <Clock size={13} className="shrink-0" />
-                <span className="truncate">
+                <span className="truncate text-xs md:text-sm">
                   {trial.phase === "expired"
                     ? `${trial.aiName}'s trial has ended — choose a plan to continue`
                     : trial.daysRemaining <= 1
@@ -766,14 +840,14 @@ export default function AppPage() {
               </div>
               <button
                 onClick={() => setShowTrialModal(true)}
-                className="ml-4 shrink-0 rounded-md border border-current px-3 py-1 font-medium hover:opacity-80 transition whitespace-nowrap"
+                className="ml-2 shrink-0 rounded-md border border-current px-2 md:px-3 py-1 text-xs md:text-sm font-medium hover:opacity-80 transition whitespace-nowrap touch-target"
               >
-                {trial.phase === "expired" || trial.daysRemaining <= 1 ? "Choose Plan →" : "View Options →"}
+                {trial.phase === "expired" || trial.daysRemaining <= 1 ? "Choose →" : "View →"}
               </button>
             </div>
           )}
 
-          <main className="flex-1 overflow-y-auto px-6 py-6">
+          <main className="flex-1 overflow-y-auto px-3 md:px-6 py-4 md:py-6">
             {activeTab === "dashboard" && <Dashboard user={user} />}
             {activeTab === "trade" && <TradePanel onNavigate={setActiveTab} />}
             {activeTab === "chat" && (
@@ -791,8 +865,8 @@ export default function AppPage() {
         </div>
       </div>
 
-      {/* Trial choice modal — forced open when expired+no choice, soft-close otherwise */}
-      {showTrialModal && trial && (
+      {/* Trial choice modal — disabled for free access */}
+      {false && showTrialModal && trial && (
         <TrialChoiceModal
           aiName={trial.aiName}
           daysRemaining={trial.daysRemaining}
