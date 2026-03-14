@@ -47,9 +47,11 @@ from schemas import (
     TokenResponse,
     TwoFASetupResponse,
     TwoFAVerifyRequest,
+    UpdateUserSettingsRequest,
     UserRegisterRequest,
     UserResponse,
     UserLoginRequest,
+    UserSettingsResponse,
 )
 from security import (
     create_access_token,
@@ -511,6 +513,98 @@ async def password_reset(
 async def get_me(current_user: User = Depends(get_current_user)):
     """Return the authenticated user's profile."""
     return current_user
+
+
+# ─────────────────────────────────────────────
+# GET /api/auth/settings
+# ─────────────────────────────────────────────
+
+@router.get("/settings", response_model=UserSettingsResponse)
+async def get_settings(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the user's settings.
+    
+    If no settings row exists, creates one with defaults and returns it.
+    """
+    try:
+        result = await db.execute(
+            select(UserSettings).where(UserSettings.user_id == current_user.id)
+        )
+        settings = result.scalar_one_or_none()
+
+        if not settings:
+            # Create defaults
+            settings = UserSettings(user_id=current_user.id)
+            db.add(settings)
+            await db.commit()
+            await db.refresh(settings)
+
+        return settings
+
+    except Exception as exc:
+        logger.error(f"Failed to get settings for user {current_user.id}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve settings",
+        )
+
+
+# ─────────────────────────────────────────────
+# PATCH /api/auth/settings
+# ─────────────────────────────────────────────
+
+@router.patch("/settings", response_model=UserSettingsResponse)
+async def update_settings(
+    body: UpdateUserSettingsRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update user settings.
+    
+    Only the provided fields will be updated. Allowed fields:
+    - explanation_level (string)
+    - trade_mode (string)
+    - max_trade_amount (float, USD)
+    - max_daily_loss (float, percentage)
+    - trading_paused (boolean)
+    - leaderboard_opt_out (boolean)
+    - approved_assets (list of symbols, maps to favourite_symbols)
+    - first_trade_done (boolean)
+    - push_token (string, for mobile push notifications)
+    """
+    try:
+        result = await db.execute(
+            select(UserSettings).where(UserSettings.user_id == current_user.id)
+        )
+        settings = result.scalar_one_or_none()
+
+        if not settings:
+            # Create defaults if doesn't exist
+            settings = UserSettings(user_id=current_user.id)
+            db.add(settings)
+
+        # Update only provided fields
+        update_data = body.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            if hasattr(settings, field):
+                setattr(settings, field, value)
+
+        await db.commit()
+        await db.refresh(settings)
+
+        logger.info(f"Updated settings for user {current_user.id}: {list(update_data.keys())}")
+
+        return settings
+
+    except Exception as exc:
+        await db.rollback()
+        logger.error(f"Failed to update settings for user {current_user.id}: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update settings",
+        )
 
 
 # ─────────────────────────────────────────────

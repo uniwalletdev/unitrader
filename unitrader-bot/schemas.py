@@ -242,3 +242,45 @@ class HealthResponse(BaseModel):
     status: str
     timestamp: datetime
     services: dict[str, ServiceStatus] | None = None
+
+
+# ─────────────────────────────────────────────
+# User Settings
+# ─────────────────────────────────────────────
+
+class UserSettingsResponse(BaseModel):
+    """User settings returned from GET /api/auth/settings."""
+
+    id: str
+    user_id: str
+    max_position_size: float
+    max_daily_loss: float
+    max_trade_amount: float
+    approved_assets: list[str] | None
+    theme: str
+    explanation_level: str
+    trade_mode: str
+    trading_paused: bool
+    first_trade_done: bool
+    leaderboard_opt_out: bool
+    push_token: str | None
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class UpdateUserSettingsRequest(BaseModel):
+    """Payload for PATCH /api/auth/settings.
+    
+    All fields are optional. Only provided fields will be updated.
+    """
+
+    explanation_level: str | None = None
+    trade_mode: str | None = None
+    max_trade_amount: float | None = None
+    max_daily_loss: float | None = None
+    trading_paused: bool | None = None
+    leaderboard_opt_out: bool | None = None
+    approved_assets: list[str] | None = None
+    first_trade_done: bool | None = None
+    push_token: str | None = None

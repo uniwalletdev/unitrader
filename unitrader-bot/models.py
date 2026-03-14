@@ -359,6 +359,9 @@ class UserSettings(Base):
     max_position_size: Mapped[float] = mapped_column(Float, default=2.0, nullable=False)
     max_daily_loss: Mapped[float] = mapped_column(Float, default=5.0, nullable=False)
 
+    # Max single trade amount (USD)
+    max_trade_amount: Mapped[float] = mapped_column(Float, default=10000.0, nullable=False)
+
     # Allowed assets (JSON array: ["BTC", "ETH", ...])
     approved_assets: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
@@ -369,8 +372,18 @@ class UserSettings(Base):
     # Require manual confirmation for trades above this USD value
     require_confirmation_above: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    # UI
+    # UI / Preferences
     theme: Mapped[str] = mapped_column(String(10), default="dark", nullable=False)
+    explanation_level: Mapped[str] = mapped_column(String(20), default="simple", nullable=False)
+    trade_mode: Mapped[str] = mapped_column(String(20), default="guided", nullable=False)
+
+    # Trading control
+    trading_paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    first_trade_done: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # User preferences
+    leaderboard_opt_out: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    push_token: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
