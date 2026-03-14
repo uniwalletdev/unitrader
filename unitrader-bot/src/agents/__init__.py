@@ -2,19 +2,24 @@
 src/agents — Unitrader's symbiotic agent system.
 
 Exports:
-    MasterOrchestrator  — Routes tasks, coordinates workflows, feeds shared memory
-    TaskType           — Enum of supported task types
-    OrchestratorResult — Standard result shape from the orchestrator
+    MasterOrchestrator  — Routes tasks, coordinates workflows
+    get_orchestrator   — Get orchestrator singleton
+    SharedContext      — Full user context loaded from database
+    SharedMemory       — Context cache and loader
 """
 
 from src.agents.orchestrator import (
     MasterOrchestrator,
-    OrchestratorResult,
-    TaskType,
+    get_orchestrator,
+)
+from src.agents.shared_memory import (
+    SharedContext,
+    SharedMemory,
 )
 
 __all__ = [
     "MasterOrchestrator",
-    "OrchestratorResult",
-    "TaskType",
+    "get_orchestrator",
+    "SharedContext",
+    "SharedMemory",
 ]

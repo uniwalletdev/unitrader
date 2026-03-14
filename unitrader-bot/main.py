@@ -43,7 +43,7 @@ from routers.whatsapp_webhooks import (
     set_whatsapp_bot_service,
     webhook_router as whatsapp_webhook_router,
 )
-from src.agents.orchestrator import MasterOrchestrator, TaskType
+from src.agents.orchestrator import get_orchestrator
 from src.agents.marketing.content_writer import generate_weekly_posts, generate_monthly_guide
 from src.services.trade_monitoring import monitor_loop
 from src.services.email_sequences import send_trial_emails_for_all_users
@@ -289,14 +289,18 @@ async def _trading_loop() -> None:
                         continue
 
                     async with AsyncSessionLocal() as db:
-                        orchestrator = MasterOrchestrator(db=db, user_id=user.id)
-                        orch = await orchestrator.route(
-                            TaskType.TRADE_SIGNAL,
-                            {"exchanges": list(connected_exchanges), "assets": approved},
-                        )
+                        # TODO: Update background trading loop to use new orchestrator.route()
+                        # with action="backtest" or iterate over approved assets with "trade_analyze"
+                        # orchestrator = get_orchestrator()
+                        # result = await orchestrator.route(
+                        #     user_id=user.id,
+                        #     action="trade_analyze",
+                        #     payload={"symbols": approved, "exchanges": list(connected_exchanges)},
+                        #     db=db,
+                        # )
                         await db.commit()
                         logger.info(
-                            "Trading loop: user=%s batch_status=%s count=%s",
+                            "Trading loop: user=%s (disabled pending orchestrator migration)",
                             user.id,
                             orch.result.get("status") if isinstance(orch.result, dict) else "unknown",
                             orch.result.get("count") if isinstance(orch.result, dict) else None,
@@ -342,14 +346,19 @@ async def _content_scheduler() -> None:
             if last_daily is None or (now - last_daily).total_seconds() >= 86_400:
                 try:
                     async with AsyncSessionLocal() as db:
-                        orchestrator = MasterOrchestrator(db=db, user_id="system")
-                        orch = await orchestrator.route(
-                            TaskType.CONTENT_CREATE,
-                            {"content_type": "social", "topic": "Daily market trends", "count": 5, "use_market_trends": True},
-                        )
-                        posts = orch.result.get("posts", []) if isinstance(orch.result, dict) else []
+                        # TODO: Update background content loop to use new orchestrator.route()
+                        # with action="content_create"
+                        # orchestrator = get_orchestrator()
+                        # orch = await orchestrator.route(
+                        #     user_id="system",
+                        #     action="content_create",
+                        #     payload={"content_type": "social", "topic": "Daily market trends", "count": 5},
+                        #     db=db,
+                        # )
+                        # posts = orch.get("posts", []) if isinstance(orch, dict) else []
+                        posts = []
                         await db.commit()
-                    logger.info("Content scheduler: generated %d daily social posts (orchestrated)", len(posts))
+                    logger.info("Content scheduler: daily social posts (disabled pending orchestrator migration)")
                     last_daily = now
                 except Exception as exc:
                     logger.error("Daily social post generation failed: %s", exc)

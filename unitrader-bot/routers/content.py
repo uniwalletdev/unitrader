@@ -23,7 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import BlogPost, SocialPost
 from routers.auth import get_current_user
-from src.agents.orchestrator import MasterOrchestrator, TaskType
 from src.agents.marketing.content_writer import (
     SUGGESTED_TOPICS,
 )
@@ -146,18 +145,12 @@ async def generate_blog(
 
     Note: generation takes ~20–40 seconds due to the Claude API call.
     """
-    orchestrator = MasterOrchestrator(db=db, user_id=current_user.id)
-    orch_result = await orchestrator.route(
-        TaskType.CONTENT_CREATE,
-        {"content_type": "blog", "topic": body.topic},
+    # TODO: Update to use new orchestrator.route() with action="content_create"
+    # For now, content generation is disabled pending orchestrator migration
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Content generation temporarily disabled during orchestrator migration. Please try again later.",
     )
-    result = orch_result.result
-    if result.get("error"):
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=result["error"],
-        )
-    return {"status": "success", "data": result}
 
 
 # ─────────────────────────────────────────────
@@ -253,25 +246,12 @@ async def generate_social(
                 detail=f"Invalid platforms: {invalid}. Valid: {PLATFORMS}",
             )
 
-    orchestrator = MasterOrchestrator(db=db, user_id=current_user.id)
-    orch_result = await orchestrator.route(
-        TaskType.CONTENT_CREATE,
-        {
-            "content_type": "social",
-            "topic": body.topic,
-            "count": body.count,
-            "platforms": body.platforms,
-        },
+    # TODO: Update to use new orchestrator.route() with action="content_create"
+    # For now, content generation is disabled pending orchestrator migration
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Social post generation temporarily disabled during orchestrator migration. Please try again later.",
     )
-    results = orch_result.result.get("posts", []) if isinstance(orch_result.result, dict) else []
-
-    return {
-        "status": "success",
-        "data": {
-            "count": len(results),
-            "posts": results,
-        },
-    }
 
 
 # ─────────────────────────────────────────────

@@ -4,11 +4,13 @@ tests/test_orchestrator.py — Unit tests for the MasterOrchestrator.
 Uses in-memory SQLite. Forces DATABASE_URL before any app imports.
 Run with:  pytest tests/test_orchestrator.py -v
 
-Test groups:
-  TestTradeWorkflow     — Trade workflow routes correctly, uses shared context
-  TestConversationWorkflow — Conversation enriches with context
-  TestLearningStored    — Outcomes stored after each workflow
-  TestSystemHealth      — get_system_health returns valid metrics
+NOTE: Tests for old orchestrator (TaskType enum) need to be rewritten
+for the new orchestrator API that uses action strings and SharedContext.
+
+Test groups (TODO):
+  TestTradeAnalyze      — Trade analyze routes correctly, uses SharedContext
+  TestTradeExecute      — Trade execute checks subscription and trading_paused
+  TestOnboardingChat    — Chat mode works with context loaded
 """
 
 import os
@@ -26,8 +28,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import AsyncSessionLocal, Base
-from models import AgentOutcomeModel, User
-from src.agents.orchestrator import MasterOrchestrator, TaskType
+from models import User
+from src.agents.orchestrator import MasterOrchestrator, get_orchestrator
+from src.agents.shared_memory import SharedContext, SharedMemory
 
 
 @pytest_asyncio.fixture(scope="module", autouse=True)

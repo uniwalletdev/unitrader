@@ -217,36 +217,9 @@ async def _close_position_at_price(
         msg = f"{ai_name} closed {trade.symbol} ({reason}). Loss: -${abs(pnl):.2f}"
 
     logger.info(msg)
-    # Feed the outcome back into shared memory (symbiotic learning).
-    try:
-        from src.agents.orchestrator import MasterOrchestrator
-
-        orch = MasterOrchestrator(db=db, user_id=trade.user_id)
-        await orch.learn_from_outcome(
-            workflow="trade_monitor_close",
-            action={
-                "trade_id": trade.id,
-                "asset": trade.symbol,
-                "exchange": getattr(trade, "exchange", None),
-                "side": trade.side,
-                "reason": reason,
-            },
-            result={
-                "success": pnl >= 0,
-                "profit_pct": round(pnl_pct, 4),
-                "profit_usd": round(pnl, 2),
-                "exit_price": exit_price,
-                "closed_by": "monitor_loop",
-            },
-            context={
-                "entry_price": trade.entry_price,
-                "stop_loss": trade.stop_loss,
-                "take_profit": trade.take_profit,
-            },
-            confidence=1.0,
-        )
-    except Exception as exc:
-        logger.debug("Shared memory learning after close failed: %s", exc)
+    # TODO: Feed the outcome back into shared memory using new orchestrator API
+    # The learn_from_outcome() method needs to be implemented in the new orchestrator
+    # For now, trade outcomes are logged but not fed back into the symbiotic learning system
 
 
 # ─────────────────────────────────────────────

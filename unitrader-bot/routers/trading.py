@@ -26,8 +26,7 @@ from models import ExchangeAPIKey, Trade, UserSettings
 from routers.auth import get_current_user
 from schemas import SuccessResponse, TradeResponse
 from security import encrypt_api_key, hash_api_key
-from src.agents.core.trading_agent import TradingAgent
-from src.agents.orchestrator import MasterOrchestrator, TaskType
+from src.agents.orchestrator import get_orchestrator
 from src.integrations.exchange_client import (
     get_exchange_client,
     validate_alpaca_keys,
@@ -277,20 +276,20 @@ async def execute_trade(
                 detail=detail,
             )
 
-        orchestrator = MasterOrchestrator(db=db, user_id=current_user.id)
-        orch_result = await orchestrator.route(
-            TaskType.TRADE_SIGNAL,
-            {"asset": body.symbol.upper(), "exchange": body.exchange.lower()},
+        orchestrator = get_orchestrator()
+        result = await orchestrator.route(
+            user_id=current_user.id,
+            action="trade_analyze",
+            payload={"symbol": body.symbol.upper()},
+            db=db,
         )
-        result = orch_result.result
 
         # Agent/orchestrator returned no result
         if result is None:
             logger.error(
-                "Trading agent returned no result for user %s on %s/%s",
+                "Trading agent returned no result for user %s on %s",
                 current_user.id,
                 body.symbol,
-                body.exchange,
             )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -301,10 +300,9 @@ async def execute_trade(
         if isinstance(result, dict) and result.get("status") == "error":
             reason = result.get("reason", "market_data_unavailable")
             logger.error(
-                "Trading agent error for user %s on %s/%s: %s",
+                "Trading agent error for user %s on %s: %s",
                 current_user.id,
                 body.symbol,
-                body.exchange,
                 reason,
             )
             raise HTTPException(
