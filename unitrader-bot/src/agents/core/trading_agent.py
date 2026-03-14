@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import AsyncSessionLocal
-from models import ExchangeAPIKey, Trade, User, UserSettings
+from models import AuditLog, ExchangeAPIKey, Trade, User, UserSettings
 from security import decrypt_api_key
 from src.integrations.exchange_client import get_exchange_client
 from src.integrations.market_data import full_market_analysis, normalise_symbol
@@ -1035,3 +1035,240 @@ class TradingAgent:
         }
         logger.info("Position closed: %s P&L=%.2f", trade_id, pnl)
         return result
+
+    # ─────────────────────────────────────────────
+    # Monitor & Auto-Close Positions
+    # ─────────────────────────────────────────────
+
+    async def monitor_open_positions(self, user_id: str, db: AsyncSession) -> list[dict]:
+        """Monitor all open positions and auto-close those hitting stop-loss or take-profit.
+
+        Called every 5 minutes by Position Monitor Agent and once before every new analysis.
+
+        Returns:
+            List of closed positions with reasons and P&L details.
+        """
+        closed = []
+
+        # 1. Fetch all open trades for this user
+        open_trades_result = await db.execute(
+            select(Trade).where(Trade.user_id == user_id, Trade.status == "open")
+        )
+        trades = open_trades_result.scalars().all()
+
+        for trade in trades:
+            # 2. Get current price
+            try:
+                current_price = await self.get_current_price(trade.symbol)
+            except Exception as exc:
+                logger.debug(f"Could not fetch price for {trade.symbol}: {exc}")
+                continue  # Skip if price unavailable — never crash
+
+            # 3. Calculate unrealised P&L %
+            entry = float(trade.entry_price)
+            if entry == 0:
+                continue
+            pnl_pct = ((current_price - entry) / entry) * 100
+            if trade.side == "SELL":
+                pnl_pct = -pnl_pct
+
+            # 4. Check stop-loss and take-profit
+            stop_loss_pct = float(getattr(trade, "stop_loss_pct", None) or 2.0)
+            take_profit_pct = float(getattr(trade, "take_profit_pct", None) or 5.0)
+            reason = None
+
+            if pnl_pct <= -stop_loss_pct:
+                reason = "stop_loss_triggered"
+            elif pnl_pct >= take_profit_pct:
+                reason = "take_profit_triggered"
+
+            if reason:
+                # 5. Execute close order
+                close_side = "SELL" if trade.side == "BUY" else "BUY"
+                await self.execute_close(trade, current_price, close_side, db)
+
+                # 6. Write to AuditLog BEFORE closing
+                await self._write_audit_log(
+                    db,
+                    user_id,
+                    reason,
+                    trade.symbol,
+                    {
+                        "entry_price": entry,
+                        "exit_price": current_price,
+                        "pnl_pct": round(pnl_pct, 2),
+                    },
+                )
+
+                # 7. Send Telegram alert
+                emoji = "🛑" if reason == "stop_loss_triggered" else "✅"
+                msg = (
+                    f"{emoji} {reason.replace('_', ' ').title()}: {trade.symbol}\n"
+                    f"Entry: £{entry:.2f} → Exit: £{current_price:.2f}\n"
+                    f"P&L: {pnl_pct:+.1f}%"
+                )
+                await self._send_telegram_alert(user_id, msg, db)
+
+                closed.append(
+                    {
+                        "trade_id": str(trade.id),
+                        "symbol": trade.symbol,
+                        "reason": reason,
+                        "pnl_pct": round(pnl_pct, 2),
+                    }
+                )
+
+        return closed
+
+    async def execute_close(
+        self, trade: Trade, exit_price: float, side: str, db: AsyncSession
+    ) -> None:
+        """Close a trade at the specified exit price.
+
+        Handles both paper and live trades. Updates the trades table with:
+        - exit_price
+        - pnl / pnl_percent
+        - status = "closed"
+        - closed_at = now()
+
+        Also marks user_settings.first_trade_done = True after first close.
+        """
+        pnl = 0.0
+        pnl_pct = 0.0
+
+        if trade.side == "BUY":
+            pnl = (exit_price - trade.entry_price) * trade.quantity
+        else:  # SELL
+            pnl = (trade.entry_price - exit_price) * trade.quantity
+
+        pnl_pct = ((exit_price - trade.entry_price) / trade.entry_price) * 100
+        if trade.side == "SELL":
+            pnl_pct = -pnl_pct
+
+        # Update trade
+        trade.exit_price = exit_price
+        trade.status = "closed"
+        trade.closed_at = datetime.now(timezone.utc)
+
+        if pnl >= 0:
+            trade.profit = round(pnl, 2)
+            trade.profit_percent = round(pnl_pct, 4)
+        else:
+            trade.loss = round(abs(pnl), 2)
+            trade.profit_percent = round(pnl_pct, 4)
+
+        await db.flush()
+
+        # Mark first trade closed
+        settings_result = await db.execute(
+            select(UserSettings).where(UserSettings.user_id == trade.user_id)
+        )
+        user_settings = settings_result.scalar_one_or_none()
+        if user_settings:
+            # first_trade_done may not exist on all UserSettings, add if needed
+            if hasattr(user_settings, "first_trade_done"):
+                user_settings.first_trade_done = True
+            await db.flush()
+
+        await db.commit()
+
+        logger.info(
+            f"Trade {trade.id} closed: {trade.symbol} P&L={pnl:.2f} ({pnl_pct:.2f}%)"
+        )
+
+    async def get_current_price(self, symbol: str) -> float:
+        """Fetch current price from Alpaca API.
+
+        Handles both stocks (GET /v2/stocks/{symbol}/quotes/latest) and
+        crypto (GET /v1beta3/crypto/us/latest/quotes).
+
+        Args:
+            symbol: Ticker symbol (e.g. BTCUSDT, AAPL)
+
+        Returns:
+            Current price as float
+
+        Raises:
+            Exception on API failure
+        """
+        base_url = "https://api.polygon.io"
+        api_key = settings.POLYGON_API_KEY if hasattr(settings, "POLYGON_API_KEY") else None
+
+        # Try Alpaca API first
+        alpaca_url = "https://data.alpaca.markets"
+        headers = {"APCA-API-KEY-ID": settings.ALPACA_KEY} if hasattr(settings, "ALPACA_KEY") else {}
+
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                # Try stocks endpoint
+                if not symbol.endswith("USDT"):
+                    url = f"{alpaca_url}/v2/stocks/{symbol.upper()}/quotes/latest"
+                    response = await client.get(url, headers=headers)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if "quote" in data:
+                            return float(data["quote"].get("ap", data["quote"].get("bp", 0)))
+
+                # Try crypto endpoint
+                if "USDT" in symbol or "USD" in symbol:
+                    crypto_symbol = symbol.replace("USDT", "").replace("USD", "").upper()
+                    url = f"{alpaca_url}/v1beta3/crypto/us/latest/quotes"
+                    params = {"symbols": crypto_symbol}
+                    response = await client.get(url, headers=headers, params=params)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if "quotes" in data and crypto_symbol in data["quotes"]:
+                            return float(data["quotes"][crypto_symbol].get("ap", data["quotes"][crypto_symbol].get("bp", 0)))
+
+                # Fallback to Polygon API
+                if api_key:
+                    url = f"{base_url}/v3/quotes/latest"
+                    params = {"ticker": symbol.upper(), "apikey": api_key}
+                    response = await client.get(url, params=params)
+                    if response.status_code == 200:
+                        data = response.json()
+                        if "results" in data and len(data["results"]) > 0:
+                            return float(data["results"][0].get("last_quote", {}).get("ask", 0))
+
+        except Exception as exc:
+            logger.error(f"Error fetching price for {symbol}: {exc}")
+            raise
+
+        raise ValueError(f"Could not fetch price for {symbol}")
+
+    async def _write_audit_log(
+        self,
+        db: AsyncSession,
+        user_id: str,
+        reason: str,
+        symbol: str,
+        details: dict,
+    ) -> None:
+        """Write trade event to AuditLog for compliance and debugging."""
+        try:
+            entry = AuditLog(
+                user_id=user_id,
+                event_type="position_closed",
+                event_details={
+                    "symbol": symbol,
+                    "reason": reason,
+                    **details,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+            db.add(entry)
+            await db.flush()
+        except Exception as exc:
+            logger.error(f"Failed to write audit log: {exc}")
+
+    async def _send_telegram_alert(
+        self, user_id: str, message: str, db: AsyncSession
+    ) -> None:
+        """Send Telegram alert to user about position close."""
+        try:
+            from src.integrations.telegram_bot import send_user_message
+
+            await send_user_message(user_id, message, db)
+        except Exception as exc:
+            logger.debug(f"Failed to send Telegram alert: {exc}")
+
