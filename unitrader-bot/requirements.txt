@@ -27,6 +27,9 @@ pyotp==2.9.0
 # HTTP Client (unpinned — let pip resolve compatible version)
 httpx>=0.24.0,<1.0.0
 
+# Trading / Market Data
+alpaca-trade-api>=3.1.0
+
 # AI  (>=0.20 required for Messages API + Claude 3 models)
 anthropic>=0.40.0
 

@@ -171,6 +171,9 @@ class User(TimestampMixin, Base):
     audit_logs: Mapped[list["AuditLog"]] = relationship(
         "AuditLog", back_populates="user", cascade="all, delete-orphan"
     )
+    onboarding_messages: Mapped[list["OnboardingMessage"]] = relationship(
+        "OnboardingMessage", back_populates="user", cascade="all, delete-orphan"
+    )
     external_accounts: Mapped[list["UserExternalAccount"]] = relationship(
         "UserExternalAccount", back_populates="user", cascade="all, delete-orphan"
     )
@@ -381,9 +384,18 @@ class UserSettings(Base):
     trading_paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     first_trade_done: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    # Risk Disclosure
+    risk_disclosure_accepted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    risk_disclosure_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # User preferences
     leaderboard_opt_out: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     push_token: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # Trader profiling (auto-detected from onboarding)
+    trader_class: Mapped[str] = mapped_column(String(50), default="complete_novice", nullable=False)
+    class_detected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    class_detection_method: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -442,6 +454,42 @@ class AuditLog(Base):
 
     def __repr__(self) -> str:
         return f"<AuditLog id={self.id} event={self.event_type} user_id={self.user_id}>"
+
+
+class OnboardingMessage(Base):
+    """Stores onboarding conversation messages and extracted profile fields."""
+
+    __tablename__ = "onboarding_messages"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    role: Mapped[str] = mapped_column(
+        String(50), nullable=False
+        # "user" | "assistant" | "system"
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # For system messages: format is "extracted:field=value"
+    # e.g., "extracted:goal=grow_savings"
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    # ── Relationships ──────────────────────────────────────────────────────
+    user: Mapped["User"] = relationship("User", back_populates="onboarding_messages")
+
+    __table_args__ = (
+        Index("ix_onboarding_messages_user_created", "user_id", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<OnboardingMessage id={self.id} user_id={self.user_id} role={self.role}>"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -4,7 +4,10 @@ import {
   Crosshair, Loader2, TrendingUp, TrendingDown, Minus,
   AlertCircle, ChevronRight, Link2, RefreshCw,
 } from "lucide-react";
-import { tradingApi, exchangeApi } from "@/lib/api";
+import { tradingApi, exchangeApi, authApi } from "@/lib/api";
+import CircuitBreakerAlert from "./trade/CircuitBreakerAlert";
+import { useLivePrice } from "@/hooks/useLivePrice";
+import { formatPrice, formatChangePct } from "@/utils/formatPrice";
 
 interface ConnectedExchange {
   exchange: string;
@@ -54,13 +57,30 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState<TradeResult | null>(null);
   const [error, setError] = useState("");
+  const [tradingPaused, setTradingPaused] = useState(false);
+  const [maxDailyLoss, setMaxDailyLoss] = useState(10);
+  const [settingsLoading, setSettingsLoading] = useState(true);
 
+  // Live price data
+  const livePrice = useLivePrice(symbol ? symbol : null);
+
+  // Load exchanges
   useEffect(() => {
     exchangeApi.list().then((res) => {
       const data = res.data.data || [];
       setExchanges(data);
       if (data.length > 0) setSelectedExchange(data[0].exchange);
     }).catch(() => {}).finally(() => setLoading(false));
+  }, []);
+
+  // Load user settings for trading pause status
+  useEffect(() => {
+    authApi.getSettings().then((res) => {
+      setTradingPaused(res.data.trading_paused || false);
+      setMaxDailyLoss(res.data.max_daily_loss || 10);
+    }).catch(() => {
+      // Fail silently - alert will not show if settings can't be loaded
+    }).finally(() => setSettingsLoading(false));
   }, []);
 
   const handleExecute = async () => {
@@ -127,6 +147,15 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         <h1 className="text-base md:text-xl font-bold text-white">AI Trade Execution</h1>
       </div>
 
+      {/* Circuit breaker alert */}
+      {!settingsLoading && (
+        <CircuitBreakerAlert
+          tradingPaused={tradingPaused}
+          dailyLossPct={0}
+          maxDailyLossPct={maxDailyLoss}
+        />
+      )}
+
       <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-4 md:p-6">
         <div className="space-y-4">
           {/* Exchange selector */}
@@ -161,6 +190,43 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
               disabled={executing}
             />
           </div>
+
+          {/* Live price display */}
+          {symbol && (
+            <div className="rounded-lg bg-dark-900 p-3 border border-dark-800">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs text-dark-500">Live Price</p>
+                  <p className="text-sm md:text-base font-bold text-white">
+                    {livePrice.price !== null 
+                      ? formatPrice(livePrice.price, symbol)
+                      : livePrice.isConnected ? "Loading..." : "Disconnected"
+                    }
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className={`text-xs font-medium ${livePrice.bid && livePrice.ask ? 'text-dark-400' : 'text-dark-500'}`}>
+                    {livePrice.bid !== null && livePrice.ask !== null
+                      ? `${formatPrice(livePrice.bid, symbol)} / ${formatPrice(livePrice.ask, symbol)}`
+                      : "—"
+                    }
+                  </p>
+                  <p className="text-xs text-dark-500">Bid / Ask</p>
+                </div>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-xs">
+                <span className={`${livePrice.isConnected ? 'text-green-400' : 'text-red-400'}`}>
+                  {livePrice.isConnected ? "● Connected" : "● Disconnected"}
+                </span>
+                <span className="text-dark-500">
+                  {livePrice.lastUpdated 
+                    ? new Date(livePrice.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                    : "—"
+                  }
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Quick picks */}
           {suggestions.length > 0 && (

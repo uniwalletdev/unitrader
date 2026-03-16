@@ -1,0 +1,283 @@
+"""
+src/agents/sentiment_agent.py — Market sentiment analysis for trading signals.
+
+Analyzes news headlines, earnings cycles, and market sentiment indices to provide
+context for trading decisions. Results are cached for 30 minutes per symbol.
+
+Depth of analysis adapts to trader class:
+  - Novices: simplified sentiment + plain English summaries
+  - Intermediate/Pro: detailed sentiment with technical context + full headlines
+  - Crypto natives: adds Fear & Greed Index for crypto assets
+"""
+
+import asyncio
+import json
+import logging
+from datetime import datetime, timedelta, timezone
+
+import anthropic
+import httpx
+
+from src.agents.shared_memory import SharedContext
+
+logger = logging.getLogger(__name__)
+
+# Module-level cache: symbol -> (result_dict, cached_at_timestamp)
+_sentiment_cache: dict[str, tuple[dict, datetime]] = {}
+CACHE_TTL_SECONDS = 30 * 60  # 30 minutes
+
+
+class SentimentAgent:
+    """Analyzes market sentiment for a given symbol.
+
+    Fetches news, earnings data, and market indicators, then synthesizes
+    into sentiment scores and summaries tailored to trader experience level.
+    """
+
+    def __init__(self, alpaca_api_key: str = None, alpaca_base_url: str = None):
+        """Initialize sentiment agent with API credentials.
+        
+        Args:
+            alpaca_api_key: Alpaca API key (defaults to environment)
+            alpaca_base_url: Alpaca base URL (defaults to paper trading)
+        """
+        self.alpaca_api_key = alpaca_api_key
+        self.alpaca_base_url = alpaca_base_url or "https://paper-api.alpaca.markets"
+        self.claude_client = anthropic.AsyncAnthropic()
+
+    async def get_sentiment(self, symbol: str, ctx: SharedContext) -> dict:
+        """Get market sentiment for a symbol, adapted to trader class.
+
+        Returns cached result if available and fresh. Otherwise fetches new data.
+
+        Args:
+            symbol: Trading pair (e.g., "AAPL", "BTC/USD")
+            ctx: SharedContext with trader_class and user preferences
+
+        Returns:
+            dict with keys:
+              - sentiment_score: "very_bearish"|"bearish"|"neutral"|"bullish"|"very_bullish"
+              - sentiment_summary: Technical analysis (1-2 sentences)
+              - sentiment_summary_simple: Plain English (1 sentence)
+              - earnings_alert: bool (True if earnings within 7 days)
+              - earnings_date: ISO date string or None
+              - risk_flag: str describing major risk event or None
+              - headlines: list of 3 most recent headlines
+              - fear_greed_index: int 0-100 or None
+        """
+        # Check cache
+        if symbol in _sentiment_cache:
+            cached_result, cached_at = _sentiment_cache[symbol]
+            if datetime.utcnow() - cached_at < timedelta(seconds=CACHE_TTL_SECONDS):
+                logger.debug(f"Sentiment cache hit for {symbol}")
+                return cached_result
+
+        # Cache miss - fetch new sentiment
+        logger.debug(f"Sentiment cache miss for {symbol}, fetching fresh data")
+        result = {
+            "sentiment_score": "neutral",
+            "sentiment_summary": "",
+            "sentiment_summary_simple": "",
+            "earnings_alert": False,
+            "earnings_date": None,
+            "risk_flag": None,
+            "headlines": [],
+            "fear_greed_index": None,
+        }
+
+        # 1. Fetch news from Alpaca
+        try:
+            news_items = await self._fetch_news(symbol)
+            headlines = [item.get("headline", "") for item in news_items[:10]]
+            result["headlines"] = headlines[:3]
+        except Exception as e:
+            logger.warning(f"Failed to fetch news for {symbol}: {e}")
+            return result  # Return neutral on failure, never crash
+
+        # 2. Earnings calendar for stocks only
+        is_crypto = "/" in symbol or symbol.upper() in ["BTC", "ETH", "SOL", "XRP"]
+        if not is_crypto:
+            try:
+                earnings = await self._fetch_earnings(symbol)
+                if earnings:
+                    days_until = (earnings["date"] - datetime.utcnow().date()).days
+                    if 0 <= days_until <= 7:
+                        result["earnings_alert"] = True
+                        result["earnings_date"] = earnings["date"].isoformat()
+            except Exception as e:
+                logger.debug(f"Failed to fetch earnings for {symbol}: {e}")
+
+        # 3. Fear and Greed index for crypto_native class only
+        if ctx.is_crypto_native() and is_crypto:
+            try:
+                result["fear_greed_index"] = await self._fetch_fear_greed()
+            except Exception as e:
+                logger.debug(f"Failed to fetch fear/greed index: {e}")
+
+        # 4. Claude sentiment analysis - depth depends on trader_class
+        if result["headlines"]:
+            try:
+                sentiment = await self._analyze_sentiment_with_claude(
+                    symbol, result["headlines"], ctx
+                )
+                result.update(sentiment)
+            except Exception as e:
+                logger.warning(f"Failed to analyze sentiment with Claude for {symbol}: {e}")
+
+        # Cache the result
+        _sentiment_cache[symbol] = (result, datetime.utcnow())
+
+        return result
+
+    async def _fetch_news(self, symbol: str) -> list[dict]:
+        """Fetch recent news headlines from Alpaca API.
+
+        Args:
+            symbol: Trading pair
+
+        Returns:
+            List of news items with headline, author, created_at, url
+        """
+        # Normalize symbol for Alpaca API
+        alpaca_symbol = symbol.replace("/", "")  # BTC/USD -> BTCUSD
+
+        url = f"{self.alpaca_base_url}/v1beta1/news"
+        headers = {
+            "APCA-API-KEY-ID": self.alpaca_api_key,
+            "Content-Type": "application/json",
+        }
+        params = {"symbols": alpaca_symbol, "limit": 10}
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                data = response.json()
+                return data.get("news", [])
+        except Exception as e:
+            logger.error(f"Alpaca news API error for {symbol}: {e}")
+            raise
+
+    async def _fetch_earnings(self, symbol: str) -> dict | None:
+        """Fetch next earnings date for a stock.
+
+        For now, uses a placeholder. In production, integrate with:
+        - Polygon.io earnings calendar
+        - SEC EDGAR filings
+        - Corporate investor relations APIs
+
+        Args:
+            symbol: Stock symbol (e.g., "AAPL")
+
+        Returns:
+            dict with "date" (datetime.date) or None if not found
+        """
+        # Placeholder: would integrate with real earnings calendar
+        logger.debug(f"Earnings check for {symbol} - placeholder, returning None")
+        return None
+
+    async def _fetch_fear_greed(self) -> int | None:
+        """Fetch current crypto Fear & Greed Index.
+
+        Calls https://api.alternative.me/fng/?limit=1
+
+        Returns:
+            int 0-100 (0=extreme fear, 100=extreme greed) or None on error
+        """
+        url = "https://api.alternative.me/fng/?limit=1"
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                data = response.json()
+                # Extract value from first result
+                if data.get("data"):
+                    value_str = data["data"][0].get("value")
+                    return int(value_str) if value_str else None
+        except Exception as e:
+            logger.error(f"Fear & Greed API error: {e}")
+            raise
+
+    async def _analyze_sentiment_with_claude(
+        self, symbol: str, headlines: list[str], ctx: SharedContext
+    ) -> dict:
+        """Analyze sentiment of headlines using Claude.
+
+        Prompt depth varies by trader class:
+          - Pro/Intermediate: Full technical analysis with risk flags
+          - Novice/Crypto Native: Simplified sentiment with plain English
+
+        Args:
+            symbol: Trading pair
+            headlines: List of news headlines
+            ctx: SharedContext with trader_class
+
+        Returns:
+            dict with sentiment_score, sentiment_summary, sentiment_summary_simple, risk_flag
+        """
+        sentiment_result = {
+            "sentiment_score": "neutral",
+            "sentiment_summary": "",
+            "sentiment_summary_simple": "",
+            "risk_flag": None,
+        }
+
+        if not headlines:
+            return sentiment_result
+
+        # Build prompt based on trader class
+        if ctx.is_pro() or ctx.is_intermediate():
+            # Full technical analysis for experienced traders
+            headline_text = "\n".join(f"- {h}" for h in headlines)
+            prompt = f"""Analyse these headlines about {symbol}:
+{headline_text}
+Return JSON only:
+{{
+  "sentiment_score": "very_bearish|bearish|neutral|bullish|very_bullish",
+  "sentiment_summary": "2 sentences - specific market implications and risk factors",
+  "sentiment_summary_simple": "1 plain English sentence for a beginner",
+  "risk_flag": "describe any major risk event or null"
+}}"""
+        else:
+            # Simplified analysis for novices
+            headline_text = "\n".join(f"- {h}" for h in headlines[:5])
+            prompt = f"""Look at these news headlines about {symbol}:
+{headline_text}
+In plain English with no financial jargon, is the news mostly good,
+bad, or mixed for this company right now?
+Return JSON only:
+{{
+  "sentiment_score": "bearish|neutral|bullish",
+  "sentiment_summary": "1 short technical sentence",
+  "sentiment_summary_simple": "1 sentence as if explaining to someone who has never invested before",
+  "risk_flag": null
+}}"""
+
+        try:
+            response = await self.claude_client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=300,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            analysis = json.loads(response.content[0].text)
+            sentiment_result.update(analysis)
+        except Exception as e:
+            logger.error(f"Claude sentiment analysis failed for {symbol}: {e}")
+
+        return sentiment_result
+
+
+async def invalidate_sentiment_cache(symbol: str | None = None) -> None:
+    """Invalidate sentiment cache for a symbol or all symbols.
+
+    Args:
+        symbol: Symbol to invalidate, or None to clear entire cache
+    """
+    global _sentiment_cache
+    if symbol:
+        if symbol in _sentiment_cache:
+            del _sentiment_cache[symbol]
+            logger.debug(f"Invalidated sentiment cache for {symbol}")
+    else:
+        _sentiment_cache.clear()
+        logger.debug("Invalidated entire sentiment cache")

@@ -14,6 +14,7 @@ Actions:
 import logging
 from datetime import datetime
 
+import sentry_sdk
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +22,8 @@ from models import AuditLog
 from src.agents.shared_memory import SharedContext, SharedMemory
 from src.agents.core.trading_agent import TradingAgent
 from src.agents.core.conversation_agent import ConversationAgent
+from src.agents.sentiment_agent import SentimentAgent
+from src.agents.portfolio_agent import PortfolioAgent
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +34,157 @@ class MasterOrchestrator:
     def __init__(self):
         pass
 
-    async def route(
+    # ─────────────────────────────────────────────────────────────────────────
+    # AUDIT LOGGING HELPERS
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def log_trade_decision(
+        self,
+        user_id: str,
+        payload: dict,
+        ctx: SharedContext,
+        risk_result: tuple,  # (allowed: bool, reason: str)
+        portfolio_result: dict,
+        agent_response: dict,
+        db: AsyncSession,
+    ) -> None:
+        """
+        Log a trade decision to audit_log with full context.
+
+        CRITICAL: Wraps in try/except with Sentry integration.
+        If audit write fails, raises HTTPException 500 and does NOT execute trade.
+
+        Args:
+            user_id: User ID
+            payload: Request payload (symbol, side, amount, etc.)
+            ctx: SharedContext snapshot
+            risk_result: Tuple of (allowed: bool, reason: str)
+            portfolio_result: Dict with "approved" and "reason"
+            agent_response: Response from trading agent
+            db: AsyncSession for database access
+
+        Raises:
+            HTTPException: 500 if audit logging fails
+        """
+        try:
+            audit_log = AuditLog(
+                user_id=user_id,
+                event_type="trade_decision",
+                event_details={
+                    "symbol": payload.get("symbol"),
+                    "side": agent_response.get("signal"),
+                    "amount": payload.get("amount"),
+                    "paper_mode": ctx.paper_trading_enabled,
+                    "trust_ladder_stage": ctx.trust_ladder_stage,
+                },
+                ai_reasoning=agent_response.get("explanation_expert"),
+                ai_confidence=agent_response.get("confidence"),
+                market_data_snapshot=agent_response.get("market_data", {}),
+                risk_check_result={
+                    "allowed": risk_result[0],
+                    "reason": risk_result[1],
+                },
+                portfolio_check_result={
+                    "approved": portfolio_result.get("approved"),
+                    "reason": portfolio_result.get("reason"),
+                },
+            )
+            db.add(audit_log)
+            await db.commit()
+
+            logger.info(
+                f"Trade decision logged for user {user_id}: "
+                f"{payload.get('symbol')} {agent_response.get('signal')} "
+                f"(risk={risk_result[0]}, portfolio={portfolio_result.get('approved')})"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to write trade decision audit log: {e}")
+            sentry_sdk.capture_exception(e)
+            await db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail="Audit logging failed — trade not executed for safety",
+            )
+
+    async def log_trust_ladder_advance(
+        self,
+        user_id: str,
+        old_stage: int,
+        new_stage: int,
+        db: AsyncSession,
+    ) -> None:
+        """Log when user's trust ladder stage advances."""
+        try:
+            audit_log = AuditLog(
+                user_id=user_id,
+                event_type="trust_ladder_advance",
+                event_details={
+                    "old_stage": old_stage,
+                    "new_stage": new_stage,
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+            )
+            db.add(audit_log)
+            await db.commit()
+            logger.info(f"User {user_id} trust ladder advanced: {old_stage} → {new_stage}")
+        except Exception as e:
+            logger.warning(f"Failed to log trust ladder advance: {e}")
+            sentry_sdk.capture_exception(e)
+            await db.rollback()
+
+    async def log_circuit_breaker_activation(
+        self,
+        user_id: str,
+        current_loss_pct: float,
+        max_daily_loss_pct: float,
+        db: AsyncSession,
+    ) -> None:
+        """Log when circuit breaker triggers (daily loss limit reached)."""
+        try:
+            audit_log = AuditLog(
+                user_id=user_id,
+                event_type="circuit_breaker",
+                event_details={
+                    "current_loss_pct": current_loss_pct,
+                    "max_daily_loss_pct": max_daily_loss_pct,
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+            )
+            db.add(audit_log)
+            await db.commit()
+            logger.warning(
+                f"Circuit breaker activated for user {user_id}: "
+                f"{current_loss_pct}% loss >= {max_daily_loss_pct}% limit"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log circuit breaker activation: {e}")
+            sentry_sdk.capture_exception(e)
+            await db.rollback()
+
+    async def log_onboarding_complete(
+        self,
+        user_id: str,
+        db: AsyncSession,
+    ) -> None:
+        """Log when user completes onboarding."""
+        try:
+            audit_log = AuditLog(
+                user_id=user_id,
+                event_type="onboarding_complete",
+                event_details={
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+            )
+            db.add(audit_log)
+            await db.commit()
+            logger.info(f"Onboarding completed for user {user_id}")
+        except Exception as e:
+            logger.warning(f"Failed to log onboarding complete: {e}")
+            sentry_sdk.capture_exception(e)
+            await db.rollback()
+
+    # ─────────────────────────────────────────────────────────────────────────
         self,
         user_id: str,
         action: str,
@@ -86,16 +239,17 @@ class MasterOrchestrator:
         payload: dict,
         db: AsyncSession,
     ) -> dict:
-        """Analyze a trading opportunity with expert + simple + metaphor explanations.
+        """Analyze a trading opportunity with market sentiment and personalized explanations.
 
         Steps:
         1. Check subscription
         2. Check trading_paused
-        3. Call trading_agent.analyze(symbol)
-        4. Get expert explanation
-        5. Translate to simple explanation
-        6. Translate to metaphor explanation
-        7. Return merged response
+        3. Fetch market sentiment based on trader_class
+        4. Call trading_agent.analyze(symbol) with sentiment context
+        5. Get expert explanation
+        6. Translate to simple explanation
+        7. Translate to metaphor explanation
+        8. Return merged response with sentiment context
         """
         symbol = payload.get("symbol")
         if not symbol:
@@ -111,6 +265,13 @@ class MasterOrchestrator:
                 status_code=429,
                 detail="Trading paused — daily loss limit reached",
             )
+
+        # Fetch market sentiment (cached 30 minutes per symbol)
+        sentiment_agent = SentimentAgent()
+        sentiment = await sentiment_agent.get_sentiment(symbol, ctx)
+
+        # Build sentiment context based on trader class
+        sentiment_context = self._build_sentiment_context(sentiment, ctx)
 
         # Call trading agent to analyze
         trading_agent = TradingAgent()
@@ -146,7 +307,55 @@ class MasterOrchestrator:
                 "simple": simple_explanation,
                 "metaphor": metaphor_explanation,
             },
+            "sentiment": sentiment,
+            "sentiment_context": sentiment_context,
         }
+
+    def _build_sentiment_context(self, sentiment: dict, ctx: SharedContext) -> str:
+        """Build sentiment context injection based on trader class.
+
+        Args:
+            sentiment: Dict from SentimentAgent.get_sentiment() with sentiment data
+            ctx: SharedContext with trader_class and user settings
+
+        Returns:
+            String to inject into trading agent context
+        """
+        context_parts = []
+
+        # Check for earnings alert - applies to ALL trader classes
+        if sentiment.get("earnings_alert"):
+            earnings_date = sentiment.get("earnings_date", "unknown")
+            context_parts.append(
+                f"⚠️ EARNINGS ALERT: Earnings announced for {earnings_date}. "
+                f"Reduce signal confidence by 50% due to pre-earnings volatility."
+            )
+
+        # Check for extreme crypto fear (Fear & Greed < 20) - crypto_native only
+        if (
+            ctx.is_crypto_native()
+            and sentiment.get("fear_greed_index") is not None
+            and sentiment["fear_greed_index"] < 20
+        ):
+            context_parts.append(
+                f"🔴 CRYPTO FEAR: Fear & Greed Index is {sentiment['fear_greed_index']} (extreme fear). "
+                f"Market is in panic mode. Apply extra caution."
+            )
+
+        # Inject sentiment summary based on trader class
+        if ctx.is_pro() or ctx.is_intermediate():
+            # Full sentiment + headlines for experienced traders
+            if sentiment.get("sentiment_summary"):
+                context_parts.append(f"Market Sentiment: {sentiment['sentiment_summary']}")
+            if sentiment.get("headlines"):
+                headlines_text = " | ".join(sentiment["headlines"])
+                context_parts.append(f"Latest Headlines: {headlines_text}")
+        else:
+            # Simple sentiment for novices and crypto natives
+            if sentiment.get("sentiment_summary_simple"):
+                context_parts.append(f"Market Sentiment: {sentiment['sentiment_summary_simple']}")
+
+        return "\n".join(context_parts) if context_parts else ""
 
     # ─────────────────────────────────────────────────────────────────────────
     # TRADE EXECUTE
@@ -159,16 +368,19 @@ class MasterOrchestrator:
         payload: dict,
         db: AsyncSession,
     ) -> dict:
-        """Execute a trade with full risk and portfolio checks.
+        """Execute a trade with full risk and portfolio checks + comprehensive audit logging.
 
         Steps:
-        1. Load context + all analyze checks
-        2. Risk agent check: can_open_position(symbol, amount)
-        3. Portfolio agent check: evaluate_new_trade(symbol, side, amount)
-        4. Write to AuditLog BEFORE execution
-        5. Execute: paper_trading_enabled → execute_paper, else execute_live
-        6. Invalidate shared_memory cache
-        7. Return trade result
+        1. Load context + all prerequisite checks
+        2. Call trading_agent.analyze() for signal + reasoning + market data
+        3. Risk agent check: can_open_position(symbol, amount)
+        4. Portfolio agent check: evaluate_new_trade(symbol, side, amount)
+        5. Write comprehensive AuditLog via log_trade_decision BEFORE execution
+        6. Execute: paper_trading_enabled → execute_paper, else execute_live
+        7. Invalidate shared_memory cache
+        8. Return trade result
+
+        CRITICAL: If audit logging fails, raises HTTPException 500 and does NOT execute trade.
         """
         symbol = payload.get("symbol")
         side = payload.get("side")  # BUY or SELL
@@ -187,11 +399,22 @@ class MasterOrchestrator:
                 detail="Trading paused — daily loss limit reached",
             )
 
+        # Risk disclosure check for real money trading (trust_ladder_stage >= 2)
+        if ctx.trust_ladder_stage >= 2 and not ctx.risk_disclosure_accepted:
+            raise HTTPException(
+                status_code=403,
+                detail="Risk disclosure not accepted — real money trading requires risk acknowledgement",
+            )
+
+        # Step 2: Get AI analysis with signal, explanation, confidence, market data
+        trading_agent = TradingAgent()
+        agent_analysis = await trading_agent.analyze(symbol=symbol, context=ctx)
+
         # Import risk and portfolio agents
         from src.agents.core.risk_agent import RiskAgent
         from src.agents.core.portfolio_agent import PortfolioAgent
 
-        # Step 2: Risk agent validation
+        # Step 3: Risk agent validation
         risk_agent = RiskAgent()
         risk_check = await risk_agent.can_open_position(
             user_id=user_id,
@@ -207,13 +430,14 @@ class MasterOrchestrator:
                 "suggestion": risk_check.get("suggestion"),
             }
 
-        # Step 3: Portfolio agent validation
+        # Step 4: Portfolio agent validation
         portfolio_agent = PortfolioAgent()
         portfolio_check = await portfolio_agent.evaluate_new_trade(
             user_id=user_id,
             symbol=symbol,
             side=side,
             amount=amount,
+            ctx=ctx,
             db=db,
         )
 
@@ -223,32 +447,20 @@ class MasterOrchestrator:
                 "reason": portfolio_check.get("reason"),
             }
 
-        # Step 4: Write audit log BEFORE execution
-        audit_entry = AuditLog(
+        # Step 5: Write comprehensive audit log BEFORE execution
+        # CRITICAL: If this fails, raises HTTPException 500 and trade is NOT executed
+        risk_result = (risk_check.get("allowed"), risk_check.get("reason", ""))
+        await self.log_trade_decision(
             user_id=user_id,
-            event_type="trade_decision",
-            event_details={
-                "symbol": symbol,
-                "side": side,
-                "amount": amount,
-                "context_snapshot": {
-                    "subscription_active": ctx.subscription_active,
-                    "risk_level": ctx.risk_level,
-                    "max_daily_loss_pct": ctx.max_daily_loss_pct,
-                    "paper_trading_enabled": ctx.paper_trading_enabled,
-                    "win_rate": ctx.win_rate,
-                },
-                "risk_approved": True,
-                "portfolio_approved": True,
-                "timestamp": datetime.utcnow().isoformat(),
-            },
+            payload=payload,
+            ctx=ctx,
+            risk_result=risk_result,
+            portfolio_result=portfolio_check,
+            agent_response=agent_analysis,
+            db=db,
         )
-        db.add(audit_entry)
-        await db.commit()
 
-        # Step 5: Execute trade
-        trading_agent = TradingAgent()
-
+        # Step 6: Execute trade
         if ctx.paper_trading_enabled:
             trade_result = await trading_agent.execute_paper(
                 payload=payload,
@@ -262,10 +474,10 @@ class MasterOrchestrator:
                 db=db,
             )
 
-        # Step 6: Invalidate cache
+        # Step 7: Invalidate cache
         SharedMemory.invalidate(user_id)
 
-        # Step 7: Return result
+        # Step 8: Return result
         return trade_result
 
     # ─────────────────────────────────────────────────────────────────────────

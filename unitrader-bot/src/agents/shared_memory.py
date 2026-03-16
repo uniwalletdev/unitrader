@@ -50,6 +50,7 @@ class SharedContext:
     risk_disclosure_accepted: bool
     max_daily_loss_pct: float              # From UserSettings.max_daily_loss
     onboarding_complete: bool
+    trader_class: str = "complete_novice"  # Detected trader profile
     onboarding_profile: dict = field(default_factory=dict)
     favourite_symbols: list[str] = field(default_factory=list)
     total_trades: int = 0
@@ -77,6 +78,7 @@ class SharedContext:
             risk_disclosure_accepted=False,
             max_daily_loss_pct=5.0,
             onboarding_complete=False,
+            trader_class="complete_novice",
             onboarding_profile={},
             favourite_symbols=[],
             total_trades=0,
@@ -85,6 +87,51 @@ class SharedContext:
             last_signal=None,
             recent_onboarding_messages=[],
         )
+
+    def is_novice(self) -> bool:
+        """Return True if user is a complete novice or curious saver."""
+        return self.trader_class in ("complete_novice", "curious_saver")
+
+    def is_intermediate(self) -> bool:
+        """Return True if user is self-taught."""
+        return self.trader_class == "self_taught"
+
+    def is_pro(self) -> bool:
+        """Return True if user is experienced or semi-institutional."""
+        return self.trader_class in ("experienced", "semi_institutional")
+
+    def is_crypto_native(self) -> bool:
+        """Return True if user is crypto-native trader."""
+        return self.trader_class == "crypto_native"
+
+    def preferred_explanation(self) -> str:
+        """Return the preferred explanation level based on trader class.
+        
+        Defaults to user's explanation_level, but falls back to trader class defaults:
+        - complete_novice: metaphor (vivid analogies)
+        - curious_saver: simple (plain English)
+        - self_taught: simple
+        - experienced: expert (technical details)
+        - semi_institutional: expert
+        - crypto_native: expert
+        """
+        defaults = {
+            "complete_novice": "metaphor",
+            "curious_saver": "simple",
+            "self_taught": "simple",
+            "experienced": "expert",
+            "semi_institutional": "expert",
+            "crypto_native": "expert",
+        }
+        return self.explanation_level or defaults.get(self.trader_class, "simple")
+
+    def default_trade_mode(self) -> str:
+        """Return the default trade mode based on trader experience.
+        
+        - Novices: "guided" (with confirmations and educational context)
+        - Others: "pro" (faster execution, minimal handholding)
+        """
+        return "guided" if self.is_novice() else "pro"
 
 
 class SharedMemory:
@@ -211,9 +258,10 @@ class SharedMemory:
                         and user.trial_end_date > datetime.utcnow()
                     )
                 ),
-                risk_disclosure_accepted=True,  # Default — extend with user_settings table if needed
+                risk_disclosure_accepted=settings.risk_disclosure_accepted or False,
                 max_daily_loss_pct=settings.max_daily_loss or 5.0,
                 onboarding_complete=False,  # Default — extend with user_settings table if needed
+                trader_class=settings.trader_class or "complete_novice",
                 onboarding_profile={},  # Could store as JSON in user_settings
                 favourite_symbols=favourite_symbols,
                 total_trades=trade_stats["total_trades"],

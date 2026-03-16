@@ -26,6 +26,7 @@ from config import settings
 from database import AsyncSessionLocal
 from models import AuditLog, ExchangeAPIKey, Trade, User, UserSettings
 from security import decrypt_api_key
+from src.agents.shared_memory import SharedContext
 from src.integrations.exchange_client import get_exchange_client
 from src.integrations.market_data import full_market_analysis, normalise_symbol
 from src.services.trade_execution import build_trade_parameters
@@ -57,6 +58,21 @@ class TradingDecision(BaseModel):
     risk_factors: list[str] = Field(default_factory=list)
 
 
+class TradeAnalysis(BaseModel):
+    """Detailed AI trade analysis with expert explanation and market context.
+    
+    Returned by analyze() method when analyzing with SharedContext.
+    """
+
+    signal: str = Field(..., pattern="^(buy|sell|wait)$")
+    confidence: int = Field(..., ge=0, le=100)
+    explanation_expert: str
+    key_factors: list[dict]
+    suggested_stop_loss_pct: float = Field(..., ge=0.0)
+    suggested_take_profit_pct: float = Field(..., ge=0.0)
+    market_data: dict
+
+
 _SYSTEM_PROMPT = """\
 You are a professional quantitative trading AI assistant named {ai_name}.
 Your job is to analyse market data and make precise trading decisions.
@@ -78,6 +94,43 @@ RESPONSE FORMAT (strict JSON, no markdown, no extra text):
   "take_profit": <float>,
   "position_size_pct": <float, max 2.0>,
   "reasoning": "<1-2 sentences explaining the decision>"
+}}
+"""
+
+_ANALYZE_SYSTEM_PROMPT = """\
+You are {ai_name}, a professional AI trading analyst.
+
+USER PROFILE:
+- Goal: {goal}
+- Risk Tolerance: {risk_level}
+- Account Stage: {trust_ladder_stage}/5 (1=paper/learning, 5=full autonomy)
+- Max Position Size: {max_position_pct}% of account per trade
+- Mode: {trade_mode}
+
+ANALYSIS RULES:
+1. Every trade MUST have a stop-loss. Never trade without one.
+2. Only signal BUY/SELL when confidence ≥ 50.
+3. For {risk_level} traders: {risk_guidance}
+4. For trust level {trust_ladder_stage}: {trust_guidance}
+5. Return ONLY the specified JSON format. No markdown, no extra text.
+
+RESPONSE FORMAT (strict JSON, no markdown):
+{{
+  "signal": "buy" | "sell" | "wait",
+  "confidence": <integer 0-100>,
+  "explanation_expert": "<technical analysis with RSI, MACD, MA, volume levels>",
+  "key_factors": [
+    {{"label": "<factor name>", "sentiment": "positive|negative|neutral", "detail": "<brief explanation>"}}
+  ],
+  "suggested_stop_loss_pct": <float>,
+  "suggested_take_profit_pct": <float>,
+  "market_data": {{
+    "price": <current price>,
+    "rsi": <RSI value 0-100>,
+    "macd": <MACD histogram value>,
+    "above_20ma": <boolean>,
+    "volume_ratio": <24h volume / avg volume>
+  }}
 }}
 """
 
@@ -492,6 +545,309 @@ class TradingAgent:
             "take_profit": 0.0,
             "position_size_pct": 0.0,
             "reasoning": reason,
+        }
+
+    # ─────────────────────────────────────────────
+    # Personalized Analysis (Context-Aware)
+    # ─────────────────────────────────────────────
+
+    async def analyze(
+        self,
+        symbol: str,
+        exchange: str,
+        context: SharedContext,
+        market_data: dict | None = None,
+        historical_price: float | None = None,
+    ) -> TradeAnalysis:
+        """Perform context-aware trade analysis with personalized sizing and explanations.
+
+        This method uses a user's SharedContext (goal, risk level, trust stage) to
+        provide tailored trading guidance. Returns detailed technical analysis with
+        market context.
+
+        Args:
+            symbol: Trading pair (e.g., "BTC/USD", "AAPL")
+            exchange: Exchange name (e.g., "alpaca", "coinbase")
+            context: SharedContext with user settings, goal, risk level
+            market_data: Optional pre-fetched market analysis dict. If None, fetches live data.
+            historical_price: Optional historical price for backtesting. If provided, uses this
+                             instead of fetching live market data.
+
+        Returns:
+            TradeAnalysis with detailed signal, confidence, factors, and SL/TP levels.
+        """
+        # Fetch market data if not provided
+        if market_data is None:
+            if historical_price is not None:
+                # Backtest mode: use provided price instead of live data
+                market_data = await self._create_backtest_market_data(
+                    symbol, exchange, historical_price
+                )
+            else:
+                # Live mode: fetch full market analysis
+                market_data = await self.analyze_market(symbol, exchange)
+                if market_data is None:
+                    # Fallback on data failure
+                    return TradeAnalysis(
+                        signal="wait",
+                        confidence=0,
+                        explanation_expert="Market data unavailable.",
+                        key_factors=[],
+                        suggested_stop_loss_pct=0.0,
+                        suggested_take_profit_pct=0.0,
+                        market_data={},
+                    )
+
+        # Build risk-aware guidance based on risk level
+        risk_guidance = self._get_risk_guidance(context.risk_level)
+        trust_guidance = self._get_trust_guidance(context.trust_ladder_stage)
+
+        # Calculate max position size based on risk level
+        max_position_pct = self._calculate_max_position_pct(
+            context.risk_level, context.trust_ladder_stage
+        )
+
+        # Build personalized system prompt
+        system_prompt = _ANALYZE_SYSTEM_PROMPT.format(
+            ai_name=context.apex_name,
+            goal=context.goal,
+            risk_level=context.risk_level,
+            trust_ladder_stage=context.trust_ladder_stage,
+            max_position_pct=max_position_pct,
+            trade_mode=context.trade_mode,
+            risk_guidance=risk_guidance,
+            trust_guidance=trust_guidance,
+        )
+
+        # Build user prompt with current market data
+        user_prompt = self._build_analysis_user_prompt(symbol, market_data)
+
+        try:
+            # Call Claude with new prompt structure
+            response = await self._claude.messages.create(
+                model=_CLAUDE_MODEL,
+                max_tokens=1024,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+
+            raw = response.content[0].text.strip()
+            analysis_dict = parse_claude_json(raw, context="trade analysis")
+
+            # Validate and construct TradeAnalysis response
+            analysis = TradeAnalysis(
+                signal=analysis_dict.get("signal", "wait").lower(),
+                confidence=int(analysis_dict.get("confidence", 0)),
+                explanation_expert=analysis_dict.get("explanation_expert", ""),
+                key_factors=analysis_dict.get("key_factors", []),
+                suggested_stop_loss_pct=float(analysis_dict.get("suggested_stop_loss_pct", 0.0)),
+                suggested_take_profit_pct=float(analysis_dict.get("suggested_take_profit_pct", 0.0)),
+                market_data=analysis_dict.get("market_data", {}),
+            )
+
+            logger.info(
+                "Trade analysis: %s/%s signal=%s confidence=%d",
+                symbol,
+                exchange,
+                analysis.signal,
+                analysis.confidence,
+            )
+            return analysis
+
+        except json.JSONDecodeError:
+            logger.error("Claude returned non-JSON trade analysis: %s", raw[:200])
+            return TradeAnalysis(
+                signal="wait",
+                confidence=0,
+                explanation_expert="Analysis parse error. Retrying.",
+                key_factors=[],
+                suggested_stop_loss_pct=0.0,
+                suggested_take_profit_pct=0.0,
+                market_data=market_data or {},
+            )
+        except Exception as exc:
+            logger.error("Trade analysis failed for %s/%s: %s", symbol, exchange, exc)
+            return TradeAnalysis(
+                signal="wait",
+                confidence=0,
+                explanation_expert=f"Analysis error: {str(exc)}",
+                key_factors=[],
+                suggested_stop_loss_pct=0.0,
+                suggested_take_profit_pct=0.0,
+                market_data=market_data or {},
+            )
+
+    async def translate_explanation(
+        self,
+        expert_text: str,
+        target: str,
+        context: SharedContext,
+    ) -> str:
+        """Translate expert technical explanation to simple or metaphor form.
+
+        Args:
+            expert_text: Full technical analysis with RSI, MACD, MA, volume details
+            target: "simple" for plain English, "metaphor" for vivid analogy
+            context: SharedContext with user explanation_level preference
+
+        Returns:
+            Translated explanation string (2-3 sentences)
+        """
+        if target == "simple":
+            return await self._translate_to_simple(expert_text, context)
+        elif target == "metaphor":
+            return await self._translate_to_metaphor(expert_text, context)
+        else:
+            logger.warning("Unknown translation target: %s, returning original", target)
+            return expert_text
+
+    async def _translate_to_simple(self, expert_text: str, context: SharedContext) -> str:
+        """Convert technical explanation to 2-3 plain English sentences."""
+        if not settings.anthropic_api_key:
+            return expert_text
+
+        translation_prompt = f"""\
+Simplify this trading analysis for a beginner investor. Use no jargon (no RSI, MACD, MA, etc).
+Use plain English in 2-3 sentences. Be encouraging but honest.
+
+Expert analysis:
+{expert_text}
+
+Simple explanation:"""
+
+        try:
+            response = await self._claude.messages.create(
+                model=_CLAUDE_MODEL,
+                max_tokens=256,
+                system="You are a friendly financial advisor explaining trading concepts to beginners.",
+                messages=[{"role": "user", "content": translation_prompt}],
+            )
+            return response.content[0].text.strip()
+        except Exception as exc:
+            logger.warning("Failed to translate to simple: %s", exc)
+            return expert_text
+
+    async def _translate_to_metaphor(self, expert_text: str, context: SharedContext) -> str:
+        """Convert technical explanation to a vivid real-world analogy (2-3 sentences)."""
+        if not settings.anthropic_api_key:
+            return expert_text
+
+        translation_prompt = f"""\
+Create a vivid real-world analogy for this trading signal. Use 2-3 sentences.
+Make it relatable and memorable for someone learning to trade.
+
+Expert analysis:
+{expert_text}
+
+Real-world analogy:"""
+
+        try:
+            response = await self._claude.messages.create(
+                model=_CLAUDE_MODEL,
+                max_tokens=256,
+                system="You are a creative educator using analogies to explain trading concepts.",
+                messages=[{"role": "user", "content": translation_prompt}],
+            )
+            return response.content[0].text.strip()
+        except Exception as exc:
+            logger.warning("Failed to translate to metaphor: %s", exc)
+            return expert_text
+
+    def _get_risk_guidance(self, risk_level: str) -> str:
+        """Return guidance string for the user's risk tolerance level."""
+        guidance_map = {
+            "conservative": "Take smaller positions (0.5-1%). Tighter stop-loss (0.5-1%). Wait for high-confidence setups (70+).",
+            "balanced": "Standard positions (1-1.5%). Moderate stop-loss (1-2%). Trade on confidence 50+.",
+            "aggressive": "Larger positions (1.5-2%). Wider stop-loss (2-3%). Higher risk-reward targets (1:3 or better).",
+        }
+        return guidance_map.get(risk_level, guidance_map["balanced"])
+
+    def _get_trust_guidance(self, trust_stage: int) -> str:
+        """Return guidance based on user's trust ladder stage."""
+        guidance_map = {
+            1: "This is paper (simulated) trading. Focus on learning, not profits. Be experimental.",
+            2: "You have proven consistency. Start with very small real trades (0.25% position size).",
+            3: "Standard position sizing applies. You've shown good risk management.",
+            4: "You have demonstrated skill. Can use full position sizing (up to 2%).",
+            5: "Autonomous trading enabled. You can scale up as capital allows.",
+        }
+        return guidance_map.get(trust_stage, guidance_map[1])
+
+    def _calculate_max_position_pct(self, risk_level: str, trust_stage: int) -> float:
+        """Calculate max position size % based on risk level and trust stage."""
+        # Base sizing by risk level
+        base_sizes = {
+            "conservative": 0.75,
+            "balanced": 1.5,
+            "aggressive": 2.0,
+        }
+        base = base_sizes.get(risk_level, 1.5)
+
+        # Scale down by trust stage (1-5)
+        # Stage 1-2: reduced sizing for learning/early real trades
+        # Stage 3+: full sizing
+        if trust_stage <= 2:
+            return min(base * 0.5, 0.5)  # Cap at 0.5% for paper/early
+        elif trust_stage == 3:
+            return min(base * 0.75, 1.0)
+        else:
+            return base
+
+    def _build_analysis_user_prompt(self, symbol: str, market_data: dict) -> str:
+        """Build the user prompt for trade analysis with market data."""
+        indicators = market_data.get("indicators", {})
+        macd = indicators.get("macd", {})
+        sr = market_data.get("support_resistance", {})
+
+        prompt = f"""\
+ANALYZE THIS TRADE OPPORTUNITY:
+
+Symbol:         {symbol}
+Price:          ${market_data.get("price", 0):,.4f}
+24h High/Low:   ${market_data.get("high_24h", 0):,.4f} / ${market_data.get("low_24h", 0):,.4f}
+24h Volume:     {market_data.get("volume", 0):,.0f}
+Trend:          {market_data.get("trend", "unknown")}
+
+TECHNICAL INDICATORS:
+RSI (14):       {indicators.get("rsi", 50):.1f}
+MACD:           Line={macd.get("line", 0):.4f}, Signal={macd.get("signal", 0):.4f}, Hist={macd.get("histogram", 0):.6f}
+MA20/50/200:    ${indicators.get("ma20", 0):,.4f} / ${indicators.get("ma50", 0):,.4f} / ${indicators.get("ma200", 0):,.4f}
+
+SUPPORT/RESISTANCE:
+Support:        ${sr.get("support", 0):,.4f}
+Pivot:          ${sr.get("pivot", 0):,.4f}
+Resistance:     ${sr.get("resistance", 0):,.4f}
+
+Provide your detailed technical analysis with the specified JSON format."""
+
+        return prompt
+
+    async def _create_backtest_market_data(
+        self, symbol: str, exchange: str, historical_price: float
+    ) -> dict:
+        """Create a market data dict for backtesting with a historical price."""
+        # For backtest mode, we use the provided historical_price and create synthetic indicators
+        # In real backtest scenarios, you'd have full OHLCV data to compute real indicators
+        return {
+            "symbol": symbol,
+            "exchange": exchange,
+            "price": historical_price,
+            "high_24h": historical_price * 1.02,
+            "low_24h": historical_price * 0.98,
+            "volume": 0,  # Backtest volume unknown
+            "trend": "unknown",  # Would need historical data to determine
+            "indicators": {
+                "rsi": 50,  # Neutral RSI for backtest
+                "ma20": historical_price,
+                "ma50": historical_price,
+                "ma200": historical_price,
+                "macd": {"line": 0, "signal": 0, "histogram": 0},
+            },
+            "support_resistance": {
+                "support": historical_price * 0.98,
+                "pivot": historical_price,
+                "resistance": historical_price * 1.02,
+            },
         }
 
     # ─────────────────────────────────────────────

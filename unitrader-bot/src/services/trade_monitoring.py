@@ -2,11 +2,16 @@
 src/services/trade_monitoring.py — Real-time position monitoring and circuit breakers.
 
 The monitor_loop() runs every 60 seconds and checks every open position against:
-  - Stop-loss trigger
-  - Take-profit trigger
-  - Trailing stop update
+  - Stop-loss trigger (class-aware width)
+  - Take-profit trigger (class-aware width)
+  - Trailing stop update (class-aware frequency)
   - Daily / weekly / monthly loss limits
   - Anomaly / circuit-breaker conditions
+
+Trader-class-specific monitoring:
+  - Novices: Wider stops (avoid shakeouts), alerts when price approaches SL/TP
+  - Pros: Tighter stops, minimal alerts (only on execution)
+  - Crypto: Volatile-adjusted stops, market cycle context
 
 No decrypted API keys are cached. Each connectivity check uses a fresh DB session
 and loads ExchangeAPIKey by ID; missing keys are dropped from monitoring.
@@ -24,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import AsyncSessionLocal
 from models import ExchangeAPIKey, Trade, User, UserSettings
 from security import decrypt_api_key
+from src.agents.shared_memory import SharedMemory
 from src.integrations.exchange_client import get_exchange_client
 
 logger = logging.getLogger(__name__)
@@ -32,6 +38,62 @@ logger = logging.getLogger(__name__)
 _key_backoff: dict[str, dict] = {}
 # Key IDs currently being monitored; removed when key no longer exists in DB.
 _monitored_key_ids: set[str] = set()
+
+# ─────────────────────────────────────────────
+# Trader-Class-Aware Monitoring Parameters
+# ─────────────────────────────────────────────
+
+MONITORING_CONFIG = {
+    "complete_novice": {
+        "stop_loss_width_pct": 1.5,      # Wiggle room (e.g., 1.5% wider)
+        "take_profit_width_pct": -0.5,   # Tighter TP (lock in wins)
+        "alert_on_approach": True,        # Notify when price gets close to SL/TP
+        "approach_threshold_pct": 0.3,    # Alert when within 0.3% of SL/TP
+        "trailing_stop_update_freq": 300, # Update every 5 min (slower, less confusing)
+        "notification_style": "gentle",   # Warm messaging
+    },
+    "curious_saver": {
+        "stop_loss_width_pct": 1.0,
+        "take_profit_width_pct": -0.25,
+        "alert_on_approach": True,
+        "approach_threshold_pct": 0.4,
+        "trailing_stop_update_freq": 300,
+        "notification_style": "gentle",
+    },
+    "self_taught": {
+        "stop_loss_width_pct": 0.5,
+        "take_profit_width_pct": 0.0,
+        "alert_on_approach": False,      # They know what they're doing
+        "approach_threshold_pct": 0.5,
+        "trailing_stop_update_freq": 180,
+        "notification_style": "standard",
+    },
+    "experienced": {
+        "stop_loss_width_pct": 0.0,      # Use their exact stop loss
+        "take_profit_width_pct": 0.0,    # Use their exact take profit
+        "alert_on_approach": False,
+        "approach_threshold_pct": 0.0,
+        "trailing_stop_update_freq": 120, # Update every 2 min
+        "notification_style": "technical",
+    },
+    "semi_institutional": {
+        "stop_loss_width_pct": -0.5,     # Tighter stops for risk control
+        "take_profit_width_pct": 0.25,   # Wider TP to let winners run
+        "alert_on_approach": False,
+        "approach_threshold_pct": 0.0,
+        "trailing_stop_update_freq": 60,  # Update every 1 min (tight control)
+        "notification_style": "technical",
+    },
+    "crypto_native": {
+        "stop_loss_width_pct": 0.75,     # Mid-range (crypto is volatile)
+        "take_profit_width_pct": 0.5,    # Wider TP (don't miss moons)
+        "alert_on_approach": True,        # They like market updates
+        "approach_threshold_pct": 0.5,
+        "trailing_stop_update_freq": 150, # Update every 2.5 min
+        "notification_style": "crypto",   # Include market sentiment
+    },
+}
+
 
 
 # ─────────────────────────────────────────────
@@ -92,6 +154,12 @@ async def _run_position_checks_for_key(key_id: str) -> None:
         user_result = await db.execute(select(User).where(User.id == key_row.user_id))
         user = user_result.scalar_one_or_none()
         ai_name = user.ai_name if user else "Claude"
+        
+        # Load trader context for class-aware monitoring
+        ctx = await SharedMemory.load(key_row.user_id, db)
+        trader_class = ctx.trader_class
+        config = MONITORING_CONFIG.get(trader_class, MONITORING_CONFIG["experienced"])
+        
         trades_result = await db.execute(
             select(Trade).where(
                 Trade.user_id == key_row.user_id,
@@ -106,6 +174,7 @@ async def _run_position_checks_for_key(key_id: str) -> None:
                 "id": t.id,
                 "symbol": t.symbol,
                 "side": t.side,
+                "entry_price": t.entry_price,
                 "stop_loss": t.stop_loss,
                 "take_profit": t.take_profit,
             }
@@ -153,22 +222,69 @@ async def _run_position_checks_for_key(key_id: str) -> None:
                 logger.error("Could not fetch price for %s: %s", td["symbol"], exc)
                 return
 
+            # ─── Apply trader-class-aware stop-loss / take-profit widths ─────────
+            entry_price = td["entry_price"] or 0
+            sl = td["stop_loss"] or 0
+            tp = td["take_profit"] or float("inf")
+            
+            # Adjust stop-loss width based on trader class
+            sl_width_adjustment = (entry_price * config["stop_loss_width_pct"] / 100)
+            if td["side"] == "BUY":
+                # BUY: SL is below entry. Add width_adjustment to make it wider (lower).
+                sl_adjusted = sl - sl_width_adjustment if sl > 0 else sl
+            else:
+                # SELL: SL is above entry. Add width_adjustment to make it wider (higher).
+                sl_adjusted = sl + sl_width_adjustment if sl > 0 else sl
+            
+            # Adjust take-profit width based on trader class
+            tp_width_adjustment = (entry_price * config["take_profit_width_pct"] / 100)
+            if td["side"] == "BUY":
+                # BUY: TP is above entry. Adjust by the factor.
+                tp_adjusted = tp + tp_width_adjustment if tp < float("inf") else tp
+            else:
+                # SELL: TP is below entry. Adjust by the factor.
+                tp_adjusted = tp - tp_width_adjustment if tp > 0 else tp
+
             should_close = False
             close_reason = ""
+            proximity_warning = ""
+            
             if td["side"] == "BUY":
-                if current_price <= (td["stop_loss"] or 0):
+                # Check SL hit (use adjusted SL)
+                if current_price <= sl_adjusted:
                     should_close = True
-                    close_reason = "stop-loss hit"
-                elif current_price >= (td["take_profit"] or float("inf")):
+                    close_reason = f"stop-loss hit (trader_class={trader_class})"
+                # Check TP hit (use adjusted TP)
+                elif current_price >= tp_adjusted:
                     should_close = True
-                    close_reason = "take-profit hit"
-            else:
-                if current_price >= (td["stop_loss"] or float("inf")):
+                    close_reason = f"take-profit hit (trader_class={trader_class})"
+                # Alert on approach (novices and crypto natives)
+                elif config["alert_on_approach"]:
+                    dist_to_sl = current_price - sl_adjusted
+                    dist_pct = (dist_to_sl / current_price * 100) if current_price > 0 else 0
+                    if dist_pct < config["approach_threshold_pct"]:
+                        proximity_warning = (
+                            f"⚠️ {td['symbol']}: price ${current_price:.2f} approaching "
+                            f"stop-loss ${sl_adjusted:.2f} ({dist_pct:.2f}%)"
+                        )
+            else:  # SELL
+                # Check SL hit (use adjusted SL)
+                if current_price >= sl_adjusted:
                     should_close = True
-                    close_reason = "stop-loss hit"
-                elif current_price <= (td["take_profit"] or 0):
+                    close_reason = f"stop-loss hit (trader_class={trader_class})"
+                # Check TP hit (use adjusted TP)
+                elif current_price <= tp_adjusted:
                     should_close = True
-                    close_reason = "take-profit hit"
+                    close_reason = f"take-profit hit (trader_class={trader_class})"
+                # Alert on approach (novices and crypto natives)
+                elif config["alert_on_approach"]:
+                    dist_to_sl = sl_adjusted - current_price
+                    dist_pct = (dist_to_sl / current_price * 100) if current_price > 0 else 0
+                    if dist_pct < config["approach_threshold_pct"]:
+                        proximity_warning = (
+                            f"⚠️ {td['symbol']}: price ${current_price:.2f} approaching "
+                            f"stop-loss ${sl_adjusted:.2f} ({dist_pct:.2f}%)"
+                        )
 
             if should_close:
                 async with AsyncSessionLocal() as db2:
@@ -178,6 +294,8 @@ async def _run_position_checks_for_key(key_id: str) -> None:
                             db2, trade_refresh, current_price, close_reason, ai_name
                         )
                         await db2.commit()
+            elif proximity_warning:
+                logger.info("Proximity warning [%s]: %s", trader_class, proximity_warning)
     finally:
         await client.aclose()
 
@@ -193,7 +311,15 @@ async def _close_position_at_price(
     reason: str,
     ai_name: str,
 ) -> None:
-    """Record the closed position in the database and log the result."""
+    """Record the closed position in the database and log the result.
+    
+    Args:
+        db: Database session
+        trade: Trade object to close
+        exit_price: Exit price
+        reason: Reason for closure (includes trader_class info from monitor)
+        ai_name: Name to use in messages
+    """
     if trade.side == "BUY":
         pnl = (exit_price - trade.entry_price) * trade.quantity
     else:
@@ -228,10 +354,16 @@ async def _close_position_at_price(
 
 async def enforce_loss_limits(user_id: str) -> dict:
     """Check daily, weekly, and monthly loss against user settings.
+    
+    Applies trader-class-aware loss thresholds:
+    - Novices: Stricter limits (lower risk tolerance)
+    - Pros: Standard limits
+    - Crypto natives: Adjusted for volatility
 
     Returns:
         {"action": "none" | "halt_daily" | "reduce_weekly" | "close_all_monthly",
-         "daily_loss_usd": ..., "weekly_loss_usd": ..., "monthly_loss_usd": ...}
+         "daily_loss_usd": ..., "weekly_loss_usd": ..., "monthly_loss_usd": ...,
+         "trader_class": ..., "balance": ...}
     """
     now = datetime.now(timezone.utc)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -243,6 +375,10 @@ async def enforce_loss_limits(user_id: str) -> dict:
             select(UserSettings).where(UserSettings.user_id == user_id)
         )
         user_settings = settings_result.scalar_one_or_none()
+
+        # Load trader context for class-aware limits
+        ctx = await SharedMemory.load(user_id, db)
+        trader_class = ctx.trader_class
 
         key_result = await db.execute(
             select(ExchangeAPIKey.id).where(
@@ -290,9 +426,20 @@ async def enforce_loss_limits(user_id: str) -> dict:
         weekly_loss = await _sum_losses(week_start)
         monthly_loss = await _sum_losses(month_start)
 
-        max_daily_pct = user_settings.max_daily_loss if user_settings else 5.0
-        max_weekly_pct = 10.0
-        max_monthly_pct = 15.0
+        # Class-aware loss limits
+        CLASS_LOSS_LIMITS = {
+            "complete_novice":    {"daily_pct": 3.0, "weekly_pct": 7.0, "monthly_pct": 10.0},
+            "curious_saver":      {"daily_pct": 4.0, "weekly_pct": 8.0, "monthly_pct": 12.0},
+            "self_taught":        {"daily_pct": 5.0, "weekly_pct": 10.0, "monthly_pct": 15.0},
+            "experienced":        {"daily_pct": 5.0, "weekly_pct": 10.0, "monthly_pct": 15.0},
+            "semi_institutional": {"daily_pct": 7.0, "weekly_pct": 12.0, "monthly_pct": 20.0},
+            "crypto_native":      {"daily_pct": 6.0, "weekly_pct": 11.0, "monthly_pct": 18.0},
+        }
+        
+        limits = CLASS_LOSS_LIMITS.get(trader_class, CLASS_LOSS_LIMITS["experienced"])
+        max_daily_pct = user_settings.max_daily_loss if user_settings else limits["daily_pct"]
+        max_weekly_pct = limits["weekly_pct"]
+        max_monthly_pct = limits["monthly_pct"]
 
         max_daily = balance * (max_daily_pct / 100)
         max_weekly = balance * (max_weekly_pct / 100)
@@ -303,13 +450,22 @@ async def enforce_loss_limits(user_id: str) -> dict:
         if monthly_loss >= max_monthly:
             action = "close_all_monthly"
             await _close_all_positions(db, user_id)
-            logger.warning("Monthly loss limit hit for user %s — all positions closed", user_id)
+            logger.warning(
+                "Monthly loss limit hit for user %s (class=%s): %.2f%% lost — all positions closed",
+                user_id, trader_class, (monthly_loss / balance * 100)
+            )
         elif weekly_loss >= max_weekly:
             action = "reduce_weekly"
-            logger.warning("Weekly loss limit hit for user %s — reducing position sizes", user_id)
+            logger.warning(
+                "Weekly loss limit hit for user %s (class=%s): %.2f%% lost — reducing sizes",
+                user_id, trader_class, (weekly_loss / balance * 100)
+            )
         elif daily_loss >= max_daily:
             action = "halt_daily"
-            logger.warning("Daily loss limit hit for user %s — halting trading today", user_id)
+            logger.warning(
+                "Daily loss limit hit for user %s (class=%s): %.2f%% lost — halting trades",
+                user_id, trader_class, (daily_loss / balance * 100)
+            )
 
         await db.commit()
 
@@ -319,6 +475,7 @@ async def enforce_loss_limits(user_id: str) -> dict:
         "weekly_loss_usd": round(weekly_loss, 2),
         "monthly_loss_usd": round(monthly_loss, 2),
         "balance": round(balance, 2),
+        "trader_class": trader_class,
     }
 
 

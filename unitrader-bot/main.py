@@ -33,6 +33,10 @@ from routers import content as content_router
 from routers import billing as billing_router
 from routers import trial as trial_router
 from routers import learning as learning_router
+from routers import onboarding as onboarding_router
+from routers import ws as ws_router
+from routers import exchanges as exchanges_router
+from routers import goals as goals_router
 from routers.telegram_webhooks import (
     linking_router as telegram_linking_router,
     set_telegram_bot_service,
@@ -171,9 +175,10 @@ async def lifespan(app: FastAPI):
     content_task  = asyncio.create_task(_content_scheduler(),  name="content_scheduler")
     email_task    = asyncio.create_task(_email_scheduler(),    name="email_scheduler")
     learning_task = asyncio.create_task(_learning_scheduler(), name="learning_scheduler")
+    goals_task    = asyncio.create_task(_goals_scheduler(),    name="goals_scheduler")
     logger.info(
         "Background loops started "
-        "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly)"
+        "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly, goals=weekly@8am)"
     )
 
     # 5. Initialise Telegram bot (optional — disabled if token not set)
@@ -227,11 +232,11 @@ async def lifespan(app: FastAPI):
             pass
 
     # Background tasks
-    for task in (trading_task, monitor_task, content_task, email_task, learning_task):
+    for task in (trading_task, monitor_task, content_task, email_task, learning_task, goals_task):
         task.cancel()
     try:
         await asyncio.gather(
-            trading_task, monitor_task, content_task, email_task, learning_task,
+            trading_task, monitor_task, content_task, email_task, learning_task, goals_task,
             return_exceptions=True,
         )
     except Exception:
@@ -458,6 +463,75 @@ async def _learning_scheduler() -> None:
 
 
 # ─────────────────────────────────────────────
+# Background: Goals Scheduler (every Monday 8am UTC)
+# ─────────────────────────────────────────────
+
+async def _goals_scheduler() -> None:
+    """Send weekly goal progress reports every Monday at 8am UTC.
+
+    The scheduler wakes every minute to check if it's Monday 8am UTC.
+    Reports are generated for all users with subscription_active=True.
+    """
+    from datetime import datetime as dt, timezone as tz
+
+    logger.info("Goals scheduler started — will run every Monday at 08:00 UTC")
+    await asyncio.sleep(300)  # wait 5 min before first run so startup is clean
+
+    last_run: datetime | None = None
+
+    while True:
+        try:
+            now = dt.now(tz.utc)
+
+            # Check if it's Monday (0 = Monday, 6 = Sunday) at 8am UTC
+            is_monday = now.weekday() == 0
+            is_8am = 8 <= now.hour < 9
+            should_run = is_monday and is_8am and (
+                last_run is None or (now - last_run).total_seconds() >= 3_600
+            )
+
+            if should_run:
+                from src.agents.goal_tracking_agent import GoalTrackingAgent
+
+                agent = GoalTrackingAgent()
+
+                # Get all active users
+                async with AsyncSessionLocal() as db:
+                    from sqlalchemy import select as sa_select
+
+                    settings_rows = (
+                        await db.execute(
+                            sa_select(UserSettings).where(
+                                UserSettings.subscription_active == True  # noqa: E712
+                            )
+                        )
+                    ).scalars().all()
+
+                    count = 0
+                    for setting in settings_rows:
+                        try:
+                            await agent.generate_progress_report(setting.user_id, db)
+                            count += 1
+                        except Exception as exc:
+                            logger.error(
+                                "Goals report error for user %s: %s", setting.user_id, exc
+                            )
+
+                    logger.info("Goals scheduler: sent %d reports", count)
+                    last_run = now
+
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.error("Goals scheduler error: %s", exc)
+
+        try:
+            await asyncio.sleep(60)  # check every minute
+        except asyncio.CancelledError:
+            return
+
+
+# ─────────────────────────────────────────────
 # App Initialisation
 # ─────────────────────────────────────────────
 
@@ -544,11 +618,15 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(trading_router.router)
+app.include_router(exchanges_router.router)
 app.include_router(chat_router.router)
 app.include_router(content_router.router)
 app.include_router(billing_router.router)
 app.include_router(trial_router.router)
 app.include_router(learning_router.router)
+app.include_router(onboarding_router.router)
+app.include_router(ws_router.router)
+app.include_router(goals_router.router)
 app.include_router(telegram_webhook_router)
 app.include_router(telegram_linking_router)
 app.include_router(whatsapp_webhook_router)

@@ -25,7 +25,7 @@ from database import get_db
 from models import ExchangeAPIKey, Trade, UserSettings
 from routers.auth import get_current_user
 from schemas import SuccessResponse, TradeResponse
-from security import encrypt_api_key, hash_api_key
+from security import encrypt_api_key, hash_api_key, decrypt_api_key
 from src.agents.orchestrator import get_orchestrator
 from src.integrations.exchange_client import (
     get_exchange_client,

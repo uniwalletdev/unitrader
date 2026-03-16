@@ -18,12 +18,13 @@ from typing import Any
 
 import anthropic
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import AsyncSessionLocal
-from models import Trade, User
+from models import Trade, User, OnboardingMessage, UserSettings
+from src.agents.shared_memory import SharedMemory
 from src.services.context_detection import (
     AI_PERFORMANCE,
     EDUCATIONAL,
@@ -46,6 +47,79 @@ logger = logging.getLogger(__name__)
 _CLAUDE_MODEL = "claude-3-haiku-20240307"
 _MAX_TOKENS = 1024
 _HISTORY_TURNS = 10  # number of past exchanges to include
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trader Class Detection
+# ─────────────────────────────────────────────────────────────────────────────
+
+TRADER_CLASS_SIGNALS = {
+    "crypto_native": [
+        "defi",
+        "nft",
+        "wallet",
+        "metamask",
+        "altcoin",
+        "bitcoin since",
+        "crypto since",
+    ],
+    "semi_institutional": [
+        "bloomberg",
+        "hedge fund",
+        "prop desk",
+        "algo",
+        "systematic",
+    ],
+    "experienced": [
+        "years trading",
+        "my strategy",
+        "technical analysis",
+        "broker",
+        "covered calls",
+    ],
+    "self_taught": [
+        "robinhood",
+        "trading212",
+        "coinbase app",
+        "rsi",
+        "macd",
+        "chart",
+        "reddit",
+        "youtube",
+    ],
+    "curious_saver": [
+        "isa",
+        "index fund",
+        "vanguard",
+        "pension",
+        "etf",
+        "passive",
+    ],
+}
+
+
+def detect_trader_class(messages: list) -> str:
+    """Detect trader proficiency level from onboarding conversation messages.
+
+    Analyzes user messages for keywords suggesting experience level.
+    Returns most specific match, or "complete_novice" if no signals found.
+
+    Args:
+        messages: List of dicts with "role" and "content" keys from onboarding chat
+
+    Returns:
+        Trader class string: "crypto_native", "semi_institutional", "experienced",
+        "self_taught", "curious_saver", or "complete_novice"
+    """
+    full_text = " ".join([m.get("content", "").lower() for m in messages if m.get("role") == "user"])
+
+    # Check in order of specificity (most specific first)
+    for cls, signals in TRADER_CLASS_SIGNALS.items():
+        if any(s in full_text for s in signals):
+            return cls
+
+    return "complete_novice"
+
+
 
 _MARKET_CONTEXTS = {TRADING_QUESTION, MARKET_ANALYSIS}
 
@@ -200,6 +274,24 @@ async def _build_market_data_block(
 # ─────────────────────────────────────────────
 # System prompts — one per context
 # ─────────────────────────────────────────────
+
+_ONBOARDING_SYSTEM_PROMPT = (
+    "You are Apex, a warm and friendly AI trading companion helping a new user set up their "
+    "profile through natural conversation. Your personality: encouraging, calm, never uses jargon.\n\n"
+    "Your goal is to naturally discover 4 things through conversation:\n"
+    "1. Their main financial goal (map to: grow_savings / generate_income / learn_trading / crypto_focus)\n"
+    "2. Their risk comfort level (map to: conservative / balanced / aggressive)\n"
+    "3. Their starting budget per trade in GBP (map to a number: 25 / 50 / 100 / 250 / 500 / 1000)\n"
+    "4. Which exchange to use (map to: alpaca / coinbase / oanda based on what they want to trade)\n\n"
+    "Rules:\n"
+    "- Ask one thing at a time. Have a real conversation. Do not list all questions at once.\n"
+    "- When you've discovered a value, call extract_profile_field immediately.\n"
+    "- When all 4 fields are confirmed, call complete_onboarding immediately.\n"
+    "- Be warm and reassuring about risk questions. Acknowledge their feelings.\n"
+    "- Never use terms like RSI, MACD, margin, or leverage.\n"
+    "- Keep responses under 3 sentences."
+)
+
 
 def _build_system_prompt(context: str, ai_name: str, user_email: str) -> str:
     """Return the system prompt for a given context, personalised with the AI name."""
@@ -473,6 +565,320 @@ class ConversationAgent:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "data_freshness": data_freshness,
         }
+
+    # ─────────────────────────────────────────
+    # ONBOARDING CHAT
+    # ─────────────────────────────────────────
+
+    async def chat(
+        self,
+        user_message: str,
+        mode: str = "trading",
+        db: AsyncSession | None = None,
+    ) -> dict:
+        """Main chat method with support for different modes.
+
+        Args:
+            user_message: The user's message text
+            mode: "trading" (default) or "onboarding"
+            db: Optional AsyncSession
+
+        Returns:
+            {
+                "message": str,  # Assistant's response text
+                "completed": bool,  # True only if onboarding completed
+                "profile": {...}  # User's profile if onboarding completed
+            }
+        """
+        if mode == "onboarding":
+            return await self._handle_onboarding_chat(user_message, db)
+        else:
+            # Standard trading mode
+            result = await self.respond(user_message, db)
+            return {
+                "message": result.get("response", ""),
+                "completed": False,
+                "profile": None,
+            }
+
+    async def _handle_onboarding_chat(
+        self,
+        user_message: str,
+        db: AsyncSession | None = None,
+    ) -> dict:
+        """Handle onboarding conversation flow with Claude tools.
+
+        Returns:
+            {
+                "message": str,
+                "completed": bool,
+                "profile": {...} or None
+            }
+        """
+        if not settings.anthropic_api_key:
+            return {
+                "message": "AI is not configured. Please try again later.",
+                "completed": False,
+                "profile": None,
+            }
+
+        # Load user profile
+        async with AsyncSessionLocal() as _db:
+            user_result = await _db.execute(
+                select(User).where(User.id == self.user_id)
+            )
+            user = user_result.scalar_one_or_none()
+
+        if not user:
+            return {
+                "message": "User not found.",
+                "completed": False,
+                "profile": None,
+            }
+
+        # Load onboarding history
+        async with AsyncSessionLocal() as _db:
+            history_result = await _db.execute(
+                select(OnboardingMessage).where(
+                    OnboardingMessage.user_id == self.user_id
+                ).order_by(OnboardingMessage.created_at)
+            )
+            history_rows = history_result.scalars().all()
+
+        # Convert history to Claude format
+        messages: list[dict] = []
+        extracted_fields = {}
+        for row in history_rows:
+            if row.role == "system" and row.content.startswith("extracted:"):
+                # Parse extracted:field=value
+                _, rest = row.content.split("extracted:", 1)
+                field, value = rest.split("=", 1)
+                extracted_fields[field] = value
+            else:
+                messages.append({
+                    "role": row.role,
+                    "content": row.content,
+                })
+
+        # Add the current user message
+        messages.append({"role": "user", "content": user_message})
+
+        # Define the onboarding tools
+        tools = [
+            {
+                "name": "extract_profile_field",
+                "description": "Called when a profile field has been discovered from the user's response",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "field": {
+                            "type": "string",
+                            "enum": ["goal", "risk_level", "budget", "exchange"],
+                            "description": "The profile field that was discovered"
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "The value for this field"
+                        }
+                    },
+                    "required": ["field", "value"]
+                }
+            },
+            {
+                "name": "complete_onboarding",
+                "description": "Called when all 4 profile fields have been collected and confirmed",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "goal": {
+                            "type": "string",
+                            "enum": ["grow_savings", "generate_income", "learn_trading", "crypto_focus"],
+                            "description": "User's main financial goal"
+                        },
+                        "risk_level": {
+                            "type": "string",
+                            "enum": ["conservative", "balanced", "aggressive"],
+                            "description": "User's risk comfort level"
+                        },
+                        "budget": {
+                            "type": "number",
+                            "description": "Starting budget per trade in GBP"
+                        },
+                        "exchange": {
+                            "type": "string",
+                            "enum": ["alpaca", "coinbase", "oanda"],
+                            "description": "Preferred exchange"
+                        }
+                    },
+                    "required": ["goal", "risk_level", "budget", "exchange"]
+                }
+            }
+        ]
+
+        # Call Claude with tools
+        try:
+            claude_response = await self._claude.messages.create(
+                model=_CLAUDE_MODEL,
+                max_tokens=_MAX_TOKENS,
+                system=_ONBOARDING_SYSTEM_PROMPT,
+                tools=tools,
+                messages=messages,
+            )
+        except Exception as exc:
+            logger.error("Claude API error in onboarding: %s", exc)
+            return {
+                "message": "I'm having trouble right now. Please try again.",
+                "completed": False,
+                "profile": None,
+            }
+
+        # Process Claude's response
+        assistant_message = ""
+        tool_calls = []
+
+        for block in claude_response.content:
+            if hasattr(block, "text"):
+                assistant_message = block.text.strip()
+            elif block.type == "tool_use":
+                tool_calls.append(block)
+
+        # Save the assistant's message to onboarding_messages
+        async with AsyncSessionLocal() as _db:
+            om = OnboardingMessage(
+                user_id=self.user_id,
+                role="assistant",
+                content=assistant_message,
+            )
+            _db.add(om)
+            await _db.commit()
+
+        # Handle tool calls
+        profile_data = None
+        for tool_call in tool_calls:
+            if tool_call.name == "extract_profile_field":
+                field = tool_call.input.get("field")
+                value = tool_call.input.get("value")
+                await self._save_extracted_field(field, value, db)
+                extracted_fields[field] = value
+
+            elif tool_call.name == "complete_onboarding":
+                # Assemble profile from the tool inputs
+                profile_data = {
+                    "goal": tool_call.input.get("goal"),
+                    "risk_level": tool_call.input.get("risk_level"),
+                    "budget": tool_call.input.get("budget"),
+                    "exchange": tool_call.input.get("exchange"),
+                }
+                # Pass all onboarding messages for trader class detection
+                await self._complete_onboarding_internal(profile_data, messages, db)
+
+        return {
+            "message": assistant_message,
+            "completed": profile_data is not None,
+            "profile": profile_data,
+        }
+
+    async def _save_extracted_field(
+        self,
+        field: str,
+        value: str,
+        db: AsyncSession | None = None,
+    ) -> None:
+        """Save an extracted profile field to onboarding_messages and shared_memory."""
+        async with AsyncSessionLocal() as _db:
+            om = OnboardingMessage(
+                user_id=self.user_id,
+                role="system",
+                content=f"extracted:{field}={value}",
+            )
+            _db.add(om)
+            await _db.commit()
+
+        # Update shared_memory cache
+        try:
+            ctx = await SharedMemory.load(self.user_id, db)
+            # Map field names to context attributes
+            field_map = {
+                "goal": "financial_goal",
+                "risk_level": "risk_level",
+                "budget": "max_trade_amount",
+                "exchange": "primary_exchange",
+            }
+            attr_name = field_map.get(field)
+            if attr_name:
+                setattr(ctx, attr_name, value)
+            # Update cache (simplified - may need full cache update)
+            SharedMemory._cache[self.user_id] = (ctx, datetime.utcnow())
+        except Exception as e:
+            logger.warning(f"Failed to update shared_memory for field {field}: {e}")
+
+    async def _complete_onboarding_internal(
+        self,
+        profile_data: dict,
+        messages: list[dict] | None = None,
+        db: AsyncSession | None = None,
+    ) -> None:
+        """Call POST /api/onboarding/complete and detect trader class.
+        
+        Args:
+            profile_data: Dict with goal, risk_level, budget, exchange
+            messages: List of onboarding conversation messages for trader class detection
+            db: Optional database session for direct updates
+        """
+        try:
+            import httpx
+
+            endpoint = f"{settings.api_url or 'http://localhost:8000'}/api/onboarding/complete"
+            headers = {"Content-Type": "application/json"}
+
+            async with httpx.AsyncClient(timeout=10) as client:
+                await client.post(
+                    endpoint,
+                    json={
+                        "user_id": self.user_id,
+                        "goal": profile_data.get("goal"),
+                        "risk_level": profile_data.get("risk_level"),
+                        "budget": profile_data.get("budget"),
+                        "exchange": profile_data.get("exchange"),
+                    },
+                    headers=headers,
+                )
+
+            # Detect trader class from messages
+            detected_class = "complete_novice"
+            if messages:
+                detected_class = detect_trader_class(messages)
+
+            # Save trader class to UserSettings
+            try:
+                async with AsyncSessionLocal() as _db:
+                    await _db.execute(
+                        update(UserSettings).where(
+                            UserSettings.user_id == self.user_id
+                        ).values(
+                            trader_class=detected_class,
+                            class_detected_at=datetime.utcnow(),
+                            class_detection_method="onboarding_chat",
+                        )
+                    )
+                    await _db.commit()
+                    logger.info(
+                        "Trader class detected for user %s: %s",
+                        self.user_id,
+                        detected_class,
+                    )
+
+                # Invalidate SharedMemory cache so new trader_class is loaded
+                SharedMemory.invalidate(self.user_id)
+
+            except Exception as e:
+                logger.error(
+                    "Failed to save trader class for user %s: %s", self.user_id, e
+                )
+
+        except Exception as e:
+            logger.error(f"Failed to complete onboarding internally: {e}")
+            raise
 
     class ConversationResponse(BaseModel):
         """Orchestrator-enriched conversation response."""

@@ -46,6 +46,19 @@ export const authApi = {
   externalAccounts: () => api.get("/api/auth/external-accounts"),
   unlinkAccount: (platform: string) =>
     api.post("/api/auth/unlink-external-account", { platform }),
+  getSettings: () => api.get("/api/auth/settings"),
+  updateSettings: (data: Partial<{
+    explanation_level?: string;
+    trade_mode?: string;
+    max_trade_amount?: number;
+    max_daily_loss?: number;
+    trading_paused?: boolean;
+    leaderboard_opt_out?: boolean;
+    approved_assets?: string[];
+    first_trade_done?: boolean;
+    push_token?: string;
+  }>) => api.patch("/api/auth/settings", data),
+  acceptRiskDisclosure: () => api.post("/api/onboarding/accept-risk-disclosure", {}),
 };
 
 // ── Trading ──────────────────────────────────────────────────────────────────
@@ -80,6 +93,17 @@ export interface ConnectExchangeResponse {
 
 export const exchangeApi = {
   list: () => api.get<{ status: string; data: ConnectedExchange[] }>("/api/trading/exchange-keys"),
+
+  testConnection: (exchange: string) =>
+    api.get<{
+      success: boolean;
+      exchange?: string;
+      account_id?: string;
+      buying_power?: number;
+      currency?: string;
+      message?: string;
+      error?: string;
+    }>(`/api/exchanges/test-connection`, { params: { exchange } }),
 
   connect: (exchange: string, apiKey: string, secretKey: string, isPaper: boolean = true) =>
     api.post<{ status: string; data: ConnectExchangeResponse }>("/api/trading/exchange-keys", {

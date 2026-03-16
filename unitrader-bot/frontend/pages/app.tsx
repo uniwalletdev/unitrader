@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { tradingApi, chatApi, authApi, billingApi, exchangeApi } from "@/lib/api";
 import ExchangeConnections from "@/components/ExchangeConnections";
+import ExchangeConnectWizard from "@/components/settings/ExchangeConnectWizard";
 import TradePanel from "@/components/TradePanel";
 import PositionsPanel from "@/components/PositionsPanel";
 import ContentPanel from "@/components/ContentPanel";
@@ -150,19 +151,23 @@ function Dashboard({ user }: { user: User | null }) {
   const [perf, setPerf] = useState<any>(null);
   const [risk, setRisk] = useState<any>(null);
   const [openPositions, setOpenPositions] = useState<Trade[]>([]);
+  const [connectedExchanges, setConnectedExchanges] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exchangeWizardOpen, setExchangeWizardOpen] = useState<"alpaca" | "coinbase" | "oanda" | null>(null);
 
   const load = async () => {
     setLoading(true);
     try {
-      const [perfRes, riskRes, posRes] = await Promise.all([
+      const [perfRes, riskRes, posRes, exRes] = await Promise.all([
         tradingApi.performance(),
         tradingApi.riskAnalysis(),
         tradingApi.openPositions(),
+        exchangeApi.list(),
       ]);
       setPerf(perfRes.data.data);
       setRisk(riskRes.data.data);
       setOpenPositions(posRes.data.data?.positions || []);
+      setConnectedExchanges(exRes.data.data || []);
     } catch {}
     setLoading(false);
   };
@@ -203,6 +208,59 @@ function Dashboard({ user }: { user: User | null }) {
           sub={d.total_trades ? `${d.total_trades} trades` : undefined}
         />
       </div>
+
+      {/* Exchange status card */}
+      <div className="rounded-xl border border-dark-800 bg-dark-950 p-4 md:p-5">
+        <div className="flex items-center justify-between">
+          <div className="flex-1">
+            {connectedExchanges.length > 0 ? (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="h-2 w-2 rounded-full bg-brand-400" />
+                  <h3 className="text-sm font-semibold text-white">
+                    {connectedExchanges[0].exchange.charAt(0).toUpperCase() + connectedExchanges[0].exchange.slice(1)} Connected
+                  </h3>
+                </div>
+                <p className="text-xs text-dark-400">
+                  Ready to trade — {connectedExchanges.length} exchange{connectedExchanges.length > 1 ? "s" : ""} connected
+                </p>
+              </div>
+            ) : (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="h-2 w-2 rounded-full bg-red-400" />
+                  <h3 className="text-sm font-semibold text-white">No Exchange Connected</h3>
+                </div>
+                <p className="text-xs text-dark-400">
+                  Connect an exchange to start trading with Apex
+                </p>
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => setExchangeWizardOpen("alpaca")}
+            className={`flex-shrink-0 rounded-lg px-4 py-2 text-xs font-medium transition ${
+              connectedExchanges.length > 0
+                ? "border border-brand-500/30 text-brand-400 hover:bg-brand-500/10"
+                : "bg-brand-500 text-white hover:bg-brand-600"
+            }`}
+          >
+            {connectedExchanges.length > 0 ? "Trade now" : "Connect now"}
+          </button>
+        </div>
+      </div>
+
+      {/* Exchange wizard modal */}
+      {exchangeWizardOpen && (
+        <ExchangeConnectWizard
+          exchange={exchangeWizardOpen}
+          onSuccess={() => {
+            load();
+            setExchangeWizardOpen(null);
+          }}
+          onClose={() => setExchangeWizardOpen(null)}
+        />
+      )}
 
       {/* Risk gauge */}
       {r.daily_loss_pct !== undefined && (
