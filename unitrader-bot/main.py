@@ -618,6 +618,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(trading_router.router)
+app.include_router(trading_router.performance_router)
 app.include_router(exchanges_router.router)
 app.include_router(chat_router.router)
 app.include_router(content_router.router)

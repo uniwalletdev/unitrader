@@ -14,18 +14,23 @@ Endpoints:
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from database import get_db
 from models import ExchangeAPIKey, Trade, UserSettings
 from routers.auth import get_current_user
 from schemas import SuccessResponse, TradeResponse
 from security import encrypt_api_key, hash_api_key, decrypt_api_key
+from src.agents.goal_tracking_agent import GoalTrackingAgent
+from src.agents.shared_memory import SharedMemory
+from src.integrations.market_data import classify_asset
 from src.agents.orchestrator import get_orchestrator
 from src.integrations.exchange_client import (
     get_exchange_client,
@@ -39,6 +44,7 @@ from src.services.subscription import check_trade_limit
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/trading", tags=["Trading"])
+performance_router = APIRouter(prefix="/api/performance", tags=["Performance"])
 
 
 # ─────────────────────────────────────────────
@@ -48,6 +54,12 @@ router = APIRouter(prefix="/api/trading", tags=["Trading"])
 class ExecuteTradeRequest(BaseModel):
     symbol: str
     exchange: str  # binance | alpaca | oanda
+
+
+class AnalyzeTradeRequest(BaseModel):
+    symbol: str
+    exchange: str  # binance | alpaca | oanda
+    trader_class: str | None = None
 
 
 class ClosePositionRequest(BaseModel):
@@ -263,14 +275,14 @@ async def execute_trade(
             reason = trade_check.get("reason", "unknown")
             used = trade_check.get("trades_used", 0)
             limit = trade_check.get("trades_limit", 10)
-            
-            if reason == "trial_limit_reached":
-                detail = f"Free trial limit reached: {used}/{limit} trades used this month. Upgrade to Pro for unlimited trades."
-            elif reason == "subscription_required":
-                detail = f"Free plan limit reached: {used}/{limit} trades used this month. Upgrade to Pro for unlimited trades."
+
+            # Frontend displays `detail` directly; keep this as a stable code string.
+            # If you want richer messaging, map these codes client-side.
+            if reason in {"trial_limit_reached", "subscription_required"}:
+                detail = reason
             else:
-                detail = "Trade limit reached. Upgrade to Pro for unlimited trades."
-            
+                detail = "subscription_required"
+
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=detail,
@@ -320,6 +332,33 @@ async def execute_trade(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(exc) or "Trade execution failed. Please try again.",
         )
+
+
+# ─────────────────────────────────────────────
+# POST /api/trading/analyze
+# ─────────────────────────────────────────────
+
+@router.post("/analyze")
+async def analyze_trade(
+    body: AnalyzeTradeRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Run analysis only (no execution)."""
+    try:
+        orchestrator = get_orchestrator()
+        result = await orchestrator.route(
+            user_id=current_user.id,
+            action="trade_analyze",
+            payload={"symbol": body.symbol.upper(), "trader_class": body.trader_class},
+            db=db,
+        )
+        return {"status": "success", "data": result}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Trade analyze failed for user %s: %s", current_user.id, exc)
+        raise HTTPException(status_code=500, detail="trade_analyze_failed")
 
 
 # ─────────────────────────────────────────────
@@ -549,6 +588,82 @@ async def get_risk_analysis(
 
 
 # ─────────────────────────────────────────────
+# GET /api/trading/ohlcv
+# ─────────────────────────────────────────────
+
+@router.get("/ohlcv")
+async def get_ohlcv(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    symbol: str = Query(..., description="Symbol, e.g. AAPL"),
+    days: int = Query(30, ge=1, le=365),
+    interval: str = Query("1day", description="Only '1day' supported"),
+):
+    """Fetch daily OHLCV bars for charts.
+
+    Calls Alpaca:
+      GET /v2/stocks/{symbol}/bars?timeframe=1Day&limit={days}
+    """
+    if interval.lower() != "1day":
+        raise HTTPException(status_code=400, detail="Only interval=1day supported")
+
+    sym = symbol.strip().upper()
+    if "/" in sym or "_" in sym:
+        raise HTTPException(status_code=400, detail="Only stock symbols supported for ohlcv")
+
+    key_res = await db.execute(
+        select(ExchangeAPIKey).where(
+            ExchangeAPIKey.user_id == current_user.id,
+            ExchangeAPIKey.exchange == "alpaca",
+            ExchangeAPIKey.is_active == True,  # noqa: E712
+        )
+    )
+    key_row = key_res.scalars().first()
+    if not key_row:
+        raise HTTPException(status_code=404, detail="No active alpaca connection found")
+
+    try:
+        raw_key, raw_secret = decrypt_api_key(
+            key_row.encrypted_api_key, key_row.encrypted_api_secret
+        )
+        headers = {
+            "APCA-API-KEY-ID": raw_key,
+            "APCA-API-SECRET-KEY": raw_secret,
+        }
+        base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
+        url = f"{base}/v2/stocks/{sym}/bars"
+        async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+            resp = await client.get(url, params={"timeframe": "1Day", "limit": days})
+            resp.raise_for_status()
+            payload = resp.json()
+    except httpx.HTTPStatusError as exc:
+        status_code = getattr(exc.response, "status_code", 500)
+        logger.error("OHLCV fetch failed for %s: %s", sym, exc)
+        raise HTTPException(status_code=status_code, detail="ohlcv_fetch_failed")
+    except Exception as exc:
+        logger.error("OHLCV fetch failed for %s: %s", sym, exc)
+        raise HTTPException(status_code=500, detail="ohlcv_fetch_failed")
+
+    bars = payload.get("bars", []) if isinstance(payload, dict) else []
+    out = []
+    for b in bars:
+        t = b.get("t")
+        day = t[:10] if isinstance(t, str) and len(t) >= 10 else ""
+        out.append(
+            {
+                "time": day,
+                "open": float(b.get("o", 0) or 0),
+                "high": float(b.get("h", 0) or 0),
+                "low": float(b.get("l", 0) or 0),
+                "close": float(b.get("c", 0) or 0),
+                "volume": float(b.get("v", 0) or 0),
+            }
+        )
+
+    return {"status": "success", "data": out}
+
+
+# ─────────────────────────────────────────────
 # Helper
 # ─────────────────────────────────────────────
 
@@ -572,3 +687,228 @@ def _trade_to_dict(trade: Trade) -> dict:
         "created_at": trade.created_at.isoformat() if trade.created_at else None,
         "closed_at": trade.closed_at.isoformat() if trade.closed_at else None,
     }
+
+
+# ─────────────────────────────────────────────
+# GET /api/performance/summary
+# ─────────────────────────────────────────────
+
+@performance_router.get("/summary")
+async def performance_summary(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    days: int = Query(30, ge=1, le=365),
+):
+    """Trader-class-aware performance summary.
+
+    Always includes:
+      total_return_gbp, total_return_pct, win_rate, total_trades, paper_trades,
+      best_trade, worst_trade, monthly_summary
+    Additional fields are gated by trader_class.
+    """
+    ctx = await SharedMemory.load(current_user.id, db)
+    trader_class = getattr(ctx, "trader_class", "complete_novice") or "complete_novice"
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await db.execute(
+        select(Trade).where(
+            Trade.user_id == current_user.id,
+            Trade.status == "closed",
+            Trade.closed_at.isnot(None),
+            Trade.closed_at >= since,
+        )
+    )
+    trades = result.scalars().all()
+
+    def trade_pnl(t: Trade) -> float:
+        return float((t.profit or 0) - (t.loss or 0))
+
+    total_return_gbp = sum(trade_pnl(t) for t in trades)
+    total_trades = len(trades)
+    wins = [t for t in trades if trade_pnl(t) > 0]
+    win_rate = (len(wins) / total_trades * 100) if total_trades else 0.0
+
+    # Use average entry value as a rough capital base proxy for return %
+    base_cap = 0.0
+    if trades:
+        base_cap = sum(float(t.entry_price or 0) * float(t.quantity or 0) for t in trades) / max(
+            1, len(trades)
+        )
+    total_return_pct = (total_return_gbp / base_cap * 100) if base_cap > 0 else 0.0
+
+    best_trade = _trade_to_dict(max(trades, key=trade_pnl)) if trades else None
+    worst_trade = _trade_to_dict(min(trades, key=trade_pnl)) if trades else None
+
+    # Monthly summary: YYYY-MM -> pnl
+    monthly_summary: dict[str, float] = {}
+    for t in trades:
+        if not t.closed_at:
+            continue
+        k = t.closed_at.strftime("%Y-%m")
+        monthly_summary[k] = monthly_summary.get(k, 0.0) + trade_pnl(t)
+
+    # Paper trades not currently recorded per trade in DB schema.
+    paper_trades = 0
+
+    payload: dict = {
+        "total_return_gbp": round(total_return_gbp, 2),
+        "total_return_pct": round(total_return_pct, 2),
+        "win_rate": round(win_rate, 1),
+        "total_trades": total_trades,
+        "paper_trades": paper_trades,
+        "best_trade": best_trade,
+        "worst_trade": worst_trade,
+        "monthly_summary": monthly_summary,
+    }
+
+    # ── complete_novice / curious_saver ────────────────────────────────────
+    if trader_class in {"complete_novice", "curious_saver"}:
+        try:
+            goal_agent = GoalTrackingAgent()
+            report = await goal_agent.generate_progress_report(current_user.id, db)
+            goal_progress_message = report.get("message")
+        except Exception:
+            goal_progress_message = None
+
+        # Trust ladder summary derived from SharedContext; paper_trades_count unavailable in DB.
+        stage = int(getattr(ctx, "trust_ladder_stage", 1) or 1)
+        payload["goal_progress_message"] = goal_progress_message or "Keep going — Apex is tracking your progress."
+        payload["trust_ladder_summary"] = {
+            "stage": stage,
+            "days_until_advance": 0,
+            "paper_trades_count": 0,
+        }
+
+        # One warm sentence from Claude API (best-effort, falls back if not configured)
+        encouragement = None
+        try:
+            if settings.anthropic_api_key:
+                from anthropic import Anthropic
+                import asyncio as _asyncio
+
+                client = Anthropic()
+                prompt = (
+                    "Write exactly one warm, encouraging sentence for a beginner investor. "
+                    "No numbers, no jargon."
+                )
+                resp = await _asyncio.to_thread(
+                    lambda: client.messages.create(
+                        model=settings.anthropic_model,
+                        max_tokens=60,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                )
+                encouragement = resp.content[0].text.strip()
+        except Exception:
+            encouragement = None
+        payload["encouragement"] = encouragement or "You’re doing the right thing by learning step by step."
+
+        # Omit technical metrics implicitly by not adding them.
+
+    # ── self_taught ─────────────────────────────────────────────────────────
+    if trader_class == "self_taught":
+        # Benchmarks not available from DB-only data; return best-effort placeholders.
+        avg_hold_time_days = None
+        if trades:
+            holds = []
+            for t in trades:
+                if t.created_at and t.closed_at:
+                    holds.append((t.closed_at - t.created_at).total_seconds() / 86400)
+            avg_hold_time_days = sum(holds) / len(holds) if holds else None
+        payload.update(
+            {
+                "vs_buy_hold": 0.0,
+                "vs_spy": 0.0,
+                "avg_hold_time_days": round(avg_hold_time_days, 2) if avg_hold_time_days is not None else 0.0,
+            }
+        )
+
+    # ── experienced / semi_institutional ────────────────────────────────────
+    if trader_class in {"experienced", "semi_institutional"}:
+        pnls = [trade_pnl(t) for t in trades]
+        mean = (sum(pnls) / len(pnls)) if pnls else 0.0
+        var = (sum((x - mean) ** 2 for x in pnls) / len(pnls)) if pnls else 0.0
+        stddev = var ** 0.5
+        sharpe = (mean / stddev * (252 ** 0.5)) if stddev > 0 else 0.0
+
+        # Max drawdown from cumulative pnl
+        peak = 0.0
+        dd = 0.0
+        cum = 0.0
+        for x in pnls:
+            cum += x
+            peak = max(peak, cum)
+            dd = min(dd, cum - peak)
+        max_drawdown = (dd / peak * 100) if peak > 0 else float(dd)
+
+        calmar = (total_return_pct / abs(max_drawdown)) if max_drawdown else 0.0
+
+        # Avg hold time (days)
+        holds = []
+        for t in trades:
+            if t.created_at and t.closed_at:
+                holds.append((t.closed_at - t.created_at).total_seconds() / 86400)
+        avg_hold_time_days = sum(holds) / len(holds) if holds else 0.0
+
+        # Sector PnL not available (sector not stored on Trade). Return empty dict.
+        sector_pnl: dict[str, float] = {}
+
+        # Win rate by asset class (symbol classification)
+        by_class: dict[str, list[Trade]] = {"stocks": [], "crypto": [], "forex": []}
+        for t in trades:
+            try:
+                ac = classify_asset(t.symbol)
+            except Exception:
+                ac = "stock"
+            key = "stocks" if ac == "stock" else ac
+            if key in by_class:
+                by_class[key].append(t)
+        win_rate_by_asset_class: dict[str, float] = {}
+        for k, ts in by_class.items():
+            if not ts:
+                win_rate_by_asset_class[k] = 0.0
+            else:
+                w = len([t for t in ts if trade_pnl(t) > 0])
+                win_rate_by_asset_class[k] = round(w / len(ts) * 100, 1)
+
+        payload.update(
+            {
+                "sharpe_ratio": round(sharpe, 3),
+                "max_drawdown": round(float(max_drawdown), 3),
+                "calmar_ratio": round(float(calmar), 3),
+                "beta": 0.0,
+                "alpha": 0.0,
+                "avg_hold_time_days": round(float(avg_hold_time_days), 2),
+                "sector_pnl": sector_pnl,
+                "win_rate_by_asset_class": win_rate_by_asset_class,
+            }
+        )
+
+    # ── crypto_native ───────────────────────────────────────────────────────
+    if trader_class == "crypto_native":
+        crypto_trades = [t for t in trades if classify_asset(t.symbol) == "crypto"] if trades else []
+        best = None
+        worst = None
+        if crypto_trades:
+            best_t = max(crypto_trades, key=lambda t: float(t.profit_percent or -1e9))
+            worst_t = min(crypto_trades, key=lambda t: float(t.profit_percent or 1e9))
+            best = {
+                "symbol": best_t.symbol,
+                "pct_gain": float(best_t.profit_percent or 0),
+                "pnl_gbp": round(trade_pnl(best_t), 2),
+            }
+            worst = {
+                "symbol": worst_t.symbol,
+                "pct_loss": float(worst_t.profit_percent or 0),
+                "pnl_gbp": round(trade_pnl(worst_t), 2),
+            }
+        payload.update(
+            {
+                "vs_bitcoin_hold": 0.0,
+                "best_crypto": best,
+                "worst_crypto": worst,
+                "total_fees_paid": 0.0,
+            }
+        )
+
+    return {"status": "success", "data": payload}

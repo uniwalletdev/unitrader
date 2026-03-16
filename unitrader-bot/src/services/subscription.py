@@ -8,12 +8,13 @@ Stripe and the local User model.
 import logging
 from datetime import datetime, timezone
 
+from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import AsyncSessionLocal
-from models import User
+from models import Trade, User
 from src.integrations.stripe_client import (
     PLAN_FREE,
     PLAN_PRO,
@@ -188,14 +189,96 @@ def check_free_tier_symbol(user: User, symbol: str) -> None:
 
 
 async def check_trade_limit(user: User, db: AsyncSession) -> dict:
-    """Check whether the user has remaining trades in their free-tier limit.
+    """Check whether the user has remaining trades for the current calendar month.
 
-    All users now have unlimited trades — trade limits disabled.
-    Previously: Free plan (10 trades/month), Pro plan (unlimited).
+    Rules:
+    - TESTING_MODE=true: bypass all limits (always allow)
+    - Active paid subscription: unlimited
+    - Active 14-day free trial: allow up to FREE_TRADES_PER_MONTH
+    - Trial expired and no paid plan: block (subscription_required)
 
     Returns:
         {"allowed": bool, "trades_used": int, "trades_limit": int | None, "reason": str | None}
     """
-    # All users have unlimited trades (feature now free for all)
-    logger.info("Trade limit check — user=%s — unlimited trades enabled for all users", user.id)
-    return {"allowed": True, "trades_used": 0, "trades_limit": None, "reason": None}
+    user_id = getattr(user, "id", None)
+
+    # ── TESTING_MODE bypass ────────────────────────────────────────────────
+    if str(getattr(settings, "testing_mode", "false")).strip().lower() == "true":
+        logger.info("TESTING_MODE active — trade limit bypassed for user %s", user_id)
+        return {"allowed": True, "trades_used": 0, "trades_limit": None, "reason": None}
+
+    now = datetime.now(timezone.utc)
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    # calendar-month trade count
+    trades_used_result = await db.execute(
+        select(func.count()).select_from(Trade).where(
+            Trade.user_id == user.id,
+            Trade.created_at >= month_start,
+        )
+    )
+    trades_used = int(trades_used_result.scalar() or 0)
+
+    subscription_status = getattr(user, "stripe_subscription_status", None) or "none"
+    subscription_tier = getattr(user, "subscription_tier", PLAN_FREE) or PLAN_FREE
+    trial_status = getattr(user, "trial_status", None) or "unknown"
+    trial_end_date = getattr(user, "trial_end_date", None)
+    trial_active = (
+        trial_status == "active"
+        and trial_end_date is not None
+        and trial_end_date > now
+    )
+
+    # Paid subscription: unlimited trades
+    paid_active = (
+        subscription_tier == PLAN_PRO
+        and subscription_status in {"active", "trialing"}
+    )
+
+    # Determine limit and decision
+    trades_limit: int | None
+    reason: str | None = None
+    allowed: bool
+
+    if paid_active:
+        trades_limit = None
+        allowed = True
+    elif trial_active:
+        trades_limit = FREE_TRADES_PER_MONTH
+        allowed = trades_used < FREE_TRADES_PER_MONTH
+        if not allowed:
+            reason = "trial_limit_reached"
+    else:
+        trades_limit = 0
+        allowed = False
+        reason = "subscription_required"
+
+    logger.debug(
+        "Trade limit check user=%s subscription_status=%s tier=%s trial_status=%s trial_end_date=%s "
+        "trades_used_month=%s trades_limit=%s allowed=%s reason=%s",
+        user_id,
+        subscription_status,
+        subscription_tier,
+        trial_status,
+        trial_end_date.isoformat() if trial_end_date else None,
+        trades_used,
+        trades_limit,
+        allowed,
+        reason,
+    )
+
+    if not allowed:
+        logger.warning(
+            "Trade blocked user=%s reason=%s trades_used_month=%s trades_limit=%s",
+            user_id,
+            reason,
+            trades_used,
+            trades_limit,
+        )
+
+    return {
+        "allowed": allowed,
+        "trades_used": trades_used,
+        "trades_limit": trades_limit,
+        "reason": reason,
+    }

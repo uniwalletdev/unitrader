@@ -3,6 +3,7 @@ routers/onboarding.py — Onboarding and user agreement endpoints.
 
 Endpoints:
     POST /api/onboarding/accept-risk-disclosure — Accept risk disclosure
+    GET  /api/onboarding/trust-ladder          — Trust ladder status (frontend)
 """
 
 import logging
@@ -20,6 +21,35 @@ from routers.auth import get_current_user
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/onboarding", tags=["Onboarding"])
+
+
+@router.get("/trust-ladder")
+async def get_trust_ladder(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return trust ladder status for the current user.
+
+    Minimal shape for frontend:
+      { stage, paperEnabled, canAdvance, daysAtStage, paperTradesCount, maxAmountGbp }
+    """
+    result = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == current_user.id)
+    )
+    s = result.scalar_one_or_none()
+    stage = 1
+    if s and getattr(s, "risk_disclosure_accepted", False):
+        stage = 2
+    # Frontend can decide the rest; keep conservative defaults.
+    max_amount = 25 if stage <= 2 else 500
+    return {
+        "stage": stage,
+        "paperEnabled": True,
+        "canAdvance": bool(s and getattr(s, "risk_disclosure_accepted", False)),
+        "daysAtStage": 1,
+        "paperTradesCount": 0,
+        "maxAmountGbp": max_amount,
+    }
 
 
 # ─────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/router";
 import {
   Crosshair, Loader2, TrendingUp, TrendingDown, Minus,
@@ -8,6 +8,9 @@ import { tradingApi, exchangeApi, authApi } from "@/lib/api";
 import CircuitBreakerAlert from "./trade/CircuitBreakerAlert";
 import { useLivePrice } from "@/hooks/useLivePrice";
 import { formatPrice, formatChangePct } from "@/utils/formatPrice";
+import BrandPicker from "./trade/BrandPicker";
+import WhatIfSimulator from "./onboarding/WhatIfSimulator";
+import PriceChart from "./trade/PriceChart";
 
 interface ConnectedExchange {
   exchange: string;
@@ -54,12 +57,15 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   const [loading, setLoading] = useState(true);
   const [selectedExchange, setSelectedExchange] = useState("");
   const [symbol, setSymbol] = useState("");
+  const [traderClass, setTraderClass] = useState<string>("complete_novice");
+  const [showBrandPickerForExperienced, setShowBrandPickerForExperienced] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState<TradeResult | null>(null);
   const [error, setError] = useState("");
   const [tradingPaused, setTradingPaused] = useState(false);
   const [maxDailyLoss, setMaxDailyLoss] = useState(10);
   const [settingsLoading, setSettingsLoading] = useState(true);
+  const [selfTaughtStart, setSelfTaughtStart] = useState<number | null>(null);
 
   // Live price data
   const livePrice = useLivePrice(symbol ? symbol : null);
@@ -78,10 +84,34 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
     authApi.getSettings().then((res) => {
       setTradingPaused(res.data.trading_paused || false);
       setMaxDailyLoss(res.data.max_daily_loss || 10);
+      setTraderClass(res.data.trader_class || "complete_novice");
     }).catch(() => {
       // Fail silently - alert will not show if settings can't be loaded
     }).finally(() => setSettingsLoading(false));
   }, []);
+
+  // self_taught: show "Day n of 14" track record bar at top for first 14 days
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (traderClass !== "self_taught") return;
+    const key = "unitrader_self_taught_track_start_v1";
+    const existing = window.localStorage.getItem(key);
+    if (existing && !Number.isNaN(Number(existing))) {
+      setSelfTaughtStart(Number(existing));
+      return;
+    }
+    const now = Date.now();
+    window.localStorage.setItem(key, String(now));
+    setSelfTaughtStart(now);
+  }, [traderClass]);
+
+  const selfTaughtDay = useMemo(() => {
+    if (traderClass !== "self_taught") return null;
+    if (!selfTaughtStart) return 1;
+    const ms = Date.now() - selfTaughtStart;
+    const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+    return Math.max(1, Math.min(14, days + 1));
+  }, [traderClass, selfTaughtStart]);
 
   const handleExecute = async () => {
     if (!symbol.trim() || !selectedExchange) return;
@@ -114,6 +144,21 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
 
   const suggestions = POPULAR_SYMBOLS[selectedExchange] || [];
 
+  const chartSignal =
+    (result?.decision || result?.side || "NONE").toUpperCase() === "BUY"
+      ? "BUY"
+      : (result?.decision || result?.side || "NONE").toUpperCase() === "SELL"
+        ? "SELL"
+        : (result?.decision || result?.side || "NONE").toUpperCase() === "WAIT"
+          ? "WAIT"
+          : "NONE";
+
+  const canShowOhlcvChart =
+    selectedExchange === "alpaca" &&
+    !!symbol.trim() &&
+    !symbol.includes("/") &&
+    !symbol.includes("_");
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20 text-sm text-dark-500">
@@ -142,6 +187,23 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
 
   return (
     <div className="w-full space-y-4 md:space-y-6">
+      {/* Welcome modal: /trade?welcome=true (best-effort; depends on router path) */}
+      <WhatIfSimulator mode="welcome_modal" />
+
+      {traderClass === "self_taught" && selfTaughtDay !== null && selfTaughtDay <= 14 && (
+        <div className="rounded-xl border border-blue-500/20 bg-blue-500/10 p-4">
+          <div className="mb-2 flex items-center justify-between text-xs text-blue-200">
+            <span className="font-semibold">Building your track record</span>
+            <span className="tabular-nums">Day {selfTaughtDay} of 14</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-dark-900">
+            <div
+              className="h-2 rounded-full bg-blue-400"
+              style={{ width: `${(selfTaughtDay / 14) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <Crosshair size={16} className="md:size-[18px] text-brand-400" />
         <h1 className="text-base md:text-xl font-bold text-white">AI Trade Execution</h1>
@@ -178,18 +240,56 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
             </div>
           </div>
 
-          {/* Symbol input */}
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-dark-400">Symbol</label>
-            <input
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              onKeyDown={(e) => e.key === "Enter" && !executing && handleExecute()}
-              placeholder={selectedExchange === "alpaca" ? "e.g. AAPL" : selectedExchange === "binance" ? "e.g. BTCUSDT" : "e.g. EUR_USD"}
-              className="input font-mono text-xs md:text-sm"
-              disabled={executing}
+          {/* Symbol selection UI (varies by trader_class) */}
+          {traderClass === "semi_institutional" ? (
+            <BrandPicker
+              exchange={selectedExchange}
+              onManualSymbol={(s) => setSymbol(s.toUpperCase())}
             />
-          </div>
+          ) : (
+            <>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-dark-400">
+                  Symbol
+                </label>
+                <input
+                  value={symbol}
+                  onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => e.key === "Enter" && !executing && handleExecute()}
+                  placeholder={selectedExchange === "alpaca" ? "e.g. AAPL" : selectedExchange === "binance" ? "e.g. BTCUSDT" : "e.g. EUR_USD"}
+                  className="input font-mono text-xs md:text-sm"
+                  disabled={executing}
+                />
+                {traderClass === "experienced" && (
+                  <button
+                    type="button"
+                    onClick={() => setShowBrandPickerForExperienced((v) => !v)}
+                    className="mt-2 text-xs text-brand-400 hover:underline"
+                  >
+                    {showBrandPickerForExperienced ? "Hide brands" : "Browse brands"}
+                  </button>
+                )}
+              </div>
+
+              {traderClass !== "experienced" && (
+                <BrandPicker
+                  exchange={selectedExchange}
+                  onManualSymbol={(s) => setSymbol(s.toUpperCase())}
+                  onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
+                  selectedSymbols={symbol ? [symbol] : []}
+                />
+              )}
+
+              {traderClass === "experienced" && showBrandPickerForExperienced && (
+                <BrandPicker
+                  exchange={selectedExchange}
+                  onManualSymbol={(s) => setSymbol(s.toUpperCase())}
+                  onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
+                  selectedSymbols={symbol ? [symbol] : []}
+                />
+              )}
+            </>
+          )}
 
           {/* Live price display */}
           {symbol && (
@@ -225,6 +325,17 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
                   }
                 </span>
               </div>
+            </div>
+          )}
+
+          {/* Price chart (Alpaca stocks only for now) */}
+          {canShowOhlcvChart && (
+            <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-4">
+              <PriceChart
+                symbol={symbol}
+                traderClass={traderClass as any}
+                signal={chartSignal as any}
+              />
             </div>
           )}
 

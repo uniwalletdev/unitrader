@@ -264,6 +264,7 @@ class UserSettingsResponse(BaseModel):
     first_trade_done: bool
     leaderboard_opt_out: bool
     push_token: str | None
+    trader_class: str | None = None
     updated_at: datetime
 
     model_config = {"from_attributes": True}
@@ -284,3 +285,4 @@ class UpdateUserSettingsRequest(BaseModel):
     approved_assets: list[str] | None = None
     first_trade_done: bool | None = None
     push_token: str | None = None
+    trader_class: str | None = None

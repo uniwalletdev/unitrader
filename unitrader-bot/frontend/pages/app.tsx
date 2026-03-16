@@ -10,7 +10,9 @@ import {
 import { tradingApi, chatApi, authApi, billingApi, exchangeApi } from "@/lib/api";
 import ExchangeConnections from "@/components/ExchangeConnections";
 import ExchangeConnectWizard from "@/components/settings/ExchangeConnectWizard";
+import TrustLadderDetail from "@/components/settings/TrustLadderDetail";
 import TradePanel from "@/components/TradePanel";
+import WhatIfSimulator from "@/components/onboarding/WhatIfSimulator";
 import PositionsPanel from "@/components/PositionsPanel";
 import ContentPanel from "@/components/ContentPanel";
 import LearningPanel from "@/components/LearningPanel";
@@ -249,6 +251,9 @@ function Dashboard({ user }: { user: User | null }) {
           </button>
         </div>
       </div>
+
+      {/* What-if simulator card (always visible; varies by trader_class) */}
+      <WhatIfSimulator mode="dashboard" />
 
       {/* Exchange wizard modal */}
       {exchangeWizardOpen && (
@@ -671,6 +676,11 @@ function SettingsPanel({ user }: { user: User | null }) {
         </div>
       </div>
 
+      {/* Trust Ladder (only complete_novice / curious_saver) */}
+      <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-5">
+        <TrustLadderDetail />
+      </div>
+
       {/* Exchange Connections */}
       <div className="rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 p-3 md:p-5">
         <ExchangeConnections />
@@ -885,22 +895,22 @@ export default function AppPage() {
               <div className="flex items-center gap-2 min-w-0">
                 <Clock size={13} className="shrink-0" />
                 <span className="truncate text-xs md:text-sm">
-                  {trial.phase === "expired"
-                    ? `${trial.aiName}'s trial has ended — choose a plan to continue`
-                    : trial.daysRemaining <= 1
-                    ? `${trial.aiName}'s trial ends TODAY! Net P&L: ${trial.performance.net_pnl >= 0 ? "+" : ""}$${Math.abs(trial.performance.net_pnl).toFixed(2)}`
-                    : trial.phase === "late"
-                    ? `⏰ ${trial.daysRemaining} days left — ${trial.aiName} made ${trial.performance.net_pnl >= 0 ? "+" : ""}$${Math.abs(trial.performance.net_pnl).toFixed(2)} for you`
-                    : trial.phase === "mid"
-                    ? `${trial.aiName}: ${trial.daysRemaining} days left · ${trial.performance.trades_made} trades · ${trial.performance.net_pnl >= 0 ? "+" : ""}$${Math.abs(trial.performance.net_pnl).toFixed(2)}`
-                    : `Trial active: ${trial.daysRemaining} days remaining — ${trial.aiName} is learning your style`}
+                  {trial?.phase === "expired"
+                    ? `${trial?.aiName ?? "Apex"}'s trial has ended — choose a plan to continue`
+                    : (trial?.daysRemaining ?? 0) <= 1
+                    ? `${trial?.aiName ?? "Apex"}'s trial ends TODAY! Net P&L: ${(trial?.performance?.net_pnl ?? 0) >= 0 ? "+" : ""}$${Math.abs(trial?.performance?.net_pnl ?? 0).toFixed(2)}`
+                    : trial?.phase === "late"
+                    ? `⏰ ${trial?.daysRemaining ?? "—"} days left — ${trial?.aiName ?? "Apex"} made ${(trial?.performance?.net_pnl ?? 0) >= 0 ? "+" : ""}$${Math.abs(trial?.performance?.net_pnl ?? 0).toFixed(2)} for you`
+                    : trial?.phase === "mid"
+                    ? `${trial?.aiName ?? "Apex"}: ${trial?.daysRemaining ?? "—"} days left · ${trial?.performance?.trades_made ?? 0} trades · ${(trial?.performance?.net_pnl ?? 0) >= 0 ? "+" : ""}$${Math.abs(trial?.performance?.net_pnl ?? 0).toFixed(2)}`
+                    : `Trial active: ${trial?.daysRemaining ?? "—"} days remaining — ${trial?.aiName ?? "Apex"} is learning your style`}
                 </span>
               </div>
               <button
                 onClick={() => setShowTrialModal(true)}
                 className="ml-2 shrink-0 rounded-md border border-current px-2 md:px-3 py-1 text-xs md:text-sm font-medium hover:opacity-80 transition whitespace-nowrap touch-target"
               >
-                {trial.phase === "expired" || trial.daysRemaining <= 1 ? "Choose →" : "View →"}
+                {trial?.phase === "expired" || (trial?.daysRemaining ?? 0) <= 1 ? "Choose →" : "View →"}
               </button>
             </div>
           )}
@@ -926,9 +936,9 @@ export default function AppPage() {
       {/* Trial choice modal — disabled for free access */}
       {false && showTrialModal && trial && (
         <TrialChoiceModal
-          aiName={trial.aiName}
-          daysRemaining={trial.daysRemaining}
-          stats={trial.performance}
+          aiName={trial?.aiName ?? "Apex"}
+          daysRemaining={trial?.daysRemaining ?? 0}
+          stats={trial?.performance ?? ({} as any)}
           onClose={mustShowModal ? undefined : () => setShowTrialModal(false)}
         />
       )}
