@@ -141,27 +141,38 @@ async def _ensure_system_user() -> None:
     Background agents (content scheduler, learning hub) write to
     agent_outcomes with user_id='system'.  Without this row the FK
     constraint on agent_outcomes.user_id → users.id fails.
+
+    Uses raw SQL to avoid ORM column-mapping issues with Supabase.
     """
-    from models import User  # noqa: local import to avoid circular
+    from sqlalchemy import text
 
     try:
-        async with AsyncSessionLocal() as session:
-            from sqlalchemy import select
-            exists = await session.execute(
-                select(User.id).where(User.id == "system")
+        async with engine.begin() as conn:
+            row = await conn.execute(
+                text("SELECT id FROM users WHERE id = :uid"),
+                {"uid": "system"},
             )
-            if exists.scalar_one_or_none() is None:
-                system_user = User(
-                    id="system",
-                    email="system@unitrader.internal",
-                    password_hash="!system-no-login",
-                    ai_name="System",
-                    subscription_tier="pro",
-                    email_verified=True,
-                    is_active=True,
+            if row.first() is None:
+                await conn.execute(
+                    text(
+                        "INSERT INTO users "
+                        "(id, email, password_hash, ai_name, subscription_tier, "
+                        " trial_status, email_verified, is_active, two_fa_enabled) "
+                        "VALUES "
+                        "(:id, :email, :pw, :ai, :tier, :ts, :ev, :ia, :tfa)"
+                    ),
+                    {
+                        "id": "system",
+                        "email": "system@unitrader.internal",
+                        "pw": "!system-no-login",
+                        "ai": "System",
+                        "tier": "pro",
+                        "ts": "active",
+                        "ev": True,
+                        "ia": True,
+                        "tfa": False,
+                    },
                 )
-                session.add(system_user)
-                await session.commit()
                 logger.info("Created sentinel 'system' user for background agents")
             else:
                 logger.debug("Sentinel 'system' user already exists")
