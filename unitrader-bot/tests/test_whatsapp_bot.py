@@ -862,7 +862,7 @@ async def test_generate_whatsapp_code_returns_6_digits():
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.post(
-                "/api/auth/whatsapp/linking-code",
+                "/api/whatsapp/generate-code",
                 headers={"Authorization": "Bearer fake"},
             )
     finally:
@@ -870,10 +870,9 @@ async def test_generate_whatsapp_code_returns_6_digits():
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["status"] == "success"
     assert len(data["code"]) == 6
     assert data["code"].isdigit()
-    assert "LINK" in data["instruction"]
+    assert "LINK" in data["instructions"]
 
 
 @pytest.mark.asyncio

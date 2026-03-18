@@ -333,7 +333,7 @@ class TestPublicMarketData:
 
         # Structural assertions
         assert "price" in data and data["price"] > 0
-        assert "trend" in data and data["trend"] in ("uptrend", "downtrend", "sideways")
+        assert "trend" in data and data["trend"] in ("uptrend", "downtrend", "sideways", "consolidating")
         assert "indicators" in data
         indicators = data["indicators"]
         assert 0 <= indicators.get("rsi", -1) <= 100, "RSI must be 0-100"

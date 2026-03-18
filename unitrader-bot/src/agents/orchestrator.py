@@ -76,17 +76,17 @@ class MasterOrchestrator:
                     "amount": payload.get("amount"),
                     "paper_mode": ctx.paper_trading_enabled,
                     "trust_ladder_stage": ctx.trust_ladder_stage,
-                },
-                ai_reasoning=agent_response.get("explanation_expert"),
-                ai_confidence=agent_response.get("confidence"),
-                market_data_snapshot=agent_response.get("market_data", {}),
-                risk_check_result={
-                    "allowed": risk_result[0],
-                    "reason": risk_result[1],
-                },
-                portfolio_check_result={
-                    "approved": portfolio_result.get("approved"),
-                    "reason": portfolio_result.get("reason"),
+                    "ai_reasoning": agent_response.get("explanation_expert"),
+                    "ai_confidence": agent_response.get("confidence"),
+                    "market_data_snapshot": agent_response.get("market_data", {}),
+                    "risk_check_result": {
+                        "allowed": risk_result[0],
+                        "reason": risk_result[1],
+                    },
+                    "portfolio_check_result": {
+                        "approved": portfolio_result.get("approved"),
+                        "reason": portfolio_result.get("reason"),
+                    },
                 },
             )
             db.add(audit_log)

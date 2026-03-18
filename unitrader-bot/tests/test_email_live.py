@@ -180,9 +180,9 @@ class TestTrialEmailTemplates:
         user = _make_mock_user(days_left=7)
         html = mod._day7_html(
             ai_name=user.ai_name,
-            profit=567.89,
-            total_trades=42,
+            net_pnl=567.89,
             win_rate=81.0,
+            trades=42,
         )
         assert "<html" in html.lower() or "<div" in html.lower(), "Should produce HTML"
         assert user.ai_name in html, "Should mention AI name"
@@ -192,7 +192,7 @@ class TestTrialEmailTemplates:
     def test_day11_template_renders(self):
         mod = self._import_templates()
         user = _make_mock_user(days_left=3)
-        html = mod._day11_html(ai_name=user.ai_name, days_left=3)
+        html = mod._day11_html(ai_name=user.ai_name, net_pnl=123.45, days_left=3)
         assert len(html) > 100, "Template should not be empty"
         assert user.ai_name in html
         print(f"\n  Day 11 template: {len(html)} chars")

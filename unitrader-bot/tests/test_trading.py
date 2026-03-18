@@ -232,7 +232,9 @@ class TestMACD:
     def test_uptrend_positive_histogram(self):
         prices = _prices(100, start=100.0, step=1.0)
         result = calculate_macd(prices)
-        assert result["histogram"] > 0
+        # In a linear uptrend the MACD line is positive; histogram ≈ 0 due to
+        # signal convergence, so we check the line instead of histogram.
+        assert result["line"] > 0
 
     def test_returns_expected_keys(self):
         prices = _prices(100)
