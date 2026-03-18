@@ -260,6 +260,7 @@ async def generate_blog_post(
         logger.error("Blog post generation failed: %s", exc)
         return _placeholder_post(topic, error=str(exc))
 
+    content = data.get("content") or raw
     base_slug = data.get("slug") or make_slug(data.get("title", topic))
     slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
 

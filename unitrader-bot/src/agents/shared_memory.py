@@ -13,7 +13,7 @@ expiration logic.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy import and_, desc, func, select
@@ -165,7 +165,7 @@ class SharedMemory:
             # Check cache
             if user_id in _cache:
                 context, loaded_at = _cache[user_id]
-                if datetime.utcnow() - loaded_at < timedelta(
+                if datetime.now(timezone.utc) - loaded_at < timedelta(
                     seconds=SharedMemory.CACHE_TTL_SECONDS
                 ):
                     logger.debug(f"SharedMemory cache hit for user {user_id}")
@@ -176,7 +176,7 @@ class SharedMemory:
             context = await SharedMemory._load_from_db(user_id, db)
 
             # Store in cache
-            _cache[user_id] = (context, datetime.utcnow())
+            _cache[user_id] = (context, datetime.now(timezone.utc))
 
             return context
 
@@ -259,7 +259,7 @@ class SharedMemory:
                     or (
                         user.trial_status == "active"
                         and user.trial_end_date
-                        and user.trial_end_date > datetime.utcnow()
+                        and user.trial_end_date > datetime.now(timezone.utc)
                     )
                 ),
                 risk_disclosure_accepted=settings.risk_disclosure_accepted or False,
