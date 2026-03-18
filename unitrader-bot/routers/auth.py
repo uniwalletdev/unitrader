@@ -608,6 +608,67 @@ async def update_settings(
 
 
 # ─────────────────────────────────────────────
+# Clerk helpers
+# ─────────────────────────────────────────────
+
+# In-memory JWKS cache — avoids a Clerk network round-trip on every login.
+_jwks_cache: dict = {}  # keys: "data" (jwks dict), "ts" (monotonic float)
+
+
+async def _get_cached_jwks(jwks_url: str) -> dict:
+    """Return cached JWKS, refreshing from Clerk when older than 1 hour."""
+    import time
+    import httpx as _httpx
+
+    if _jwks_cache.get("data") and (time.monotonic() - _jwks_cache.get("ts", 0.0)) < 3600:
+        return _jwks_cache["data"]  # type: ignore[return-value]
+
+    async with _httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(jwks_url)
+        resp.raise_for_status()
+        data = resp.json()
+
+    _jwks_cache["data"] = data
+    _jwks_cache["ts"] = time.monotonic()
+    return data
+
+
+async def _fetch_clerk_email(clerk_user_id: str) -> str | None:
+    """Fetch the user's primary email from Clerk's Backend API.
+
+    Requires CLERK_SECRET_KEY to be set.  Returns None on any failure so
+    callers can fall back gracefully.
+    """
+    if not settings.clerk_secret_key:
+        return None
+    try:
+        import httpx as _httpx
+
+        async with _httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(
+                f"https://api.clerk.com/v1/users/{clerk_user_id}",
+                headers={"Authorization": f"Bearer {settings.clerk_secret_key}"},
+            )
+            if resp.status_code != 200:
+                logger.warning(
+                    "Clerk API returned %d while fetching user %s",
+                    resp.status_code, clerk_user_id,
+                )
+                return None
+            data = resp.json()
+            primary_id = data.get("primary_email_address_id")
+            for addr in data.get("email_addresses", []):
+                if addr.get("id") == primary_id:
+                    return addr.get("email_address")
+            # fallback: first available address
+            addrs = data.get("email_addresses", [])
+            return addrs[0].get("email_address") if addrs else None
+    except Exception as exc:
+        logger.warning("Could not fetch Clerk user email via API: %s", exc)
+        return None
+
+
+# ─────────────────────────────────────────────
 # POST /api/auth/clerk-sync
 # ─────────────────────────────────────────────
 
@@ -623,8 +684,8 @@ async def clerk_sync(
     """Verify a Clerk session token and return our internal JWT.
 
     Flow:
-    1. Verify the Clerk JWT using their JWKS endpoint.
-    2. Extract user email and Clerk user ID from claims.
+    1. Verify the Clerk JWT using JWKS (cached in memory for 1 hour).
+    2. Extract email: JWT claim → Clerk Backend API → stable synthetic fallback.
     3. Find or create the user in our database.
     4. If the user has no AI name yet, return status='needs_setup'.
     5. Otherwise, return access_token + refresh_token.
@@ -635,7 +696,7 @@ async def clerk_sync(
             detail="Clerk authentication is not configured on this server",
         )
 
-    # ── Verify Clerk JWT via JWKS ─────────────────────────────────────
+    # ── Verify Clerk JWT via JWKS (cached) ───────────────────────────
     jwks_url = settings.clerk_jwks_url
     if not jwks_url:
         raise HTTPException(
@@ -644,15 +705,10 @@ async def clerk_sync(
         )
 
     try:
-        import httpx as _httpx
-        from jose import jwt as _jwt, JWTError as _JWTError
+        from jose import jwt as _jwt
         from jose.exceptions import ExpiredSignatureError
 
-        async with _httpx.AsyncClient(timeout=10) as client:
-            jwks_resp = await client.get(jwks_url)
-            jwks_resp.raise_for_status()
-            jwks = jwks_resp.json()
-
+        jwks = await _get_cached_jwks(jwks_url)
         claims = _jwt.decode(
             body.clerk_token,
             jwks,
@@ -664,8 +720,12 @@ async def clerk_sync(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Clerk session has expired — please sign in again",
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.warning("Clerk token verification failed: %s", exc)
+        # Bust the JWKS cache so the next request fetches fresh keys
+        _jwks_cache.clear()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid Clerk session token",
@@ -673,48 +733,67 @@ async def clerk_sync(
 
     # ── Extract claims ────────────────────────────────────────────────
     clerk_user_id: str = claims.get("sub", "")
-    # Clerk puts email in different places depending on sign-in method
-    email: str = (
-        claims.get("email")
-        or claims.get("primary_email_address_id", "")
-        or f"{clerk_user_id}@clerk.local"
-    )
-    # Try to get email from the email_addresses claim (Clerk v2 JWT template)
-    if "email" not in claims and "email_addresses" in claims:
-        addresses = claims["email_addresses"]
-        if addresses:
-            email = addresses[0].get("email_address", email)
-
     if not clerk_user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Clerk token is missing user ID (sub claim)",
         )
 
-    # ── Find or create user ───────────────────────────────────────────
-    result = await db.execute(
-        select(User).where(User.email == email.lower())
-    )
-    user = result.scalar_one_or_none()
+    # Clerk's default session JWT does NOT include email.
+    # `primary_email_address_id` is an object ID (e.g. "idn_abc123"), not an
+    # email address — we must NOT use it as one.
+    email: str = claims.get("email", "")
 
-    if not user:
-        # New user — create with no AI name yet (they'll set it up next)
-        _now = datetime.now(timezone.utc)
-        user = User(
-            email=email.lower(),
-            password_hash="__clerk__",   # placeholder — Clerk manages password
-            ai_name="",                  # must be set during onboarding
-            email_verified=True,         # Clerk already verified
-            is_active=True,
-            subscription_tier="free",
-            trial_started_at=_now,
-            trial_end_date=_now + timedelta(days=14),
-            trial_status="active",
+    # Some Clerk JWT templates include email_addresses array
+    if not email and "email_addresses" in claims:
+        addresses = claims["email_addresses"]
+        if addresses:
+            email = addresses[0].get("email_address", "")
+
+    # If still no real email (no "@"), call Clerk Backend API
+    if not email or "@" not in email:
+        fetched = await _fetch_clerk_email(clerk_user_id)
+        if fetched:
+            email = fetched
+        else:
+            # Stable synthetic address keyed to the immutable Clerk user ID
+            email = f"{clerk_user_id}@clerk.unitrader.internal"
+
+    logger.debug("clerk-sync: clerk_id=%s resolved_email=%s", clerk_user_id, email)
+
+    # ── Find or create user ───────────────────────────────────────────
+    try:
+        result = await db.execute(
+            select(User).where(User.email == email.lower())
         )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-        logger.info("New user created via Clerk: %s", email)
+        user = result.scalar_one_or_none()
+
+        if not user:
+            _now = datetime.now(timezone.utc)
+            user = User(
+                email=email.lower(),
+                password_hash="__clerk__",   # placeholder — Clerk manages auth
+                ai_name="",                  # set during onboarding
+                email_verified=True,
+                is_active=True,
+                subscription_tier="free",
+                trial_started_at=_now,
+                trial_end_date=_now + timedelta(days=14),
+                trial_status="active",
+            )
+            db.add(user)
+            await db.flush()          # obtain user.id before committing
+            db.add(UserSettings(user_id=user.id))  # default settings immediately
+            await db.commit()
+            await db.refresh(user)
+            logger.info("New user created via Clerk: %s", email)
+
+    except Exception as exc:
+        logger.error("clerk-sync DB error during user lookup/create: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account sync is temporarily unavailable — please try again in a moment",
+        )
 
     # ── AI name onboarding gate ────────────────────────────────────────
     if not user.ai_name:
@@ -726,24 +805,31 @@ async def clerk_sync(
         }
 
     # ── Issue our JWT tokens ───────────────────────────────────────────
-    access_token = create_access_token(user.id)
-    refresh_token_str, refresh_expires = create_refresh_token(user.id)
+    try:
+        access_token = create_access_token(user.id)
+        refresh_token_str, refresh_expires = create_refresh_token(user.id)
 
-    # Delete any existing refresh tokens for this user to avoid unique constraint violations
-    existing_tokens = (await db.execute(
-        select(RefreshToken).where(RefreshToken.user_id == user.id)
-    )).scalars().all()
-    for token in existing_tokens:
-        await db.delete(token)
+        existing_tokens = (await db.execute(
+            select(RefreshToken).where(RefreshToken.user_id == user.id)
+        )).scalars().all()
+        for token in existing_tokens:
+            await db.delete(token)
 
-    rt = RefreshToken(
-        token=refresh_token_str,
-        user_id=user.id,
-        expires_at=refresh_expires,
-    )
-    db.add(rt)
-    user.last_login = datetime.now(timezone.utc)
-    await db.commit()
+        rt = RefreshToken(
+            token=refresh_token_str,
+            user_id=user.id,
+            expires_at=refresh_expires,
+        )
+        db.add(rt)
+        user.last_login = datetime.now(timezone.utc)
+        await db.commit()
+
+    except Exception as exc:
+        logger.error("clerk-sync DB error during token issuance: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Account sync is temporarily unavailable — please try again in a moment",
+        )
 
     return {
         "status": "logged_in",
