@@ -44,7 +44,7 @@ from src.utils.json_parser import parse_claude_json
 
 logger = logging.getLogger(__name__)
 
-_CLAUDE_MODEL = "claude-3-5-haiku-20241022"  # Use Haiku for speed; upgrade to Sonnet for deeper analysis
+_CLAUDE_MODEL = "claude-3-haiku-20240307"  # Use Haiku for speed; upgrade to Sonnet for deeper analysis
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SYSTEM PROMPT 1 — Pattern Discovery

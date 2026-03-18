@@ -18,6 +18,7 @@ from typing import Optional
 
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from models import Conversation, Trade, User, UserSettings
 
@@ -206,9 +207,10 @@ class SharedMemory:
         If no UserSettings row exists, creates one with defaults.
         """
         try:
-            # Query User and UserSettings
+            # Query User and UserSettings (eager load to avoid async lazy-load)
             stmt = (
                 select(User)
+                .options(selectinload(User.settings))
                 .where(User.id == user_id)
             )
             result = await db.execute(stmt)
