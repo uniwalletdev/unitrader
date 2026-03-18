@@ -9,6 +9,7 @@ Future migrations: use Alembic (alembic init alembic) once the schema stabilises
 
 import logging
 from collections.abc import AsyncGenerator
+from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -43,13 +44,29 @@ _is_sqlite = "sqlite" in _db_url
 # PgBouncer handles pooling on its side; we don't need SQLAlchemy pooling too.
 _use_nullpool = "pooler.supabase.com" in _db_url
 
+# SQLAlchemy's asyncpg dialect still prepares statements by default. With the
+# Supabase transaction pooler, those statements can collide or disappear across
+# backend connections unless we disable the cache and use unique names.
+if _use_nullpool and "prepared_statement_cache_size=" not in _db_url:
+    _db_url = f"{_db_url}{'&' if '?' in _db_url else '?'}prepared_statement_cache_size=0"
+
 _engine_kwargs: dict = {
     "echo": settings.debug,
     "future": True,
 }
 
+_connect_args: dict = {}
+if settings.db_ssl_args:
+    _connect_args.update(settings.db_ssl_args)
+
 if _use_nullpool:
     _engine_kwargs["poolclass"] = NullPool
+    _connect_args.update(
+        {
+            "statement_cache_size": 0,
+            "prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__",
+        }
+    )
 elif not _is_sqlite:
     _engine_kwargs.update(
         {
@@ -61,8 +78,8 @@ elif not _is_sqlite:
         }
     )
 
-if settings.db_ssl_args:
-    _engine_kwargs["connect_args"] = settings.db_ssl_args
+if _connect_args:
+    _engine_kwargs["connect_args"] = _connect_args
 
 engine = create_async_engine(_db_url, **_engine_kwargs)
 
