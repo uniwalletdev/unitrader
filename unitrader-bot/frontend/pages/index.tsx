@@ -157,19 +157,19 @@ function StatCard({ label, value, suffix }: { label: string; value: number; suff
       <span className="font-mono text-3xl font-bold text-brand-400 md:text-4xl">
         {count.toLocaleString()}{suffix}
       </span>
-      <span className="text-sm text-dark-400">{label}</span>
+      <span className="text-sm text-gray-500">{label}</span>
     </div>
   );
 }
 
 function FeatureCard({ icon: Icon, title, desc }: { icon: any; title: string; desc: string }) {
   return (
-    <div className="group rounded-xl border border-dark-800 bg-dark-950 p-6 transition-all hover:border-brand-500/40 hover:bg-dark-900">
-      <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-400 transition-colors group-hover:bg-brand-500/20">
+    <div className="group rounded-xl border border-gray-200 bg-white p-6 shadow-sm transition-all hover:border-brand-500/40 hover:bg-gray-50">
+      <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-lg bg-brand-500/10 text-brand-500 transition-colors group-hover:bg-brand-500/20">
         <Icon size={20} />
       </div>
-      <h3 className="mb-2 font-semibold text-dark-100">{title}</h3>
-      <p className="text-sm leading-relaxed text-dark-400">{desc}</p>
+      <h3 className="mb-2 font-semibold text-gray-900">{title}</h3>
+      <p className="text-sm leading-relaxed text-gray-500">{desc}</p>
     </div>
   );
 }
@@ -178,17 +178,17 @@ function FaqItem({ q, a }: { q: string; a: string }) {
   const [open, setOpen] = useState(false);
   return (
     <div
-      className="cursor-pointer rounded-xl border border-dark-800 bg-dark-950 p-5 transition-all hover:border-dark-700"
+      className="cursor-pointer rounded-xl border border-gray-200 bg-white p-5 transition-all hover:border-gray-300"
       onClick={() => setOpen(!open)}
     >
       <div className="flex items-center justify-between gap-4">
-        <span className="font-medium text-dark-100">{q}</span>
+        <span className="font-medium text-gray-900">{q}</span>
         <ChevronRight
           size={18}
-          className={`shrink-0 text-dark-400 transition-transform ${open ? "rotate-90" : ""}`}
+          className={`shrink-0 text-gray-400 transition-transform ${open ? "rotate-90" : ""}`}
         />
       </div>
-      {open && <p className="mt-3 text-sm leading-relaxed text-dark-400">{a}</p>}
+      {open && <p className="mt-3 text-sm leading-relaxed text-gray-500">{a}</p>}
     </div>
   );
 }
@@ -206,7 +206,7 @@ const TICKER_ITEMS = [
 function TickerBar() {
   const items = [...TICKER_ITEMS, ...TICKER_ITEMS];
   return (
-    <div className="overflow-hidden border-b border-dark-800 bg-dark-950 py-2">
+    <div className="overflow-hidden border-b border-gray-200 bg-gray-50 py-2">
       <div className="flex animate-ticker gap-8 whitespace-nowrap">
         {items.map((item, i) => (
           <span
@@ -229,7 +229,7 @@ export default function LandingPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <>
+    <div className="bg-white min-h-screen">
       <Head>
         <title>Unitrader — Your Personal AI Trading Companion</title>
         <meta
@@ -241,13 +241,13 @@ export default function LandingPage() {
       </Head>
 
       {/* ── Navbar ──────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 border-b border-dark-800 bg-dark-950/80 backdrop-blur-xl">
+      <header className="sticky top-0 z-50 border-b border-gray-200 bg-white/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-4 sm:px-6">
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500">
-              <TrendingUp size={16} className="text-dark-950" />
+              <TrendingUp size={16} className="text-white" />
             </div>
-            <span className="text-lg font-bold text-white">Unitrader</span>
+            <span className="text-lg font-bold text-gray-900">Unitrader</span>
           </div>
 
           {/* Desktop nav */}
@@ -256,7 +256,7 @@ export default function LandingPage() {
               <a
                 key={link}
                 href={`#${link.toLowerCase().replace(/\s/g, "-")}`}
-                className="text-sm text-dark-400 transition hover:text-dark-100"
+                className="text-sm text-gray-500 transition hover:text-gray-900"
               >
                 {link}
               </a>
@@ -264,7 +264,7 @@ export default function LandingPage() {
           </nav>
 
           <div className="hidden items-center gap-3 md:flex">
-            <Link href="/login" className="btn-outline py-2 text-xs">
+            <Link href="/login" className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-5 py-2 text-xs font-semibold text-gray-700 transition-all hover:border-brand-500 hover:text-brand-500 active:scale-95">
               Log In
             </Link>
             <Link href="/register" className="btn-primary py-2 text-xs">
@@ -274,7 +274,7 @@ export default function LandingPage() {
 
           {/* Mobile menu toggle */}
           <button
-            className="md:hidden text-dark-400"
+            className="md:hidden text-gray-500"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
           >
             {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
@@ -282,19 +282,19 @@ export default function LandingPage() {
         </div>
 
         {mobileMenuOpen && (
-          <div className="border-t border-dark-800 bg-dark-950 px-4 pb-4 md:hidden">
+          <div className="border-t border-gray-200 bg-white px-4 pb-4 md:hidden">
             {NAV_LINKS.map((link) => (
               <a
                 key={link}
                 href={`#${link.toLowerCase().replace(/\s/g, "-")}`}
-                className="block py-2.5 text-sm text-dark-400"
+                className="block py-2.5 text-sm text-gray-500"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 {link}
               </a>
             ))}
             <div className="mt-3 flex flex-col gap-2">
-              <Link href="/login" className="btn-outline text-center text-xs">Log In</Link>
+              <Link href="/login" className="inline-flex items-center justify-center rounded-lg border border-gray-300 px-5 py-2.5 text-xs font-semibold text-gray-700 transition-all hover:border-brand-500 hover:text-brand-500 text-center">Log In</Link>
               <Link href="/register" className="btn-primary text-center text-xs">Start Free Trial</Link>
             </div>
           </div>
@@ -308,8 +308,8 @@ export default function LandingPage() {
         {/* ── Hero ────────────────────────────────────────────────────── */}
         <section className="relative overflow-hidden px-4 py-24 sm:px-6 sm:py-32">
           {/* Glow blobs */}
-          <div className="pointer-events-none absolute -left-40 -top-40 h-96 w-96 rounded-full bg-brand-500/5 blur-3xl" />
-          <div className="pointer-events-none absolute -right-40 top-20 h-96 w-96 rounded-full bg-brand-500/5 blur-3xl" />
+          <div className="pointer-events-none absolute -left-40 -top-40 h-96 w-96 rounded-full bg-brand-500/10 blur-3xl" />
+          <div className="pointer-events-none absolute -right-40 top-20 h-96 w-96 rounded-full bg-brand-500/10 blur-3xl" />
 
           <div className="relative mx-auto max-w-4xl text-center">
             <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-brand-500/30 bg-brand-500/10 px-4 py-1.5 text-sm text-brand-400">
@@ -317,7 +317,7 @@ export default function LandingPage() {
               AI-powered trading — now in your hands
             </div>
 
-            <h1 className="mb-6 text-4xl font-extrabold leading-tight tracking-tight text-white sm:text-6xl md:text-7xl">
+            <h1 className="mb-6 text-4xl font-extrabold leading-tight tracking-tight text-gray-900 sm:text-6xl md:text-7xl">
               Your Personal{" "}
               <span className="bg-gradient-to-r from-brand-400 to-brand-300 bg-clip-text text-transparent">
                 AI Trading
@@ -325,7 +325,7 @@ export default function LandingPage() {
               Companion
             </h1>
 
-            <p className="mx-auto mb-10 max-w-2xl text-lg leading-relaxed text-dark-400 sm:text-xl">
+            <p className="mx-auto mb-10 max-w-2xl text-lg leading-relaxed text-gray-500 sm:text-xl">
               Name your AI. Watch it analyse markets, execute trades, and enforce
               risk management — 24 hours a day, without emotion.
             </p>
@@ -335,19 +335,19 @@ export default function LandingPage() {
                 Start Free Trial — 14 Days Free
                 <ArrowRight size={18} />
               </Link>
-              <Link href="#how-it-works" className="btn-outline px-8 py-3.5 text-base">
+              <Link href="#how-it-works" className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-300 px-8 py-3.5 text-base font-semibold text-gray-700 transition-all hover:border-brand-500 hover:text-brand-500 active:scale-95">
                 See How It Works
               </Link>
             </div>
 
-            <p className="mt-4 text-xs text-dark-500">
+            <p className="mt-4 text-xs text-gray-400">
               No credit card required for free tier · Cancel anytime
             </p>
           </div>
         </section>
 
         {/* ── Stats ───────────────────────────────────────────────────── */}
-        <section className="border-y border-dark-800 bg-dark-950 px-4 py-12 sm:px-6">
+        <section className="border-y border-gray-200 bg-gray-50 px-4 py-12 sm:px-6">
           <div className="mx-auto grid max-w-4xl grid-cols-2 gap-8 md:grid-cols-4">
             {STATS.map((s) => (
               <StatCard key={s.label} {...s} />
@@ -362,7 +362,7 @@ export default function LandingPage() {
               <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-brand-400">
                 Features
               </p>
-              <h2 className="text-3xl font-bold text-white sm:text-4xl">
+              <h2 className="text-3xl font-bold text-gray-900 sm:text-4xl">
                 Everything your trading needs
               </h2>
             </div>
@@ -375,13 +375,13 @@ export default function LandingPage() {
         </section>
 
         {/* ── How It Works ────────────────────────────────────────────── */}
-        <section id="how-it-works" className="bg-dark-950 px-4 py-24 sm:px-6">
+        <section id="how-it-works" className="bg-gray-50 px-4 py-24 sm:px-6">
           <div className="mx-auto max-w-5xl">
             <div className="mb-14 text-center">
               <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-brand-400">
                 How It Works
               </p>
-              <h2 className="text-3xl font-bold text-white sm:text-4xl">
+              <h2 className="text-3xl font-bold text-gray-900 sm:text-4xl">
                 Up and running in 10 minutes
               </h2>
             </div>
@@ -393,8 +393,8 @@ export default function LandingPage() {
                   <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-brand-500/30 bg-brand-500/10 font-mono text-xl font-bold text-brand-400">
                     {step.step}
                   </div>
-                  <h3 className="mb-2 font-semibold text-dark-100">{step.title}</h3>
-                  <p className="text-sm leading-relaxed text-dark-400">{step.desc}</p>
+                  <h3 className="mb-2 font-semibold text-gray-900">{step.title}</h3>
+                  <p className="text-sm leading-relaxed text-gray-500">{step.desc}</p>
                 </div>
               ))}
             </div>
@@ -408,26 +408,26 @@ export default function LandingPage() {
               <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-brand-400">
                 Testimonials
               </p>
-              <h2 className="text-3xl font-bold text-white sm:text-4xl">
+              <h2 className="text-3xl font-bold text-gray-900 sm:text-4xl">
                 Traders love their AI
               </h2>
             </div>
             <div className="grid gap-6 md:grid-cols-3">
               {TESTIMONIALS.map((t) => (
-                <div key={t.name} className="rounded-xl border border-dark-800 bg-dark-950 p-6">
+                <div key={t.name} className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">
                   <div className="mb-3 flex gap-0.5">
                     {Array.from({ length: t.stars }).map((_, i) => (
                       <Star key={i} size={14} className="fill-brand-400 text-brand-400" />
                     ))}
                   </div>
-                  <p className="mb-4 text-sm leading-relaxed text-dark-300">"{t.text}"</p>
+                  <p className="mb-4 text-sm leading-relaxed text-gray-600">"{t.text}"</p>
                   <div className="flex items-center gap-3">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/20 text-xs font-bold text-brand-400">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-brand-500/20 text-xs font-bold text-brand-500">
                       {t.avatar}
                     </div>
                     <div>
-                      <p className="text-sm font-semibold text-dark-100">{t.name}</p>
-                      <p className="text-xs text-dark-500">{t.role}</p>
+                      <p className="text-sm font-semibold text-gray-900">{t.name}</p>
+                      <p className="text-xs text-gray-400">{t.role}</p>
                     </div>
                   </div>
                 </div>
@@ -437,54 +437,54 @@ export default function LandingPage() {
         </section>
 
         {/* ── Pricing ─────────────────────────────────────────────────── */}
-        <section id="pricing" className="bg-dark-950 px-4 py-24 sm:px-6">
+        <section id="pricing" className="bg-gray-50 px-4 py-24 sm:px-6">
           <div className="mx-auto max-w-4xl">
             <div className="mb-14 text-center">
               <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-brand-400">
                 Pricing
               </p>
-              <h2 className="text-3xl font-bold text-white sm:text-4xl">
+              <h2 className="text-3xl font-bold text-gray-900 sm:text-4xl">
                 Simple, transparent pricing
               </h2>
-              <p className="mt-3 text-dark-400">14-day free trial. Cancel anytime.</p>
+              <p className="mt-3 text-gray-500">14-day free trial. Cancel anytime.</p>
             </div>
 
             <div className="grid gap-6 md:grid-cols-2">
               {/* Free */}
-              <div className="rounded-xl border border-dark-800 bg-dark-950 p-8">
-                <h3 className="mb-1 text-lg font-bold text-white">Free</h3>
-                <p className="mb-6 text-sm text-dark-400">Perfect for getting started</p>
+              <div className="rounded-xl border border-gray-200 bg-white p-8 shadow-sm">
+                <h3 className="mb-1 text-lg font-bold text-gray-900">Free</h3>
+                <p className="mb-6 text-sm text-gray-500">Perfect for getting started</p>
                 <div className="mb-6 flex items-end gap-1">
-                  <span className="text-4xl font-extrabold text-white">$0</span>
-                  <span className="mb-1 text-dark-400">/month</span>
+                  <span className="text-4xl font-extrabold text-gray-900">$0</span>
+                  <span className="mb-1 text-gray-500">/month</span>
                 </div>
                 <ul className="mb-8 space-y-3">
                   {["1 exchange connection", "10 AI trades / month", "Basic chat support", "Performance dashboard"].map((f) => (
-                    <li key={f} className="flex items-center gap-2 text-sm text-dark-300">
+                    <li key={f} className="flex items-center gap-2 text-sm text-gray-600">
                       <Check size={16} className="text-brand-500" />
                       {f}
                     </li>
                   ))}
                 </ul>
-                <Link href="/register" className="btn-outline w-full text-center">
+                <Link href="/register" className="inline-flex w-full items-center justify-center rounded-lg border border-gray-300 px-5 py-2.5 text-sm font-semibold text-gray-700 transition-all hover:border-brand-500 hover:text-brand-500 active:scale-95 text-center">
                   Get Started Free
                 </Link>
               </div>
 
               {/* Pro */}
-              <div className="relative rounded-xl border border-brand-500/50 bg-dark-950 p-8 glow-green">
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-brand-500 px-3 py-0.5 text-xs font-bold text-dark-950">
+              <div className="relative rounded-xl border border-brand-500/50 bg-white p-8 glow-green shadow-sm">
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-brand-500 px-3 py-0.5 text-xs font-bold text-white">
                   MOST POPULAR
                 </div>
-                <h3 className="mb-1 text-lg font-bold text-white">Pro</h3>
-                <p className="mb-6 text-sm text-dark-400">For serious traders</p>
+                <h3 className="mb-1 text-lg font-bold text-gray-900">Pro</h3>
+                <p className="mb-6 text-sm text-gray-500">For serious traders</p>
                 <div className="mb-6 flex items-end gap-1">
-                  <span className="text-4xl font-extrabold text-white">$9.99</span>
-                  <span className="mb-1 text-dark-400">/month</span>
+                  <span className="text-4xl font-extrabold text-gray-900">$9.99</span>
+                  <span className="mb-1 text-gray-500">/month</span>
                 </div>
                 <ul className="mb-8 space-y-3">
                   {["Unlimited exchange connections", "Unlimited AI trades", "Priority Claude AI (Opus)", "Advanced analytics", "Email alerts", "API access", "Premium support"].map((f) => (
-                    <li key={f} className="flex items-center gap-2 text-sm text-dark-300">
+                    <li key={f} className="flex items-center gap-2 text-sm text-gray-600">
                       <Check size={16} className="text-brand-500" />
                       {f}
                     </li>
@@ -503,7 +503,7 @@ export default function LandingPage() {
         <section id="faq" className="px-4 py-24 sm:px-6">
           <div className="mx-auto max-w-2xl">
             <div className="mb-12 text-center">
-              <h2 className="text-3xl font-bold text-white">Frequently asked questions</h2>
+              <h2 className="text-3xl font-bold text-gray-900">Frequently asked questions</h2>
             </div>
             <div className="space-y-3">
               {FAQ_ITEMS.map((item) => (
@@ -515,11 +515,11 @@ export default function LandingPage() {
 
         {/* ── CTA ─────────────────────────────────────────────────────── */}
         <section className="px-4 py-24 sm:px-6">
-          <div className="mx-auto max-w-3xl rounded-2xl border border-brand-500/20 bg-gradient-to-br from-brand-500/10 to-transparent p-12 text-center">
-            <h2 className="mb-4 text-3xl font-bold text-white sm:text-4xl">
+          <div className="mx-auto max-w-3xl rounded-2xl border border-brand-500/20 bg-gradient-to-br from-brand-500/10 to-brand-50 p-12 text-center">
+            <h2 className="mb-4 text-3xl font-bold text-gray-900 sm:text-4xl">
               Ready to meet your AI trader?
             </h2>
-            <p className="mb-8 text-dark-400">
+            <p className="mb-8 text-gray-500">
               Name it, configure it, and watch it go to work. 14 days free, no card required.
             </p>
             <Link href="/register" className="btn-primary px-10 py-4 text-base shadow-xl shadow-brand-500/20">
@@ -531,26 +531,26 @@ export default function LandingPage() {
       </main>
 
       {/* ── Footer ──────────────────────────────────────────────────── */}
-      <footer className="border-t border-dark-800 bg-dark-950 px-4 py-10 sm:px-6">
+      <footer className="border-t border-gray-200 bg-gray-50 px-4 py-10 sm:px-6">
         <div className="mx-auto max-w-7xl">
           <div className="flex flex-col items-center justify-between gap-4 sm:flex-row">
             <div className="flex items-center gap-2">
               <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-500">
-                <TrendingUp size={14} className="text-dark-950" />
+                <TrendingUp size={14} className="text-white" />
               </div>
-              <span className="font-bold text-white">Unitrader</span>
+              <span className="font-bold text-gray-900">Unitrader</span>
             </div>
-            <p className="text-xs text-dark-500">
+            <p className="text-xs text-gray-400">
               © {new Date().getFullYear()} Unitrader. Trading involves risk. Past performance is not indicative of future results.
             </p>
-            <div className="flex gap-4 text-xs text-dark-500">
-              <a href="#" className="hover:text-dark-300">Privacy</a>
-              <a href="#" className="hover:text-dark-300">Terms</a>
-              <a href="#" className="hover:text-dark-300">Support</a>
+            <div className="flex gap-4 text-xs text-gray-400">
+              <a href="#" className="hover:text-gray-600">Privacy</a>
+              <a href="#" className="hover:text-gray-600">Terms</a>
+              <a href="#" className="hover:text-gray-600">Support</a>
             </div>
           </div>
         </div>
       </footer>
-    </>
+    </div>
   );
 }
