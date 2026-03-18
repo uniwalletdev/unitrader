@@ -85,15 +85,18 @@ WRITING RULES:
 - Avoid jargon without explanation
 - Never make specific profit guarantees
 
-OUTPUT FORMAT — respond with valid JSON only, no markdown fences:
+Output the full blog post in Markdown. Start with a level-1 heading for the title.
+"""
+
+_BLOG_META_PROMPT = """\
+Given the following blog post, extract its metadata.
+Respond with valid JSON only — no markdown fences, no commentary.
+
 {
-  "title": "...",
-  "slug": "...",
-  "content": "...",
+  "title": "<the title from the post>",
+  "slug": "<url-friendly-slug>",
   "seo_keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
-  "estimated_read_time": <integer minutes>,
-  "word_count": <integer>,
-  "meta_description": "...(150 chars max)"
+  "meta_description": "<150 chars max summary for SEO>"
 }
 """
 
@@ -260,9 +263,8 @@ async def generate_blog_post(
     base_slug = data.get("slug") or make_slug(data.get("title", topic))
     slug = f"{base_slug}-{uuid.uuid4().hex[:6]}"
 
-    content = data.get("content", "")
-    word_count = data.get("word_count") or count_words(content)
-    read_time = data.get("estimated_read_time") or estimate_read_time(content)
+    word_count = count_words(content)
+    read_time = estimate_read_time(content)
 
     result = {
         "id": None,

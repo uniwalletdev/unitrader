@@ -130,6 +130,44 @@ async def create_tables() -> None:
 
     logger.info("Database tables initialised")
 
+    # Ensure the 'system' user exists — required as FK target for agent_outcomes
+    # when background agents (content, learning) write outcomes without a real user.
+    await _ensure_system_user()
+
+
+async def _ensure_system_user() -> None:
+    """Create a sentinel 'system' user row if it doesn't already exist.
+
+    Background agents (content scheduler, learning hub) write to
+    agent_outcomes with user_id='system'.  Without this row the FK
+    constraint on agent_outcomes.user_id → users.id fails.
+    """
+    from models import User  # noqa: local import to avoid circular
+
+    try:
+        async with AsyncSessionLocal() as session:
+            from sqlalchemy import select
+            exists = await session.execute(
+                select(User.id).where(User.id == "system")
+            )
+            if exists.scalar_one_or_none() is None:
+                system_user = User(
+                    id="system",
+                    email="system@unitrader.internal",
+                    password_hash="!system-no-login",
+                    ai_name="System",
+                    subscription_tier="pro",
+                    email_verified=True,
+                    is_active=True,
+                )
+                session.add(system_user)
+                await session.commit()
+                logger.info("Created sentinel 'system' user for background agents")
+            else:
+                logger.debug("Sentinel 'system' user already exists")
+    except Exception as exc:
+        logger.warning("Could not ensure system user (non-fatal): %s", exc)
+
 
 async def drop_tables() -> None:
     """Drop ALL tables — for use in tests only, never in production."""

@@ -164,11 +164,25 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Anthropic API key: NOT configured — AI features disabled")
 
-    # 3. Verify Supabase configuration
+    # 3. Verify database configuration
+    _db_url_display = settings.database_url[:40] + "..." if len(settings.database_url) > 40 else settings.database_url
+    if "sqlite" in settings.database_url:
+        logger.warning(
+            "DATABASE WARNING: Using SQLite (%s). "
+            "Set DATABASE_URL to a PostgreSQL/Supabase connection string for production. "
+            "Data will NOT persist across deploys with SQLite.",
+            _db_url_display,
+        )
+    else:
+        logger.info("Database: PostgreSQL configured (%s)", _db_url_display)
+
     if settings.supabase_url:
         logger.info("Supabase: configured at %s", settings.supabase_url)
     else:
-        logger.warning("Supabase: NOT configured")
+        logger.warning(
+            "Supabase: SUPABASE_URL not set. "
+            "If using Supabase, also set SUPABASE_SERVICE_ROLE_KEY."
+        )
 
     # 4. Launch background loops
     trading_task  = asyncio.create_task(_trading_loop(),       name="trading_loop")
@@ -190,7 +204,15 @@ async def lifespan(app: FastAPI):
             await _tg_bot.initialize()
             set_telegram_bot_service(_tg_bot)
             webhook_url = f"{settings.api_base_url}/webhooks/telegram"
-            await _tg_bot.set_webhook(webhook_url)
+            logger.info("Setting Telegram webhook → %s", webhook_url)
+            try:
+                await _tg_bot.set_webhook(webhook_url)
+            except Exception as _wh_exc:
+                logger.error(
+                    "Telegram webhook registration failed (bot still usable via polling): %s  "
+                    "Ensure API_BASE_URL env var is a publicly reachable HTTPS URL (current: %s)",
+                    _wh_exc, settings.api_base_url,
+                )
         except Exception as _tg_exc:
             logger.error("Telegram bot failed to start: %s", _tg_exc)
             _tg_bot = None

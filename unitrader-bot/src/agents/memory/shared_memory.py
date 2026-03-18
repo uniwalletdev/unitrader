@@ -311,11 +311,30 @@ class SharedMemory:
         Returns:
             The outcome's UUID string.
         """
+        # Guard against FK violation: if user_id doesn't exist in users
+        # table (e.g. 'system' row missing), set to None so the INSERT
+        # succeeds — the outcome data is more important than the FK link.
+        uid = outcome.user_id
+        if uid:
+            from sqlalchemy import select, text
+            try:
+                chk = await self._db.execute(
+                    select(text("1")).select_from(text("users")).where(text("id = :uid")),
+                    {"uid": uid},
+                )
+                if chk.scalar_one_or_none() is None:
+                    logger.warning(
+                        "store_outcome: user_id=%s not found in users table — setting to NULL", uid
+                    )
+                    uid = None
+            except Exception:
+                uid = None  # safe fallback
+
         row = AgentOutcomeModel(
             id=outcome.id,
             agent_name=outcome.agent_name,
             action_type=outcome.action_type,
-            user_id=outcome.user_id,
+            user_id=uid,
             context_data=outcome.context,
             action_data=outcome.action_taken,
             result_data=outcome.result,
