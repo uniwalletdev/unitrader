@@ -623,7 +623,7 @@ async def _get_cached_jwks(jwks_url: str) -> dict:
     if _jwks_cache.get("data") and (time.monotonic() - _jwks_cache.get("ts", 0.0)) < 3600:
         return _jwks_cache["data"]  # type: ignore[return-value]
 
-    async with _httpx.AsyncClient(timeout=10) as client:
+    async with _httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
         resp = await client.get(jwks_url)
         resp.raise_for_status()
         data = resp.json()

@@ -516,29 +516,64 @@ async def detect_anomalies(user_id: str) -> dict:
 
     balance = 10_000.0
     if key_id:
-        async with AsyncSessionLocal() as db_key:
-            key_result = await db_key.execute(
-                select(ExchangeAPIKey).where(ExchangeAPIKey.id == key_id)
+        # Respect the same backoff used by position monitoring — avoid hammering
+        # a known-bad key every 60 s and flooding logs with repeated 401s.
+        now = datetime.now(timezone.utc)
+        backoff = _key_backoff.get(key_id, {})
+        if backoff.get("backoff_until") and now < backoff["backoff_until"]:
+            logger.debug(
+                "detect_anomalies: skipping connectivity check for key %s (backoff active)",
+                key_id,
             )
-            key_row = key_result.scalar_one_or_none()
-        if key_row:
-            try:
-                raw_key, raw_secret = decrypt_api_key(
-                    key_row.encrypted_api_key, key_row.encrypted_api_secret
+        else:
+            async with AsyncSessionLocal() as db_key:
+                key_result = await db_key.execute(
+                    select(ExchangeAPIKey).where(ExchangeAPIKey.id == key_id)
                 )
-                client = get_exchange_client(
-                    key_row.exchange, raw_key, raw_secret,
-                    is_paper=getattr(key_row, "is_paper", True),
-                )
-                balance = await client.get_account_balance()
-                await client.aclose()
-            except Exception as exc:
-                logger.error("Exchange connectivity check failed for %s: %s", user_id, exc)
-                return {
-                    "anomaly_detected": True,
-                    "type": "exchange_unreachable",
-                    "action_taken": "no_action_taken",
-                }
+                key_row = key_result.scalar_one_or_none()
+            if key_row:
+                try:
+                    raw_key, raw_secret = decrypt_api_key(
+                        key_row.encrypted_api_key, key_row.encrypted_api_secret
+                    )
+                    client = get_exchange_client(
+                        key_row.exchange, raw_key, raw_secret,
+                        is_paper=getattr(key_row, "is_paper", True),
+                    )
+                    balance = await client.get_account_balance()
+                    await client.aclose()
+                    _clear_key_backoff(key_id)
+                except httpx.HTTPStatusError as exc:
+                    if getattr(exc.response, "status_code", None) == 401:
+                        _key_backoff.setdefault(key_id, {"consecutive_401": 0, "backoff_until": None})
+                        _key_backoff[key_id]["consecutive_401"] = (
+                            _key_backoff[key_id].get("consecutive_401", 0) + 1
+                        )
+                        if _key_backoff[key_id]["consecutive_401"] >= 2:
+                            _key_backoff[key_id]["backoff_until"] = now + timedelta(seconds=300)
+                            logger.warning(
+                                "detect_anomalies: key %s (user %s) repeated 401 — pausing for 5 min",
+                                key_id, user_id,
+                            )
+                        else:
+                            logger.warning(
+                                "detect_anomalies: 401 for key %s (user %s) — credentials may be invalid",
+                                key_id, user_id,
+                            )
+                    else:
+                        logger.error("Exchange connectivity check failed for %s: %s", user_id, exc)
+                    return {
+                        "anomaly_detected": True,
+                        "type": "exchange_unreachable",
+                        "action_taken": "no_action_taken",
+                    }
+                except Exception as exc:
+                    logger.error("Exchange connectivity check failed for %s: %s", user_id, exc)
+                    return {
+                        "anomaly_detected": True,
+                        "type": "exchange_unreachable",
+                        "action_taken": "no_action_taken",
+                    }
 
     async with AsyncSessionLocal() as db:
         # Rapid loss: more than 3% of balance lost in the last hour
