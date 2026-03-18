@@ -182,6 +182,13 @@ class Settings(BaseSettings):
     rate_limit_trading: str = "10/minute"
 
     # ─────────────────────────────────────────────
+    # Admin
+    # ─────────────────────────────────────────────
+    # Set ADMIN_SECRET_KEY in your .env to a strong random string.
+    # This key protects the admin-only endpoints (e.g. force-delete a user).
+    admin_secret_key: str = ""
+
+    # ─────────────────────────────────────────────
     # Feature Flags
     # ─────────────────────────────────────────────
     feature_2fa_enabled: bool = True

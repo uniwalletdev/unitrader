@@ -2,16 +2,17 @@
 routers/auth.py — Authentication endpoints for Unitrader.
 
 Endpoints:
-    POST /api/auth/register              — Create account
-    POST /api/auth/verify-email          — Confirm email address
-    POST /api/auth/login                 — Get JWT tokens
-    POST /api/auth/logout                — Revoke refresh token
-    POST /api/auth/refresh-token         — Issue new access token
-    POST /api/auth/2fa/setup             — Generate TOTP secret + QR code
-    POST /api/auth/2fa/verify            — Activate 2FA
-    POST /api/auth/password-reset-request — Send reset email
-    POST /api/auth/password-reset        — Apply new password
-    GET  /api/auth/me                    — Current user profile
+    POST   /api/auth/register              — Create account
+    POST   /api/auth/verify-email          — Confirm email address
+    POST   /api/auth/login                 — Get JWT tokens
+    POST   /api/auth/logout                — Revoke refresh token
+    POST   /api/auth/refresh-token         — Issue new access token
+    POST   /api/auth/2fa/setup             — Generate TOTP secret + QR code
+    POST   /api/auth/2fa/verify            — Activate 2FA
+    POST   /api/auth/password-reset-request — Send reset email
+    POST   /api/auth/password-reset        — Apply new password
+    GET    /api/auth/me                    — Current user profile
+    DELETE /api/auth/account               — Permanently delete account
 """
 
 import logging
@@ -1653,3 +1654,77 @@ async def whatsapp_webhook(
     # Always return 200 to Twilio — if you return non-200,
     # Twilio retries repeatedly
     return {"status": "ok"}
+
+
+# ─────────────────────────────────────────────
+# DELETE /api/auth/account
+# ─────────────────────────────────────────────
+
+@router.delete("/account", response_model=SuccessResponse)
+async def delete_account(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Permanently delete the authenticated user and all associated data."""
+    user_id = current_user.id
+    user_email = current_user.email
+
+    await _log_event(
+        db, "account_deleted", request,
+        user_id=user_id,
+        details={"email": user_email},
+    )
+
+    await db.delete(current_user)
+    await db.commit()
+
+    logger.info("Account permanently deleted: user_id=%s email=%s", user_id, user_email)
+    return SuccessResponse(message="Account permanently deleted")
+
+
+# ─────────────────────────────────────────────
+# DELETE /api/auth/admin/user
+# ─────────────────────────────────────────────
+
+class AdminDeleteUserRequest(BaseModel):
+    email: str
+    admin_secret: str
+
+
+@router.delete("/admin/user", response_model=SuccessResponse)
+async def admin_delete_user(
+    body: AdminDeleteUserRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin-only: permanently delete any user by email.
+
+    Requires the ADMIN_SECRET_KEY env var to be set and matched.
+    """
+    if not settings.admin_secret_key or body.admin_secret != settings.admin_secret_key:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid admin secret",
+        )
+
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No user found with email: {body.email}",
+        )
+
+    user_id = user.id
+    await _log_event(
+        db, "admin_account_deleted", request,
+        user_id=user_id,
+        details={"email": body.email},
+    )
+
+    await db.delete(user)
+    await db.commit()
+
+    logger.info("Admin deleted account: user_id=%s email=%s", user_id, body.email)
+    return SuccessResponse(message=f"User {body.email} permanently deleted")
