@@ -175,13 +175,15 @@ async def orchestrator_health(db: AsyncSession = Depends(get_db)):
     """
     # TODO: Implement health metrics for new orchestrator
     # get_system_health() not available in new orchestrator API
-    return {
-        "status": "ok",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "data": {
-            "agents": ["trading_agent", "conversation_agent", "risk_agent", "portfolio_agent"],
-            "note": "Health metrics pending orchestrator v2 implementation",
-        },
+    try:
+        return {
+            "status": "ok",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "data": {
+                "agents": ["trading_agent", "conversation_agent", "risk_agent", "portfolio_agent"],
+                "note": "Health metrics pending orchestrator v2 implementation",
+            },
+        }
     except Exception as exc:
         logger.error("Orchestrator health check failed: %s", exc)
         return {

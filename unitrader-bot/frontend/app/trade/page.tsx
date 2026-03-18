@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { api, authApi, tradingApi } from "@/lib/api";
@@ -116,7 +116,7 @@ function AIAnalysisCard({
   );
 }
 
-export default function TradePage() {
+function TradePage() {
   const searchParams = useSearchParams();
   const welcome = searchParams?.get("welcome") === "true";
 
@@ -600,3 +600,10 @@ export default function TradePage() {
   );
 }
 
+export default function TradePageWrapper() {
+  return (
+    <Suspense fallback={<div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-dark-400" /></div>}>
+      <TradePage />
+    </Suspense>
+  );
+}
