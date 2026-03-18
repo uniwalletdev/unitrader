@@ -127,6 +127,18 @@ async def create_tables() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    # PostgreSQL column migrations — safe to run repeatedly thanks to IF NOT EXISTS
+    if not _is_sqlite:
+        pg_new_columns = [
+            ("user_settings", "push_token", "VARCHAR(512)"),
+        ]
+        async with engine.begin() as conn:
+            for table, col, col_def in pg_new_columns:
+                await conn.exec_driver_sql(
+                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {col_def}"
+                )
+                logger.info("PG migration: ensured column %s.%s exists", table, col)
+
     # SQLite doesn't support IF NOT EXISTS on ADD COLUMN — use try/except per column
     if _is_sqlite:
         new_columns = [
