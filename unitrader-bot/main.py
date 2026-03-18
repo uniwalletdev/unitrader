@@ -15,7 +15,7 @@ import sentry_sdk
 from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
@@ -111,6 +111,26 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "max-age=31536000; includeSubDomains; preload"
             )
         return response
+
+
+class EnforceHTTPSMiddleware(BaseHTTPMiddleware):
+    """Redirect external HTTP traffic to HTTPS in production.
+
+    Railway health checks hit localhost over plain HTTP inside the container,
+    so those requests must bypass redirects.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        if settings.is_production:
+            forwarded_proto = request.headers.get("x-forwarded-proto", "").lower()
+            host = request.headers.get("host", "").lower()
+            is_local = host.startswith("localhost") or host.startswith("127.0.0.1")
+
+            if forwarded_proto == "http" and not is_local:
+                target = str(request.url).replace("http://", "https://", 1)
+                return RedirectResponse(url=target, status_code=status.HTTP_308_PERMANENT_REDIRECT)
+
+        return await call_next(request)
 
 
 # ─────────────────────────────────────────────
@@ -607,9 +627,9 @@ app.state.limiter = limiter
 # Middleware (order matters — outermost first)
 # ─────────────────────────────────────────────
 
-# HTTPS redirect — NOT added here because Railway terminates SSL at the proxy
-# level and forwards plain HTTP internally. Adding HTTPSRedirectMiddleware would
-# cause Railway's health checks (http://localhost:8000/health) to get 301s and fail.
+# HTTPS enforcement for external traffic only (safe for Railway internal health
+# checks, which originate from localhost over plain HTTP).
+app.add_middleware(EnforceHTTPSMiddleware)
 
 # TrustedHostMiddleware intentionally omitted — Railway's reverse proxy handles
 # host validation externally. Adding it here would block Railway's internal
