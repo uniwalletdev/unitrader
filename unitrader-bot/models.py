@@ -397,6 +397,9 @@ class UserSettings(Base):
     class_detected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     class_detection_method: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
+    # Feedback / trust
+    trust_score: Mapped[int] = mapped_column(Integer, default=100, nullable=False)  # 0–100
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -410,6 +413,45 @@ class UserSettings(Base):
     def __repr__(self) -> str:
         return f"<UserSettings id={self.id} user_id={self.user_id}>"
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TRADE FEEDBACK
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TradeFeedback(Base):
+    """User feedback on a trade decision (live or paper)."""
+
+    __tablename__ = "trade_feedback"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    # Exactly one of these should be set.
+    trade_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("trades.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    paper_trade_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+
+    rating: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 or -1
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+
+    user: Mapped["User"] = relationship("User")
+    trade: Mapped["Trade | None"] = relationship("Trade")
+
+    __table_args__ = (
+        Index("ix_trade_feedback_user_created", "user_id", "created_at"),
+        Index("ix_trade_feedback_user_trade", "user_id", "trade_id"),
+        Index("ix_trade_feedback_user_paper_trade", "user_id", "paper_trade_id"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TradeFeedback id={self.id} user_id={self.user_id} rating={self.rating}>"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AUDIT LOG
@@ -837,6 +879,8 @@ class BlogPost(Base):
     title: Mapped[str] = mapped_column(String(300), nullable=False)
     slug: Mapped[str] = mapped_column(String(350), unique=True, nullable=False, index=True)
     topic: Mapped[str] = mapped_column(String(300), nullable=False)
+    category: Mapped[str] = mapped_column(String(50), default="marketing", nullable=False)
+    related_concept: Mapped[str | None] = mapped_column(String(100), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     seo_keywords: Mapped[list | None] = mapped_column(JSON, nullable=True)
     estimated_read_time: Mapped[int] = mapped_column(Integer, default=5, nullable=False)

@@ -13,18 +13,23 @@ Endpoints:
     DELETE /api/trading/exchange-keys/{exchange} — Remove exchange keys
 """
 
+import csv
+import io
 import logging
 from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import get_db
-from models import ExchangeAPIKey, Trade, UserSettings
+from typing import Literal
+
+from models import AuditLog, ExchangeAPIKey, Trade, TradeFeedback, User, UserSettings
 from routers.auth import get_current_user
 from schemas import SuccessResponse, TradeResponse
 from security import encrypt_api_key, hash_api_key, decrypt_api_key
@@ -45,6 +50,19 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/trading", tags=["Trading"])
 performance_router = APIRouter(prefix="/api/performance", tags=["Performance"])
+trades_router = APIRouter(prefix="/api/trades", tags=["Trades"])
+
+
+def _human_account_type(trader_class: str) -> str:
+    m = {
+        "complete_novice": "Beginner investor",
+        "curious_saver": "Passive saver",
+        "self_taught": "Self-taught trader",
+        "experienced": "Experienced trader",
+        "semi_institutional": "Institutional trader",
+        "crypto_native": "Crypto trader",
+    }
+    return m.get(trader_class, "Trader")
 
 
 # ─────────────────────────────────────────────
@@ -60,6 +78,12 @@ class AnalyzeTradeRequest(BaseModel):
     symbol: str
     exchange: str  # binance | alpaca | oanda
     trader_class: str | None = None
+
+
+class TradeFeedbackRequest(BaseModel):
+    rating: Literal[1, -1]
+    comment: str | None = Field(default=None, max_length=2000)
+    is_paper: bool
 
 
 class ClosePositionRequest(BaseModel):
@@ -912,3 +936,305 @@ async def performance_summary(
         )
 
     return {"status": "success", "data": payload}
+
+
+@performance_router.get("/feedback-stats")
+async def feedback_stats(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    counts = await db.execute(
+        select(
+            func.count(TradeFeedback.id),
+            func.sum(case((TradeFeedback.rating == 1, 1), else_=0)),
+        ).where(TradeFeedback.user_id == current_user.id)
+    )
+    total_count, positive_count = counts.one()
+    total = int(total_count or 0)
+    positive = int(positive_count or 0)
+    positive_pct = float(round((positive / total) * 100, 1)) if total > 0 else 0.0
+
+    comments_res = await db.execute(
+        select(TradeFeedback.comment)
+        .where(
+            TradeFeedback.user_id == current_user.id,
+            TradeFeedback.comment.isnot(None),
+            TradeFeedback.comment != "",
+        )
+        .order_by(TradeFeedback.created_at.desc())
+        .limit(3)
+    )
+    recent_comments = [r[0] for r in comments_res.all() if r[0]]
+
+    settings_row = await db.execute(
+        select(UserSettings.trust_score).where(UserSettings.user_id == current_user.id)
+    )
+    trust = settings_row.scalar_one_or_none()
+    trust_score = int(trust) if trust is not None else (100 if total == 0 else int(round((positive / total) * 100)))
+
+    return {
+        "positive_pct": positive_pct,
+        "total_rated": total,
+        "trust_score": trust_score,
+        "recent_comments": recent_comments,
+    }
+
+
+@performance_router.get("/share-card")
+async def share_card(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    days: int = Query(30, ge=7, le=365),
+):
+    """Phase 30: data for shareable performance card."""
+    ctx = await SharedMemory.load(current_user.id, db)
+    trader_class = getattr(ctx, "trader_class", "complete_novice") or "complete_novice"
+
+    # Reuse performance summary logic by querying the same closed-trades window.
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await db.execute(
+        select(Trade).where(
+            Trade.user_id == current_user.id,
+            Trade.status == "closed",
+            Trade.closed_at.isnot(None),
+            Trade.closed_at >= since,
+        )
+    )
+    trades = result.scalars().all()
+
+    def trade_pnl(t: Trade) -> float:
+        return float((t.profit or 0) - (t.loss or 0))
+
+    total_return_gbp = sum(trade_pnl(t) for t in trades)
+    total_trades = len(trades)
+    wins = len([t for t in trades if trade_pnl(t) > 0])
+    win_rate = (wins / total_trades * 100) if total_trades else 0.0
+
+    base_cap = 0.0
+    if trades:
+        base_cap = sum(float(t.entry_price or 0) * float(t.quantity or 0) for t in trades) / max(
+            1, len(trades)
+        )
+    total_return_pct = (total_return_gbp / base_cap * 100) if base_cap > 0 else 0.0
+
+    # Optional pro metrics (best-effort, consistent with /summary placeholders)
+    sharpe = 0.0
+    max_drawdown = 0.0
+    if trades:
+        # crude daily returns proxy: per-trade % spread over holding time
+        rets = []
+        for t in trades:
+            if t.profit_percent is None:
+                continue
+            rets.append(float(t.profit_percent) / 100.0)
+        if len(rets) >= 2:
+            import statistics
+
+            mu = statistics.mean(rets)
+            sd = statistics.pstdev(rets) or 1e-9
+            sharpe = (mu / sd) * (252 ** 0.5)
+        # drawdown is already computed in /summary for pro; keep placeholder here
+        max_drawdown = 0.0
+
+    # Benchmarks (placeholders unless already available)
+    vs_index = 0.0
+    vs_hold = 0.0
+    if trader_class == "self_taught":
+        # Match /summary placeholders
+        vs_hold = 0.0
+    if trader_class == "curious_saver":
+        vs_index = 0.0
+
+    # Days since started (use user.created_at)
+    days_since_started = 0
+    ures = await db.execute(select(User.created_at).where(User.id == current_user.id))
+    created_at = ures.scalar_one_or_none()
+    if created_at:
+        try:
+            days_since_started = max(0, int((datetime.now(timezone.utc) - created_at).total_seconds() // 86400))
+        except Exception:
+            days_since_started = 0
+
+    CLASS_SHARE_TEXT = {
+        "complete_novice": "Apex grew my savings by {pct}% last month - and I only started {days} days ago!",
+        "curious_saver": "My AI trader just outperformed my index fund by {vs_index}% last month",
+        "self_taught": "Apex's AI strategy beat buy-and-hold by {vs_hold}% - worth trying",
+        "experienced": "Apex hit {win_rate}% win rate with {sharpe:.1f} Sharpe last month",
+        "semi_institutional": "Apex: {win_rate}% win rate, {sharpe:.1f} Sharpe, {drawdown}% max drawdown",
+        "crypto_native": "Apex turned my crypto portfolio +{pct}% last month. AI trading works.",
+    }
+    tmpl = CLASS_SHARE_TEXT.get(trader_class, CLASS_SHARE_TEXT["complete_novice"])
+
+    share_text = tmpl.format(
+        pct=round(float(total_return_pct), 1),
+        days=days_since_started,
+        vs_index=round(float(vs_index), 1),
+        vs_hold=round(float(vs_hold), 1),
+        win_rate=round(float(win_rate), 1),
+        sharpe=float(sharpe),
+        drawdown=round(float(max_drawdown), 1),
+    )
+
+    referral_url = f"{(settings.frontend_url or 'http://localhost:3000').rstrip('/')}/register?ref={current_user.id}"
+    disclaimer = (
+        "Past performance does not guarantee future results. "
+        "Returns shown are based on historical trades and may not reflect fees, slippage, or future conditions."
+    )
+
+    return {
+        "status": "success",
+        "data": {
+            "share_text": share_text,
+            "referral_url": referral_url,
+            "disclaimer": disclaimer,
+        },
+    }
+
+
+# ─────────────────────────────────────────────
+# GET /api/trades/export  (Phase 27 - tax export)
+# ─────────────────────────────────────────────
+
+@trades_router.get("/export")
+async def export_trades_csv(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    days: int = Query(365, ge=1, le=3650),
+):
+    """Export closed trades as a CSV for tax/accounting.
+
+    Adds column: Account Type (human readable trader_class) after existing columns.
+    """
+    ctx = await SharedMemory.load(current_user.id, db)
+    trader_class = getattr(ctx, "trader_class", "complete_novice") or "complete_novice"
+    account_type = _human_account_type(trader_class)
+
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await db.execute(
+        select(Trade).where(
+            Trade.user_id == current_user.id,
+            Trade.status == "closed",
+            Trade.closed_at.isnot(None),
+            Trade.closed_at >= since,
+        ).order_by(Trade.closed_at.asc())
+    )
+    trades = result.scalars().all()
+
+    # Existing columns (stable): Date, Symbol, Side, Qty, Entry, Exit, PnL_GBP, PnL_Pct
+    headers = [
+        "Date",
+        "Symbol",
+        "Side",
+        "Quantity",
+        "Entry Price",
+        "Exit Price",
+        "PnL (GBP)",
+        "PnL (%)",
+        "Account Type",
+    ]
+
+    def _iter_rows():
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(headers)
+        yield buf.getvalue()
+        buf.seek(0)
+        buf.truncate(0)
+
+        for t in trades:
+            pnl = float((t.profit or 0) - (t.loss or 0))
+            w.writerow(
+                [
+                    t.closed_at.date().isoformat() if t.closed_at else "",
+                    t.symbol,
+                    t.side,
+                    t.quantity,
+                    t.entry_price,
+                    t.exit_price or "",
+                    round(pnl, 2),
+                    round(float(t.profit_percent or 0), 4) if t.profit_percent is not None else "",
+                    account_type,
+                ]
+            )
+            yield buf.getvalue()
+            buf.seek(0)
+            buf.truncate(0)
+
+    filename = f"unitrader-trades-{current_user.id}-{datetime.now(timezone.utc).date().isoformat()}.csv"
+    return StreamingResponse(
+        _iter_rows(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@trades_router.post("/{trade_id}/feedback")
+async def submit_trade_feedback(
+    trade_id: str = Path(...),
+    body: TradeFeedbackRequest = ...,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Validate live trade ownership if needed
+    live_trade_id: str | None = None
+    paper_trade_id: str | None = None
+
+    if body.is_paper:
+        paper_trade_id = str(trade_id)
+    else:
+        live_trade_id = str(trade_id)
+        res = await db.execute(
+            select(Trade).where(Trade.id == live_trade_id, Trade.user_id == current_user.id)
+        )
+        t = res.scalar_one_or_none()
+        if not t:
+            raise HTTPException(status_code=404, detail="trade_not_found")
+
+    fb = TradeFeedback(
+        user_id=current_user.id,
+        trade_id=live_trade_id,
+        paper_trade_id=paper_trade_id,
+        rating=int(body.rating),
+        comment=(body.comment or None),
+    )
+    db.add(fb)
+
+    # Recalculate trust_score = round(positive/total*100)
+    counts = await db.execute(
+        select(
+            func.count(TradeFeedback.id),
+            func.sum(case((TradeFeedback.rating == 1, 1), else_=0)),
+        ).where(TradeFeedback.user_id == current_user.id)
+    )
+    total_count, positive_count = counts.one()
+    total = int(total_count or 0)
+    positive = int(positive_count or 0)
+    trust_score = int(round((positive / total) * 100)) if total > 0 else 100
+
+    settings_row = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == current_user.id)
+    )
+    settings = settings_row.scalar_one_or_none()
+    if not settings:
+        settings = UserSettings(user_id=current_user.id)
+        db.add(settings)
+
+    settings.trust_score = trust_score
+
+    audit_log = AuditLog(
+        user_id=current_user.id,
+        event_type="trade_feedback",
+        event_details={
+            "rating": int(body.rating),
+            "comment_length": len(body.comment or ""),
+            "trade_id": str(trade_id),
+        },
+    )
+    db.add(audit_log)
+
+    await db.commit()
+
+    # Ensure agents see updated trust_score quickly
+    SharedMemory.invalidate(current_user.id)
+
+    return {"success": True, "new_trust_score": trust_score}

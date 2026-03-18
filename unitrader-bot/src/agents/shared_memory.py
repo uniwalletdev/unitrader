@@ -51,6 +51,7 @@ class SharedContext:
     max_daily_loss_pct: float              # From UserSettings.max_daily_loss
     onboarding_complete: bool
     trader_class: str = "complete_novice"  # Detected trader profile
+    trust_score: int = 100                # 0–100 derived from trade_feedback
     onboarding_profile: dict = field(default_factory=dict)
     favourite_symbols: list[str] = field(default_factory=list)
     total_trades: int = 0
@@ -79,6 +80,7 @@ class SharedContext:
             max_daily_loss_pct=5.0,
             onboarding_complete=False,
             trader_class="complete_novice",
+            trust_score=100,
             onboarding_profile={},
             favourite_symbols=[],
             total_trades=0,
@@ -262,6 +264,7 @@ class SharedMemory:
                 max_daily_loss_pct=settings.max_daily_loss or 5.0,
                 onboarding_complete=False,  # Default — extend with user_settings table if needed
                 trader_class=settings.trader_class or "complete_novice",
+                trust_score=int(getattr(settings, "trust_score", 100) or 100),
                 onboarding_profile={},  # Could store as JSON in user_settings
                 favourite_symbols=favourite_symbols,
                 total_trades=trade_stats["total_trades"],

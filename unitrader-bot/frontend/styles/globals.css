@@ -35,7 +35,7 @@
 @layer components {
   /* Touch targets for mobile - minimum 44x44 for accessibility */
   .touch-target {
-    @apply min-h-11 md:min-h-auto min-w-11 md:min-w-auto;
+    @apply min-h-11 md:min-h-0 min-w-11 md:min-w-0;
   }
 
   .btn-primary {

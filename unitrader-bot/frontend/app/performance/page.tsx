@@ -9,6 +9,7 @@ import {
   Share2,
   ThumbsDown,
   ThumbsUp,
+  X,
 } from "lucide-react";
 
 type TraderClass =
@@ -86,6 +87,15 @@ const BRAND_NAMES: Record<string, string> = {
   "SOL/USD": "Solana",
 };
 
+const ACCOUNT_TYPE: Record<TraderClass, string> = {
+  complete_novice: "Beginner investor",
+  curious_saver: "Passive saver",
+  self_taught: "Self-taught trader",
+  experienced: "Experienced trader",
+  semi_institutional: "Institutional trader",
+  crypto_native: "Crypto trader",
+};
+
 function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
@@ -155,6 +165,13 @@ export default function PerformancePage() {
   const [summary, setSummary] = useState<PerfSummary | null>(null);
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [taxOpen, setTaxOpen] = useState(false);
+  const [feedbackStats, setFeedbackStats] = useState<{
+    positive_pct: number;
+    total_rated: number;
+    trust_score: number;
+    recent_comments: string[];
+  } | null>(null);
 
   const load = async (days: number) => {
     setLoading(true);
@@ -187,6 +204,13 @@ export default function PerformancePage() {
     load(period);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [period]);
+
+  useEffect(() => {
+    api
+      .get("/api/performance/feedback-stats")
+      .then((res) => setFeedbackStats(res.data))
+      .catch(() => setFeedbackStats(null));
+  }, []);
 
   const layout: "novice" | "self" | "pro" | "crypto" = useMemo(() => {
     if (traderClass === "complete_novice" || traderClass === "curious_saver") return "novice";
@@ -247,7 +271,7 @@ export default function PerformancePage() {
               Refresh
             </button>
 
-            <button type="button" onClick={() => {}} className="btn-outline text-xs">
+            <button type="button" onClick={() => setTaxOpen(true)} className="btn-outline text-xs">
               <Download size={14} /> Tax export
             </button>
             <button type="button" onClick={() => {}} className="btn-outline text-xs">
@@ -343,6 +367,78 @@ export default function PerformancePage() {
                   </tbody>
                 </table>
               </div>
+            </div>
+
+            {/* Your influence on Apex */}
+            <div className="rounded-2xl border border-dark-800 bg-dark-950 p-5">
+              <div className="text-sm font-semibold text-white">Your influence on Apex</div>
+              {feedbackStats ? (
+                <>
+                  {feedbackStats.total_rated === 0 ? (
+                    <div className="mt-2 text-sm text-dark-200">
+                      You haven&apos;t rated any trades yet. Head to History to give Apex feedback on its decisions.
+                      <div className="mt-3">
+                        <a
+                          href="/app?tab=history"
+                          className="inline-flex items-center rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-semibold text-black hover:bg-brand-400"
+                        >
+                          Go to History
+                        </a>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="mt-2 text-sm text-dark-200">
+                        You have rated {feedbackStats.total_rated} of Apex&apos;s decisions.{" "}
+                        {feedbackStats.positive_pct.toFixed(1)}% were rated positively. Apex uses your ratings to refine
+                        its strategy for you.
+                      </div>
+                      <div className="mt-4">
+                        <div className="flex items-center justify-between text-xs text-dark-300">
+                          <span>Trust score</span>
+                          <span>{feedbackStats.trust_score}/100</span>
+                        </div>
+                        <div className="mt-1 h-2 w-full rounded-full bg-dark-900">
+                          <div
+                            className="h-2 rounded-full"
+                            style={{
+                              width: `${Math.max(0, Math.min(100, feedbackStats.trust_score))}%`,
+                              backgroundColor:
+                                feedbackStats.trust_score > 70
+                                  ? "#22c55e"
+                                  : feedbackStats.trust_score >= 40
+                                  ? "#f59e0b"
+                                  : "#ef4444",
+                            }}
+                          />
+                        </div>
+                      </div>
+                      {feedbackStats.recent_comments && feedbackStats.recent_comments.length > 0 && (
+                        <div className="mt-3">
+                          <div className="text-xs font-semibold text-dark-300">Recent feedback</div>
+                          <div className="mt-1 flex flex-wrap gap-1.5">
+                            {feedbackStats.recent_comments.map((c, idx) => (
+                              <span
+                                key={idx}
+                                className="max-w-xs truncate rounded-full bg-dark-900 px-2 py-1 text-[11px] text-dark-200"
+                                title={c}
+                              >
+                                {c.length > 60 ? `${c.slice(0, 57)}…` : c}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  <div className="mt-3 text-[11px] text-dark-500">
+                    The more you rate, the more personalised Apex becomes. Your feedback directly changes how Apex trades
+                    for you.
+                  </div>
+                </>
+              ) : (
+                <div className="mt-2 text-sm text-dark-400">Loading your feedback influence…</div>
+              )}
             </div>
           </div>
         )}
@@ -512,6 +608,63 @@ export default function PerformancePage() {
           </div>
         )}
       </div>
+
+      {/* Tax summary modal (Phase 27) */}
+      {taxOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div className="w-full max-w-lg rounded-2xl border border-dark-800 bg-dark-950 p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-white">Tax export</div>
+                <div className="mt-1 text-xs text-dark-400">Account type: {ACCOUNT_TYPE[traderClass]}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTaxOpen(false)}
+                className="rounded-lg p-2 text-dark-400 hover:bg-dark-900 hover:text-white"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="mt-4 rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-200">
+              <div className="flex justify-between gap-3">
+                <span className="text-dark-400">Period</span>
+                <span className="font-semibold text-white">{periodLabel}</span>
+              </div>
+              <div className="mt-2 flex justify-between gap-3">
+                <span className="text-dark-400">Total trades</span>
+                <span className="font-semibold tabular-nums text-white">{summary?.total_trades ?? 0}</span>
+              </div>
+              <div className="mt-2 flex justify-between gap-3">
+                <span className="text-dark-400">Total return (GBP)</span>
+                <span className={clsx("font-semibold tabular-nums", monthPnl >= 0 ? "text-green-300" : "text-red-300")}>
+                  {formatGBP(monthPnl)}
+                </span>
+              </div>
+              <div className="mt-2 text-xs text-dark-400">Account type: {ACCOUNT_TYPE[traderClass]}</div>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button type="button" onClick={() => setTaxOpen(false)} className="btn-outline">
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+                  const url = `${base}/api/trades/export?days=${period}`;
+                  window.open(url, "_blank");
+                }}
+                className="btn-primary"
+              >
+                Download CSV
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

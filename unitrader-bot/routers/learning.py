@@ -7,12 +7,12 @@ a manual trigger for operator/admin use.
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import AgentInstruction, AgentOutput, Pattern, User
+from models import AgentInstruction, AgentOutput, BlogPost, Pattern, User
 from routers.auth import get_current_user
 from src.services.learning_hub import (
     get_content_insights,
@@ -250,3 +250,75 @@ async def trigger_learning_cycle(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Learning cycle failed: {exc}",
         )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /api/learning/articles
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/articles")
+async def list_learning_articles(
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(BlogPost)
+        .where(BlogPost.category == "learning", BlogPost.is_published == True)  # noqa: E712
+        .order_by(BlogPost.published_at.desc().nullslast(), BlogPost.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    posts = result.scalars().all()
+    return {
+        "count": len(posts),
+        "articles": [
+            {
+                "title": p.title,
+                "slug": p.slug,
+                "category": p.category,
+                "topic": p.topic,
+                "reading_time_minutes": p.estimated_read_time,
+                "word_count": p.word_count,
+                "related_concept": p.related_concept,
+                "published_at": p.published_at.isoformat() if p.published_at else None,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+            }
+            for p in posts
+        ],
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GET /api/learning/articles/{slug}
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/articles/{slug}")
+async def get_learning_article(
+    slug: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    res = await db.execute(
+        select(BlogPost).where(
+            BlogPost.slug == slug,
+            BlogPost.category == "learning",
+            BlogPost.is_published == True,  # noqa: E712
+        )
+    )
+    p = res.scalar_one_or_none()
+    if not p:
+        raise HTTPException(status_code=404, detail="article_not_found")
+    return {
+        "title": p.title,
+        "slug": p.slug,
+        "category": p.category,
+        "topic": p.topic,
+        "content": p.content,
+        "reading_time_minutes": p.estimated_read_time,
+        "word_count": p.word_count,
+        "related_concept": p.related_concept,
+        "published_at": p.published_at.isoformat() if p.published_at else None,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    }

@@ -118,7 +118,7 @@ function AIAnalysisCard({
 
 export default function TradePage() {
   const searchParams = useSearchParams();
-  const welcome = searchParams.get("welcome") === "true";
+  const welcome = searchParams?.get("welcome") === "true";
 
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [trust, setTrust] = useState<TrustLadder | null>(null);

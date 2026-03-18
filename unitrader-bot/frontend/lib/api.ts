@@ -72,6 +72,8 @@ export const tradingApi = {
     api.post("/api/trading/execute", { symbol, exchange }, { timeout: 90000 }),
   closePosition: (trade_id: string) =>
     api.post("/api/trading/close-position", { trade_id }),
+  submitFeedback: (trade_id: string, payload: { rating: 1 | -1; comment: string | null; is_paper: boolean }) =>
+    api.post(`/api/trades/${trade_id}/feedback`, payload),
 };
 
 // ── Exchange Keys ────────────────────────────────────────────────────────────

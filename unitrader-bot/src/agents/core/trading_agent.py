@@ -618,6 +618,13 @@ class TradingAgent:
             risk_guidance=risk_guidance,
             trust_guidance=trust_guidance,
         )
+        if getattr(context, "trust_score", 100) < 50:
+            system_prompt += (
+                "\n\n"
+                "This user has rated less than half of your decisions positively.\n"
+                "Be more conservative, explain every decision more carefully,\n"
+                "and prioritise capital preservation over returns.\n"
+            )
 
         # Build user prompt with current market data
         user_prompt = self._build_analysis_user_prompt(symbol, market_data)

@@ -49,6 +49,7 @@ from routers.whatsapp_webhooks import (
 )
 from src.agents.orchestrator import get_orchestrator
 from src.agents.marketing.content_writer import generate_weekly_posts, generate_monthly_guide
+from backend.agents.content_agent import ContentAgent
 from src.services.trade_monitoring import monitor_loop
 from src.services.email_sequences import send_trial_emails_for_all_users
 from src.services.learning_hub import learning_hub
@@ -342,6 +343,7 @@ async def _content_scheduler() -> None:
     last_daily: datetime | None = None
     last_weekly: datetime | None = None
     last_monthly: datetime | None = None
+    last_learning_weekly: datetime | None = None
 
     while True:
         try:
@@ -387,6 +389,38 @@ async def _content_scheduler() -> None:
                     last_monthly = now
                 except Exception as exc:
                     logger.error("Monthly guide generation failed: %s", exc)
+
+            # ── Weekly learning articles (Phase 14): Monday 06:00 UTC ─────
+            is_monday_6 = now.weekday() == 0 and now.hour == 6
+            if last_learning_weekly is None or (is_monday_6 and (now - last_learning_weekly).total_seconds() >= 86_400):
+                try:
+                    async with AsyncSessionLocal() as db:
+                        agent = ContentAgent()
+                        # 1) Weekly recap
+                        await agent.generate_learning_article("weekly_recap", [])
+
+                        # 2) Most-used indicator from last week's audit logs (best-effort)
+                        since = now - timedelta(days=7)
+                        res = await db.execute(
+                            select(AuditLog.event_details)
+                            .where(AuditLog.event_type == "trade_decision", AuditLog.timestamp >= since)
+                        )
+                        indicator_counts: dict[str, int] = {}
+                        for (d,) in res.all():
+                            if not isinstance(d, dict):
+                                continue
+                            ind = d.get("indicator") or d.get("primary_indicator")
+                            if not ind:
+                                continue
+                            k = str(ind).strip()
+                            indicator_counts[k] = indicator_counts.get(k, 0) + 1
+                        most_used = max(indicator_counts.items(), key=lambda kv: kv[1])[0] if indicator_counts else "RSI"
+                        await agent.generate_learning_article("concept_explanation", [most_used])
+
+                    logger.info("Content scheduler: generated weekly learning articles")
+                    last_learning_weekly = now
+                except Exception as exc:
+                    logger.error("Weekly learning article generation failed: %s", exc)
 
         except Exception as exc:
             logger.error("Content scheduler outer error: %s", exc)
@@ -619,6 +653,7 @@ app.include_router(health.router)
 app.include_router(auth.router)
 app.include_router(trading_router.router)
 app.include_router(trading_router.performance_router)
+app.include_router(trading_router.trades_router)
 app.include_router(exchanges_router.router)
 app.include_router(chat_router.router)
 app.include_router(content_router.router)

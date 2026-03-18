@@ -1,8 +1,16 @@
 import type { AppProps } from "next/app";
 import { ClerkProvider } from "@clerk/nextjs";
+import { useEffect } from "react";
+import { StatusBar, Style } from "@capacitor/status-bar";
 import "@/styles/globals.css";
+import { isNative } from "@/hooks/useCapacitor";
 
 export default function App({ Component, pageProps }: AppProps) {
+  useEffect(() => {
+    if (!isNative) return;
+    StatusBar.setStyle({ style: Style.Dark }).catch(() => {});
+  }, []);
+
   return (
     <ClerkProvider
       publishableKey={process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY!}

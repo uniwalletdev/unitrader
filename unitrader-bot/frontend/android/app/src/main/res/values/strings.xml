@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Unitrader</string>
+    <string name="title_activity_main">Unitrader</string>
+    <string name="package_name">ai.unitrader.app</string>
+    <string name="custom_url_scheme">ai.unitrader.app</string>
+</resources>

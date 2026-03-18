@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronUp, X } from "lucide-react";
 import { formatPrice } from "@/utils/formatPrice";
+import { Haptics, ImpactStyle } from "@capacitor/haptics";
+import { isNative } from "@/hooks/useCapacitor";
 
 type TraderClass =
   | "complete_novice"
@@ -445,6 +447,9 @@ export default function TradeConfirmModal({
                 setError(null);
                 setIsSubmitting(true);
                 try {
+                  if (isNative) {
+                    await Haptics.impact({ style: ImpactStyle.Medium });
+                  }
                   await onConfirm();
                   onClose();
                 } catch (e: any) {
