@@ -11,6 +11,7 @@ import {
   ThumbsUp,
   X,
 } from "lucide-react";
+import RiskWarning from "@/components/layout/RiskWarning";
 
 type TraderClass =
   | "complete_novice"
@@ -233,7 +234,9 @@ export default function PerformancePage() {
   }
 
   return (
-    <div className="min-h-screen bg-dark-950 px-4 py-6 md:px-6">
+    <div className="min-h-screen bg-dark-950">
+      <RiskWarning variant="bar" />
+      <div className="px-4 py-6 md:px-6">
       <div className="mx-auto max-w-6xl space-y-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <div>
@@ -665,6 +668,7 @@ export default function PerformancePage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }

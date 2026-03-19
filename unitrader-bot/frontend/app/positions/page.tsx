@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { api, authApi, tradingApi } from "@/lib/api";
+import RiskWarning from "@/components/layout/RiskWarning";
 import { useLivePrice } from "@/hooks/useLivePrice";
 import { formatPrice } from "@/utils/formatPrice";
 
@@ -330,6 +331,7 @@ export default function PositionsPage() {
 
   return (
     <div className="min-h-screen bg-dark-950">
+      <RiskWarning variant="bar" />
       <div className="border-b border-dark-800 bg-dark-950 px-4 py-4 md:px-6">
         <div className="flex items-center justify-between gap-3">
           <div>

@@ -18,6 +18,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import { exchangeApi, type ConnectedExchange } from "@/lib/api";
+import NeverHoldBanner from "@/components/layout/NeverHoldBanner";
 
 const EXCHANGES = [
   {
@@ -217,6 +218,11 @@ export default function ConnectExchangePage() {
                 </p>
               </div>
             </div>
+          </div>
+
+          {/* Never-hold trust bar */}
+          <div className="mb-8">
+            <NeverHoldBanner />
           </div>
 
           {/* Global message */}

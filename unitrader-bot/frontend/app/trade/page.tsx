@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { Loader2, CheckCircle } from "lucide-react";
 import { api, authApi, tradingApi } from "@/lib/api";
 
 import ApexOnboardingChat from "@/components/onboarding/ApexOnboardingChat";
@@ -14,6 +14,8 @@ import PriceChart from "@/components/trade/PriceChart";
 import ExplanationToggle from "@/components/trade/ExplanationToggle";
 import TradeConfirmModal from "@/components/trade/TradeConfirmModal";
 import CircuitBreakerAlert from "@/components/trade/CircuitBreakerAlert";
+import RiskWarning from "@/components/layout/RiskWarning";
+import NeverHoldBanner from "@/components/layout/NeverHoldBanner";
 
 type TraderClass =
   | "complete_novice"
@@ -90,6 +92,34 @@ function RiskSection({ variant }: { variant: "plain" | "pct" }) {
   );
 }
 
+function RawDataColumn({ analysis }: { analysis: AnalysisResult }) {
+  return (
+    <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
+      <div className="mb-3 text-xs font-semibold text-dark-400">What the analysis shows</div>
+      <div className="space-y-2 font-mono text-xs text-dark-200">
+        {analysis.rsi != null && <div>RSI: <span className="text-white">{analysis.rsi}</span></div>}
+        {analysis.macd != null && (
+          <div>MACD: <span className={analysis.macd > 0 ? "text-green-400" : "text-red-400"}>
+            {analysis.macd > 0 ? "Positive crossover" : "Negative crossover"}
+          </span></div>
+        )}
+        {analysis.volume_ratio != null && (
+          <div>Volume: <span className="text-white">{analysis.volume_ratio}x vs 30d avg</span></div>
+        )}
+        {analysis.sentiment_score != null && (
+          <div>Sentiment: <span className="text-white">{analysis.sentiment_score}</span></div>
+        )}
+        {analysis.days_to_earnings != null && (
+          <div>Earnings: <span className="text-white">{analysis.days_to_earnings} days</span></div>
+        )}
+      </div>
+      <p className="mt-3 text-[10px] leading-relaxed text-dark-500">
+        Institutional-grade analysis. Previously only available to hedge funds with dedicated trading desks.
+      </p>
+    </div>
+  );
+}
+
 function AIAnalysisCard({
   children,
   title = "AI analysis",
@@ -99,18 +129,32 @@ function AIAnalysisCard({
   title?: string;
   analysis: AnalysisResult | null;
 }) {
+  if (analysis) {
+    return (
+      <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 md:p-5">
+        <div className="mb-3 text-sm font-semibold text-white">{title}</div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* Left — raw data */}
+          <RawDataColumn analysis={analysis} />
+          {/* Right — Apex verdict */}
+          <div className="rounded-xl border border-[#22c55e]/20 bg-[#22c55e]/5 p-4">
+            <div className="mb-3 text-xs font-semibold text-[#22c55e]">Apex&apos;s verdict</div>
+            <div className="mb-3 text-sm text-dark-200">
+              {analysis.message || analysis.reasoning || "Analysis ready."}
+            </div>
+            {children}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 md:p-5">
       <div className="mb-3 text-sm font-semibold text-white">{title}</div>
-      {analysis ? (
-        <div className="mb-4 rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-200">
-          {analysis.message || analysis.reasoning || "Analysis ready."}
-        </div>
-      ) : (
-        <div className="mb-4 rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-400">
-          Run analysis to see Apex's reasoning here.
-        </div>
-      )}
+      <div className="mb-4 rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-400">
+        Run analysis to see Apex&apos;s reasoning here.
+      </div>
       {children}
     </div>
   );
@@ -272,7 +316,9 @@ function TradePage() {
             : "E";
 
   return (
-    <div className="min-h-screen bg-dark-950 px-4 py-6 md:px-6">
+    <div className="min-h-screen bg-dark-950">
+      <RiskWarning variant="bar" />
+      <div className="px-4 py-6 md:px-6">
       {showSimulatorModal && <WhatIfSimulator mode="modal" />}
 
       {toast && (
@@ -285,6 +331,14 @@ function TradePage() {
           )}
         </div>
       )}
+
+      {/* Page header */}
+      <div className="mb-4 flex items-center gap-3">
+        <h1 className="text-lg font-bold text-white">AI Trade Execution</h1>
+        <span className="rounded-full border border-[#22c55e]/30 bg-[#22c55e]/10 px-2 py-0.5 text-[10px] font-semibold text-[#22c55e]">
+          Same AI as hedge funds
+        </span>
+      </div>
 
       {/* Circuit breaker */}
       <div className="mb-4">
@@ -313,6 +367,11 @@ function TradePage() {
           />
         </div>
       )}
+
+      {/* Never-hold trust bar */}
+      <div className="mb-4">
+        <NeverHoldBanner />
+      </div>
 
       {/* Layout A */}
       {layout === "A" && (
@@ -596,6 +655,7 @@ function TradePage() {
         isPaper={isPaper}
         traderClass={traderClass}
       />
+      </div>
     </div>
   );
 }
