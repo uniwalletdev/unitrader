@@ -860,6 +860,8 @@ export default function AppPage() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [syncError, setSyncError] = useState(false);
+  const [syncRetry, setSyncRetry] = useState(0);
   const [showTrialModal, setShowTrialModal] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [isMobileView, setIsMobileView] = useState(false);
@@ -898,11 +900,14 @@ export default function AppPage() {
   } = useTrialStatus({ skip: !authChecked });
 
   // ── Auth ─────────────────────────────────────────────────────────────────
+  const syncingRef = useRef(false);
   useEffect(() => {
-    if (!isLoaded) return;
+    if (!isLoaded || syncingRef.current) return;
     if (!isSignedIn) { router.replace("/login"); return; }
+    syncingRef.current = true;
 
     (async () => {
+      // Clear stale token before trying /me so the 401 interceptor doesn't redirect
       const stored = localStorage.getItem("access_token");
       if (stored) {
         try {
@@ -920,13 +925,18 @@ export default function AppPage() {
         if (res.data.status === "needs_setup") { router.replace("/onboarding"); return; }
         localStorage.setItem("access_token", res.data.access_token);
         setUser(res.data.user);
-      } catch {
-        router.replace("/login");
+      } catch (err) {
+        console.error("Clerk sync failed:", err);
+        // Don't redirect to /login if Clerk says we're signed in — that causes a loop.
+        // Instead just let the user see the error state.
+        setSyncError(true);
       } finally {
         setAuthChecked(true);
+        syncingRef.current = false;
       }
     })();
-  }, [isLoaded, isSignedIn, getToken, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded, isSignedIn, syncRetry]);
 
   // ── Handle Stripe success redirect (?upgraded=true) ───────────────────────
   useEffect(() => {
@@ -961,6 +971,31 @@ export default function AppPage() {
     return (
       <div className="flex h-screen items-center justify-center bg-dark-950 text-dark-400">
         <RefreshCw size={20} className="animate-spin" />
+      </div>
+    );
+  }
+
+  if (syncError && !user) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-dark-950 text-dark-400">
+        <p className="text-lg">Unable to sync your account. Please try again.</p>
+        <button
+          onClick={() => {
+            setSyncError(false);
+            setAuthChecked(false);
+            syncingRef.current = false;
+            setSyncRetry((n) => n + 1);
+          }}
+          className="rounded bg-brand-500 px-4 py-2 text-white hover:bg-brand-600"
+        >
+          Retry
+        </button>
+        <button
+          onClick={logout}
+          className="text-sm text-dark-500 hover:text-dark-300"
+        >
+          Sign out
+        </button>
       </div>
     );
   }

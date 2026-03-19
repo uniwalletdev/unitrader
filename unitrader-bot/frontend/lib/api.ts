@@ -16,11 +16,13 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Auto-redirect to login on 401
+// Auto-redirect to login on 401 (skip auth endpoints to avoid redirect loops)
 api.interceptors.response.use(
   (res) => res,
   (err) => {
-    if (err.response?.status === 401 && typeof window !== "undefined") {
+    const url = err.config?.url || "";
+    const isAuthEndpoint = url.includes("/clerk-sync") || url.includes("/clerk-setup");
+    if (err.response?.status === 401 && typeof window !== "undefined" && !isAuthEndpoint) {
       localStorage.removeItem("access_token");
       window.location.href = "/login";
     }

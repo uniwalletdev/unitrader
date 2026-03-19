@@ -45,7 +45,8 @@ export default function OnboardingPage() {
         setSyncing(false);
       }
     })();
-  }, [isLoaded, isSignedIn, getToken, router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoaded, isSignedIn]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
