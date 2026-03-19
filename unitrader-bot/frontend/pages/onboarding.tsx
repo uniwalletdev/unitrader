@@ -6,8 +6,8 @@
 import { useAuth } from "@clerk/nextjs";
 import Head from "next/head";
 import { useRouter } from "next/router";
-import { useState, useEffect } from "react";
-import { ArrowRight, Zap } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { ArrowRight, Zap, RefreshCw } from "lucide-react";
 import { authApi } from "@/lib/api";
 
 // ─────────────────────────────────────────────
@@ -117,10 +117,35 @@ export default function OnboardingPage() {
 
   const [step, setStep] = useState(0); // 0 = context, 1 = name AI
   const [aiName, setAiName] = useState("");
-  const [error, setError] = useState("");
+  const [formError, setFormError] = useState("");
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(true);
+  const [syncError, setSyncError] = useState("");
   const [userId, setUserId] = useState<string | null>(null);
+
+  const runSync = useCallback(async () => {
+    setSyncing(true);
+    setSyncError("");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("No auth token — please sign in again.");
+      const res = await authApi.clerkSync(token);
+      if (res.data.status === "logged_in") {
+        localStorage.setItem("access_token", res.data.access_token);
+        router.replace("/app");
+      } else if (res.data.status === "needs_setup") {
+        setUserId(res.data.user_id);
+        setSyncing(false);
+      } else {
+        setSyncError("Unexpected server response. Please try again.");
+        setSyncing(false);
+      }
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setSyncError(msg || "Could not connect to the server. Please try again.");
+      setSyncing(false);
+    }
+  }, [getToken, router]);
 
   // On mount, sync Clerk session with our backend
   useEffect(() => {
@@ -129,37 +154,21 @@ export default function OnboardingPage() {
       router.replace("/register");
       return;
     }
-
-    (async () => {
-      try {
-        const token = await getToken();
-        const res = await authApi.clerkSync(token!);
-
-        if (res.data.status === "logged_in") {
-          // User already has an AI name — go straight to dashboard
-          localStorage.setItem("access_token", res.data.access_token);
-          router.replace("/app");
-        } else if (res.data.status === "needs_setup") {
-          setUserId(res.data.user_id);
-          setSyncing(false);
-        }
-      } catch (err: unknown) {
-        const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-        setError(msg || "Sync failed. Please try refreshing.");
-        setSyncing(false);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    runSync();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded, isSignedIn]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userId) return;
-    setError("");
+    if (!userId) {
+      setFormError("Session expired — please refresh the page.");
+      return;
+    }
+    setFormError("");
 
     const trimmed = aiName.trim();
     if (!/^[A-Za-z0-9_]{2,20}$/.test(trimmed)) {
-      setError("2–20 characters, letters/numbers/underscores only.");
+      setFormError("2–20 characters, letters/numbers/underscores only.");
       return;
     }
 
@@ -170,7 +179,7 @@ export default function OnboardingPage() {
       router.replace("/app");
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
-      setError(msg || "Something went wrong.");
+      setFormError(msg || "Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -182,6 +191,27 @@ export default function OnboardingPage() {
         <div className="text-center">
           <div className="w-10 h-10 border-4 border-brand-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="text-dark-400">Setting up your account…</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show sync error with retry button — before any step
+  if (syncError) {
+    return (
+      <div className="min-h-screen bg-dark-950 flex items-center justify-center px-4">
+        <div className="w-full max-w-sm text-center">
+          <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-5 text-sm text-red-300">
+            <p className="font-semibold mb-1">Could not connect</p>
+            <p className="text-xs text-red-400">{syncError}</p>
+          </div>
+          <button
+            type="button"
+            onClick={runSync}
+            className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-brand-500"
+          >
+            <RefreshCw size={15} /> Try again
+          </button>
         </div>
       </div>
     );
@@ -241,8 +271,8 @@ export default function OnboardingPage() {
                 autoFocus
               />
 
-              {error && (
-                <p className="text-red-400 text-sm">{error}</p>
+              {formError && (
+                <p className="text-red-400 text-sm">{formError}</p>
               )}
 
               <button
