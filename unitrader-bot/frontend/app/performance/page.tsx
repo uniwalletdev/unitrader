@@ -408,7 +408,7 @@ export default function PerformancePage() {
                               width: `${Math.max(0, Math.min(100, feedbackStats.trust_score))}%`,
                               backgroundColor:
                                 feedbackStats.trust_score > 70
-                                  ? "#22c55e"
+                                  ? "#0adb6a"
                                   : feedbackStats.trust_score >= 40
                                   ? "#f59e0b"
                                   : "#ef4444",

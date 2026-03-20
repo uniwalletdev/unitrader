@@ -14,15 +14,7 @@ const FOOTER_TEXT =
 export default function RiskWarning({ variant }: RiskWarningProps) {
   if (variant === "bar") {
     return (
-      <div
-        className="w-full border-b px-4 py-2 text-center"
-        style={{
-          backgroundColor: "#0d1018",
-          borderColor: "#1e2330",
-          fontSize: 10,
-          color: "#4b5563",
-        }}
-      >
+      <div className="w-full border-b border-dark-800 bg-[#0d1117] px-4 py-2 text-center text-[10px] text-dark-500">
         {BAR_TEXT}
       </div>
     );
@@ -30,15 +22,7 @@ export default function RiskWarning({ variant }: RiskWarningProps) {
 
   if (variant === "inline") {
     return (
-      <div
-        className="rounded-lg border-l-4 px-4 py-3"
-        style={{
-          borderColor: "#f59e0b",
-          backgroundColor: "rgba(245,158,11,0.05)",
-          fontSize: 11,
-          color: "#4b5563",
-        }}
-      >
+      <div className="rounded-xl border-l-4 border-amber-500 bg-amber-500/[0.05] px-4 py-3 text-[11px] text-dark-500">
         {BAR_TEXT}
       </div>
     );
@@ -46,10 +30,7 @@ export default function RiskWarning({ variant }: RiskWarningProps) {
 
   // variant === "footer"
   return (
-    <p
-      className="leading-relaxed"
-      style={{ fontSize: 10, color: "#374151" }}
-    >
+    <p className="text-[10px] leading-relaxed text-dark-600">
       {FOOTER_TEXT}
     </p>
   );

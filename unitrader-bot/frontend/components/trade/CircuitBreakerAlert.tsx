@@ -65,12 +65,7 @@ export default function CircuitBreakerAlert({
   return (
     <div className="fixed top-0 left-0 right-0 z-50 w-full">
       {/* Red Banner */}
-      <div
-        className="w-full px-4 py-4 border-l-4 border-red-500"
-        style={{
-          backgroundColor: "rgba(239, 68, 68, 0.1)",
-        }}
-      >
+      <div className="w-full px-4 py-4 border-l-4 border-red-500 bg-red-500/10">
         <div className="max-w-6xl mx-auto">
           {/* Header with icon and text */}
           <div className="flex items-start gap-3 mb-3">
@@ -95,14 +90,14 @@ export default function CircuitBreakerAlert({
           <div className="flex gap-2 flex-wrap">
             <button
               onClick={() => router.push("/settings#trading-safety")}
-              className="px-4 py-2 bg-red-500 text-white text-sm font-medium rounded hover:bg-red-600 transition-colors"
+              className="px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-xl hover:bg-red-600 transition-colors"
             >
               Adjust my limit
             </button>
             <button
               onClick={() => setShowConfirm(true)}
               disabled={isLoading}
-              className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
             >
               {isLoading ? (
                 <>
@@ -120,25 +115,25 @@ export default function CircuitBreakerAlert({
       {/* Confirmation Dialog */}
       {showConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-gray-900 rounded-lg p-6 max-w-sm mx-4 border border-gray-800">
+          <div className="bg-[#0d1117] rounded-2xl p-6 max-w-sm mx-4 border border-dark-800">
             <h3 className="text-lg font-semibold text-white mb-2">
               Resume trading?
             </h3>
-            <p className="text-gray-400 text-sm mb-4">
+            <p className="text-dark-400 text-sm mb-4">
               Are you sure? This overrides your safety limit.
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => setShowConfirm(false)}
                 disabled={isLoading}
-                className="flex-1 px-4 py-2 bg-gray-800 text-gray-200 text-sm font-medium rounded hover:bg-gray-700 transition-colors disabled:opacity-50"
+                className="flex-1 px-4 py-2 bg-dark-800 text-dark-200 text-sm font-medium rounded-xl hover:bg-dark-700 transition-colors disabled:opacity-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleResume}
                 disabled={isLoading}
-                className="flex-1 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                className="flex-1 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
               >
                 {isLoading ? (
                   <>

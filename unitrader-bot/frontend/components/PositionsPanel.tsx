@@ -60,29 +60,26 @@ export default function PositionsPanel({ onNavigate }: { onNavigate?: (tab: stri
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20 text-sm text-dark-500">
-        <Loader2 size={16} className="mr-2 animate-spin" /> Loading positions...
+        <Loader2 size={15} className="mr-2 animate-spin text-brand-400" /> Loading positions...
       </div>
     );
   }
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 md:gap-4">
-        <div className="flex items-center gap-2">
-          <TrendingUp size={16} className="md:size-[18px] text-brand-400" />
-          <h1 className="text-base md:text-xl font-bold text-white">Open Positions</h1>
-          <span className="rounded-full bg-dark-800 px-2 md:px-2.5 py-0.5 text-xs font-medium text-dark-300">
-            {positions.length}
-          </span>
+    <div className="space-y-5 animate-fade-in">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="page-title">Open Positions</h1>
+          <p className="page-subtitle">{positions.length} active trade{positions.length !== 1 ? 's' : ''}</p>
         </div>
-        <button onClick={load} className="btn-outline gap-2 py-2 text-xs touch-target w-full md:w-auto">
+        <button onClick={load} className="btn-ghost gap-2">
           <RefreshCw size={13} /> Refresh
         </button>
       </div>
 
       {message && (
-        <div className={`flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${
-          message.type === "success" ? "bg-brand-500/10 text-brand-400" : "bg-red-500/10 text-red-400"
+        <div className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs ${
+          message.type === "success" ? "bg-brand-500/[0.06] border border-brand-500/15 text-brand-400" : "bg-red-500/[0.04] border border-red-500/15 text-red-400"
         }`}>
           {message.type === "success" ? <TrendingUp size={13} /> : <AlertTriangle size={13} />}
           {message.text}
@@ -90,56 +87,56 @@ export default function PositionsPanel({ onNavigate }: { onNavigate?: (tab: stri
       )}
 
       {positions.length === 0 ? (
-        <div className="mx-auto max-w-md space-y-4 py-16 text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-dark-900">
+        <div className="mx-auto max-w-md space-y-5 py-16 text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-dark-800 bg-[#0d1117]">
             <Crosshair size={28} className="text-dark-500" />
           </div>
-          <h2 className="text-base md:text-lg font-semibold text-white">No Open Positions</h2>
-          <p className="text-xs md:text-sm text-dark-400">
+          <h2 className="text-lg font-semibold text-white tracking-tight">No Open Positions</h2>
+          <p className="text-sm text-dark-400 leading-relaxed">
             Your AI hasn't opened any trades yet. Go to the Trade tab to analyze a market and execute.
           </p>
-          <button onClick={() => onNavigate?.("trade")} className="btn-primary text-xs md:text-sm py-2 md:py-3 w-full md:w-auto">
+          <button onClick={() => onNavigate?.("trade")} className="btn-primary w-full">
             <Crosshair size={14} /> Start Trading
           </button>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg md:rounded-xl border border-dark-800 bg-dark-950 -mx-3 md:mx-0">
+        <div className="overflow-x-auto rounded-2xl border border-dark-800 bg-[#0d1117]">
           <table className="w-full text-xs">
             <thead>
-              <tr className="border-b border-dark-800 text-left text-dark-500">
+              <tr className="border-b border-dark-800 text-left">
                 {["Symbol", "Side", "Qty", "Entry", "Stop Loss", "Take Profit", "Conf.", "Opened", ""].map((h) => (
-                  <th key={h} className="px-2 md:px-4 py-2 md:py-3 font-medium text-xs md:text-sm">{h}</th>
+                  <th key={h} className="px-4 py-3 text-[11px] font-medium uppercase tracking-wider text-dark-500">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {positions.map((t) => (
-                <tr key={t.id} className="border-b border-dark-900 hover:bg-dark-900/50">
-                  <td className="px-2 md:px-4 py-2 md:py-3 font-mono font-medium text-white text-xs md:text-sm">{t.symbol}</td>
-                  <td className={`px-2 md:px-4 py-2 md:py-3 font-semibold text-xs md:text-sm ${t.side === "BUY" ? "text-brand-400" : "text-red-400"}`}>
+                <tr key={t.id} className="border-b border-dark-800/50 hover:bg-white/[0.02] transition-colors">
+                  <td className="px-4 py-3 font-mono font-semibold text-white">{t.symbol}</td>
+                  <td className={`px-4 py-3 font-semibold ${t.side === "BUY" ? "text-brand-400" : "text-red-400"}`}>
                     {t.side}
                   </td>
-                  <td className="px-2 md:px-4 py-2 md:py-3 font-mono text-dark-300 text-xs md:text-sm">{t.quantity}</td>
-                  <td className="px-2 md:px-4 py-2 md:py-3 font-mono text-white text-xs md:text-sm">${t.entry_price?.toFixed(2)}</td>
-                  <td className="px-2 md:px-4 py-2 md:py-3 font-mono text-red-400 text-xs md:text-sm">${t.stop_loss?.toFixed(2)}</td>
-                  <td className="px-2 md:px-4 py-2 md:py-3 font-mono text-brand-400 text-xs md:text-sm">${t.take_profit?.toFixed(2)}</td>
-                  <td className="px-2 md:px-4 py-2 md:py-3 text-dark-400 text-xs md:text-sm">{t.claude_confidence?.toFixed(0)}%</td>
-                  <td className="px-2 md:px-4 py-2 md:py-3 text-dark-500 text-xs md:text-sm">
+                  <td className="px-4 py-3 font-mono text-dark-300 tabular-nums">{t.quantity}</td>
+                  <td className="px-4 py-3 font-mono text-white tabular-nums">${t.entry_price?.toFixed(2)}</td>
+                  <td className="px-4 py-3 font-mono text-red-400 tabular-nums">${t.stop_loss?.toFixed(2)}</td>
+                  <td className="px-4 py-3 font-mono text-brand-400 tabular-nums">${t.take_profit?.toFixed(2)}</td>
+                  <td className="px-4 py-3 text-dark-400 tabular-nums">{t.claude_confidence?.toFixed(0)}%</td>
+                  <td className="px-4 py-3 text-dark-500">
                     {new Date(t.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}{" "}
                     {new Date(t.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                   </td>
-                  <td className="px-2 md:px-4 py-2 md:py-3">
+                  <td className="px-4 py-3">
                     <button
                       onClick={() => handleClose(t)}
                       disabled={closing === t.id}
-                      className="flex items-center gap-1 rounded-md border border-red-500/30 px-2 md:px-2.5 py-1 md:py-1.5 text-xs text-red-400 transition hover:bg-red-500/10 disabled:opacity-50 touch-target"
+                      className="flex items-center gap-1.5 rounded-lg border border-red-500/20 px-2.5 py-1.5 text-xs text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
                     >
                       {closing === t.id ? (
                         <Loader2 size={11} className="animate-spin" />
                       ) : (
                         <XCircle size={11} />
                       )}
-                      <span className="hidden md:inline">Close</span>
+                      Close
                     </button>
                   </td>
                 </tr>

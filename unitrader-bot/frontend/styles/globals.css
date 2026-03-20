@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,100..1000;1,9..40,100..1000&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,12 +6,17 @@
 
 @layer base {
   :root {
-    --bg: #0d1117;
-    --surface: #161b22;
-    --border: #30363d;
+    --bg: #06080d;
+    --surface: #0d1117;
+    --surface-raised: #151b23;
+    --border: #1e2632;
+    --border-subtle: #141a22;
     --text: #e6edf3;
-    --muted: #8b949e;
+    --text-secondary: #8b949e;
+    --muted: #636e7b;
     --accent: #0adb6a;
+    --accent-glow: rgba(10, 219, 106, 0.08);
+    --radius: 12px;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -23,13 +28,15 @@
     color: var(--text);
     font-family: 'DM Sans', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
   ::selection { background: #0adb6a33; color: #0adb6a; }
 
-  ::-webkit-scrollbar { width: 6px; }
-  ::-webkit-scrollbar-track { background: var(--surface); }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 100px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 }
 
 @layer components {
@@ -39,27 +46,43 @@
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-5 py-2.5 text-sm font-semibold text-dark-950 transition-all hover:bg-brand-400 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed touch-target;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-brand-500 px-5 py-2.5 text-sm font-semibold text-dark-950 transition-all duration-200 hover:bg-brand-400 hover:shadow-[0_0_20px_rgba(10,219,106,0.25)] active:scale-[0.97] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-none touch-target;
   }
 
   .btn-outline {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-dark-700 px-5 py-2.5 text-sm font-semibold text-dark-200 transition-all hover:border-brand-500 hover:text-brand-500 active:scale-95 touch-target;
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-dark-700 px-5 py-2.5 text-sm font-medium text-dark-300 transition-all duration-200 hover:border-brand-500/50 hover:text-brand-400 hover:bg-brand-500/5 active:scale-[0.97] touch-target;
+  }
+
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-medium text-dark-400 transition-all duration-200 hover:text-white hover:bg-white/5 active:scale-[0.97] touch-target;
   }
 
   .card {
-    @apply rounded-xl border border-dark-800 bg-dark-950 p-4 md:p-6;
+    @apply rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 md:p-6;
+  }
+
+  .card-raised {
+    @apply rounded-2xl border border-[var(--border)] bg-[var(--surface-raised)] p-4 md:p-6;
+  }
+
+  .card-interactive {
+    @apply card transition-all duration-200 hover:border-dark-600 hover:bg-[var(--surface-raised)];
   }
 
   .input {
-    @apply w-full rounded-lg border border-dark-700 bg-dark-900 px-3 md:px-4 py-2 md:py-2.5 text-sm text-dark-100 placeholder-dark-500 outline-none transition focus:border-brand-500 focus:ring-1 focus:ring-brand-500 touch-target;
+    @apply w-full rounded-xl border border-dark-700 bg-dark-900/80 px-4 py-2.5 text-sm text-dark-100 placeholder-dark-500 outline-none transition-all duration-200 focus:border-brand-500/60 focus:ring-2 focus:ring-brand-500/15 focus:bg-dark-900 touch-target;
   }
 
   .badge-green {
-    @apply inline-flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-xs font-medium text-brand-400;
+    @apply inline-flex items-center gap-1.5 rounded-full bg-brand-500/10 px-2.5 py-1 text-xs font-medium text-brand-400;
   }
 
   .badge-red {
-    @apply inline-flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-xs font-medium text-red-400;
+    @apply inline-flex items-center gap-1.5 rounded-full bg-red-500/10 px-2.5 py-1 text-xs font-medium text-red-400;
+  }
+
+  .badge-yellow {
+    @apply inline-flex items-center gap-1.5 rounded-full bg-yellow-500/10 px-2.5 py-1 text-xs font-medium text-yellow-400;
   }
 
   .stat-card {
@@ -67,7 +90,28 @@
   }
 
   .glow-green {
-    box-shadow: 0 0 30px #0adb6a22;
+    box-shadow: 0 0 40px rgba(10, 219, 106, 0.12), 0 0 80px rgba(10, 219, 106, 0.04);
+  }
+
+  .glass {
+    @apply bg-white/[0.03] backdrop-blur-xl border border-white/[0.06];
+  }
+
+  .section-label {
+    @apply text-[10px] font-semibold uppercase tracking-[0.15em] text-dark-500;
+  }
+
+  .page-title {
+    @apply text-xl md:text-2xl font-bold text-white tracking-tight;
+  }
+
+  .page-subtitle {
+    @apply text-sm text-dark-400 mt-1;
+  }
+
+  /* Gradient text utility */
+  .text-gradient {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-brand-400 to-brand-300;
   }
 
   /* Mobile-friendly table scrolling */
@@ -91,5 +135,36 @@
   html {
     scroll-behavior: auto;
   }
+}
+
+/* Range slider styling */
+input[type="range"] {
+  @apply w-full h-1.5 rounded-full appearance-none cursor-pointer;
+  background: linear-gradient(to right, #0adb6a, #0adb6a) no-repeat, #1e2632;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #0adb6a;
+  cursor: pointer;
+  box-shadow: 0 0 10px rgba(10, 219, 106, 0.3), 0 2px 4px rgba(0,0,0,0.3);
+  transition: transform 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #0adb6a;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 10px rgba(10, 219, 106, 0.3), 0 2px 4px rgba(0,0,0,0.3);
 }
 

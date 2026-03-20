@@ -64,7 +64,7 @@ export default function LandingPage() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div className="min-h-screen" style={{ backgroundColor: "#080a0f" }}>
+    <div className="min-h-screen bg-dark-950">
       <Head>
         <title>Unitrader — Your Personal AI Trader</title>
         <meta
@@ -76,11 +76,11 @@ export default function LandingPage() {
       </Head>
 
       {/* ── Navbar ─────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-50 border-b border-white/5 backdrop-blur-xl" style={{ backgroundColor: "rgba(8,10,15,0.85)" }}>
+      <header className="sticky top-0 z-50 border-b border-dark-800/40 bg-dark-950/85 backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#22c55e]">
+            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
                 <path d="M4 12L8 4l4 8" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
@@ -95,7 +95,7 @@ export default function LandingPage() {
               { label: "Results", href: "#results" },
               { label: "Pricing", href: "#pricing" },
             ].map((l) => (
-              <a key={l.label} href={l.href} className="text-sm text-gray-400 transition hover:text-white">
+              <a key={l.label} href={l.href} className="text-sm text-dark-400 transition hover:text-white">
                 {l.label}
               </a>
             ))}
@@ -104,20 +104,20 @@ export default function LandingPage() {
           {/* Desktop CTA */}
           <Link
             href="/register"
-            className="hidden rounded-lg bg-[#22c55e] px-5 py-2 text-sm font-semibold text-white transition hover:bg-[#1ea94e] active:scale-95 md:inline-flex"
+            className="hidden rounded-xl bg-brand-500 px-5 py-2 text-sm font-semibold text-black transition hover:bg-brand-400 active:scale-95 md:inline-flex"
           >
             Start free
           </Link>
 
           {/* Mobile toggle */}
-          <button className="text-gray-400 md:hidden" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
+          <button className="text-dark-400 md:hidden" onClick={() => setMobileMenuOpen(!mobileMenuOpen)}>
             {mobileMenuOpen ? <X size={22} /> : <Menu size={22} />}
           </button>
         </div>
 
         {/* Mobile menu */}
         {mobileMenuOpen && (
-          <div className="border-t border-white/5 px-4 pb-4 md:hidden" style={{ backgroundColor: "#080a0f" }}>
+          <div className="border-t border-dark-800/40 px-4 pb-4 md:hidden bg-dark-950">
             {[
               { label: "How it works", href: "#how-it-works" },
               { label: "Results", href: "#results" },
@@ -126,7 +126,7 @@ export default function LandingPage() {
               <a
                 key={l.label}
                 href={l.href}
-                className="block py-2.5 text-sm text-gray-400"
+                className="block py-2.5 text-sm text-dark-400"
                 onClick={() => setMobileMenuOpen(false)}
               >
                 {l.label}
@@ -134,7 +134,7 @@ export default function LandingPage() {
             ))}
             <Link
               href="/register"
-              className="mt-3 block w-full rounded-lg bg-[#22c55e] py-2.5 text-center text-sm font-semibold text-white"
+              className="mt-3 block w-full rounded-xl bg-brand-500 py-2.5 text-center text-sm font-semibold text-black"
               onClick={() => setMobileMenuOpen(false)}
             >
               Start free
@@ -147,12 +147,12 @@ export default function LandingPage() {
         {/* ── HERO ─────────────────────────────────────────────────── */}
         <section className="relative overflow-hidden px-4 pb-20 pt-24 sm:px-6 sm:pt-32">
           {/* Subtle glow */}
-          <div className="pointer-events-none absolute left-1/2 top-0 h-[600px] w-[800px] -translate-x-1/2 rounded-full bg-[#22c55e]/5 blur-[120px]" />
+          <div className="pointer-events-none absolute left-1/2 top-0 h-[600px] w-[800px] -translate-x-1/2 rounded-full bg-brand-500/5 blur-[120px]" />
 
           <div className="relative mx-auto max-w-3xl text-center">
             {/* Eyebrow pill */}
-            <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-[#22c55e]/30 px-4 py-1.5 text-sm text-[#22c55e]">
-              <span className="h-1.5 w-1.5 rounded-full bg-[#22c55e]" />
+            <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-brand-500/30 px-4 py-1.5 text-sm text-brand-400">
+              <span className="h-1.5 w-1.5 rounded-full bg-brand-500" />
               40 years late — but finally here
             </div>
 
@@ -160,13 +160,13 @@ export default function LandingPage() {
             <h1 className="mb-6 text-4xl font-extrabold leading-[1.1] tracking-tight text-white sm:text-5xl md:text-6xl">
               Hedge funds have had
               <br />
-              <span className="text-[#22c55e]">AI traders</span> for decades.
+              <span className="text-brand-400">AI traders</span> for decades.
               <br />
               Now you do too.
             </h1>
 
             {/* Subheading */}
-            <p className="mx-auto mb-10 max-w-[480px] text-base leading-relaxed text-gray-400 sm:text-lg">
+            <p className="mx-auto mb-10 max-w-[480px] text-base leading-relaxed text-dark-400 sm:text-lg">
               Apex is your personal AI trader. It analyses markets, executes
               trades through your own exchange account, and works 24/7 —
               the same technology that&apos;s made institutions billions,
@@ -176,7 +176,7 @@ export default function LandingPage() {
             {/* CTA */}
             <Link
               href="/onboarding"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#22c55e] px-8 py-4 text-base font-semibold text-white transition hover:bg-[#1ea94e] active:scale-[0.98] sm:w-auto"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand-500 px-8 py-4 text-base font-semibold text-black transition hover:bg-brand-400 active:scale-[0.98] sm:w-auto"
             >
               See what Apex would have done with your money
               <ArrowRight size={18} />
@@ -191,9 +191,9 @@ export default function LandingPage() {
               ].map((t) => (
                 <span
                   key={t}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1 text-xs text-gray-400"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-dark-800 px-3 py-1 text-xs text-dark-400"
                 >
-                  <Check size={12} className="text-[#22c55e]" />
+                  <Check size={12} className="text-brand-400" />
                   {t}
                 </span>
               ))}
@@ -203,16 +203,16 @@ export default function LandingPage() {
 
         {/* ── INEQUALITY COMPARISON ───────────────────────────────── */}
         <section id="results" className="px-4 py-20 sm:px-6">
-          <div className="mx-auto max-w-4xl rounded-2xl border border-white/5 p-6 sm:p-10" style={{ backgroundColor: "#0d1018" }}>
+          <div className="mx-auto max-w-4xl rounded-2xl border border-dark-800 p-6 sm:p-10 bg-[#0d1117]">
             <div className="grid gap-8 md:grid-cols-[1fr,auto,1fr]">
               {/* Hedge funds column */}
               <div>
-                <div className="mb-5 inline-block rounded-full bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-400">
+                <div className="mb-5 inline-block rounded-full bg-red-500/10 px-3 py-1 text-xs font-semibold text-red-400 border border-red-500/15">
                   Hedge funds — since 1982
                 </div>
                 <ul className="space-y-3">
                   {HEDGE_FUND_POINTS.map((p) => (
-                    <li key={p} className="flex items-start gap-2 text-sm leading-relaxed text-gray-400">
+                    <li key={p} className="flex items-start gap-2 text-sm leading-relaxed text-dark-400">
                       <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-red-400" />
                       {p}
                     </li>
@@ -222,26 +222,26 @@ export default function LandingPage() {
 
               {/* Centre divider */}
               <div className="flex flex-col items-center justify-center gap-3">
-                <div className="hidden h-full w-px bg-white/10 md:block" />
-                <div className="flex items-center gap-2 text-sm font-bold text-gray-500">
+                <div className="hidden h-full w-px bg-dark-800 md:block" />
+                <div className="flex items-center gap-2 text-sm font-bold text-dark-500">
                   <span>vs</span>
-                  <ArrowLeftRight size={14} className="text-gray-600" />
+                  <ArrowLeftRight size={14} className="text-dark-600" />
                 </div>
-                <span className="rounded-full bg-[#22c55e]/10 px-2.5 py-0.5 text-xs font-semibold text-[#22c55e]">
+                <span className="rounded-full bg-brand-500/10 px-2.5 py-0.5 text-xs font-semibold text-brand-400">
                   now
                 </span>
-                <div className="hidden h-full w-px bg-white/10 md:block" />
+                <div className="hidden h-full w-px bg-dark-800 md:block" />
               </div>
 
               {/* Apex column */}
               <div>
-                <div className="mb-5 inline-block rounded-full bg-[#22c55e]/10 px-3 py-1 text-xs font-semibold text-[#22c55e]">
+                <div className="mb-5 inline-block rounded-full bg-brand-500/10 px-3 py-1 text-xs font-semibold text-brand-400 border border-brand-500/15">
                   You — with Apex
                 </div>
                 <ul className="space-y-3">
                   {APEX_POINTS.map((p) => (
-                    <li key={p} className="flex items-start gap-2 text-sm leading-relaxed text-gray-300">
-                      <Check size={14} className="mt-0.5 shrink-0 text-[#22c55e]" />
+                    <li key={p} className="flex items-start gap-2 text-sm leading-relaxed text-dark-300">
+                      <Check size={14} className="mt-0.5 shrink-0 text-brand-400" />
                       {p}
                     </li>
                   ))}
@@ -257,11 +257,10 @@ export default function LandingPage() {
             {STATS_DATA.map((s) => (
               <div
                 key={s.value}
-                className="rounded-xl border border-white/5 p-6 text-center"
-                style={{ backgroundColor: "#0d1018" }}
+                className="rounded-2xl border border-dark-800 p-6 text-center bg-[#0d1117]"
               >
-                <div className="mb-2 text-4xl font-extrabold text-[#22c55e]">{s.value}</div>
-                <p className="text-sm leading-relaxed text-gray-400">{s.desc}</p>
+                <div className="mb-2 text-4xl font-extrabold text-brand-400 tabular-nums">{s.value}</div>
+                <p className="text-sm leading-relaxed text-dark-400">{s.desc}</p>
               </div>
             ))}
           </div>
@@ -271,7 +270,7 @@ export default function LandingPage() {
         <section id="how-it-works" className="px-4 py-20 sm:px-6">
           <div className="mx-auto max-w-3xl">
             <div className="mb-14 text-center">
-              <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-[#22c55e]">
+              <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-brand-400">
                 How it works
               </p>
               <h2 className="text-3xl font-bold text-white sm:text-4xl">
@@ -282,12 +281,12 @@ export default function LandingPage() {
             <div className="space-y-12">
               {STEPS.map((step) => (
                 <div key={step.num} className="flex gap-6">
-                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-[#22c55e]/30 bg-[#22c55e]/10 font-mono text-sm font-bold text-[#22c55e]">
+                  <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-brand-500/30 bg-brand-500/10 font-mono text-sm font-bold text-brand-400">
                     {step.num}
                   </div>
                   <div>
                     <h3 className="mb-2 text-lg font-semibold text-white">{step.title}</h3>
-                    <p className="max-w-md text-sm leading-relaxed text-gray-400">{step.desc}</p>
+                    <p className="max-w-md text-sm leading-relaxed text-dark-400">{step.desc}</p>
                   </div>
                 </div>
               ))}
@@ -296,11 +295,11 @@ export default function LandingPage() {
         </section>
 
         {/* ── TRUST STRIP ─────────────────────────────────────────── */}
-        <section className="border-y border-white/5 px-4 py-6 sm:px-6" style={{ backgroundColor: "#0d1018" }}>
+        <section className="border-y border-dark-800/50 px-4 py-6 sm:px-6 bg-[#0d1117]">
           <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-center gap-x-8 gap-y-3">
             {TRUST_SIGNALS.map((s) => (
-              <span key={s} className="inline-flex items-center gap-1.5 text-xs text-gray-400 sm:text-sm">
-                <Check size={14} className="text-[#22c55e]" />
+              <span key={s} className="inline-flex items-center gap-1.5 text-xs text-dark-400 sm:text-sm">
+                <Check size={14} className="text-brand-400" />
                 {s}
               </span>
             ))}
@@ -310,18 +309,18 @@ export default function LandingPage() {
         {/* ── PRICING (simple CTA, no price shown) ────────────────── */}
         <section id="pricing" className="px-4 py-20 sm:px-6">
           <div className="mx-auto max-w-xl text-center">
-            <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-[#22c55e]">
+            <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-brand-400">
               Pricing
             </p>
             <h2 className="mb-4 text-3xl font-bold text-white sm:text-4xl">
               Start for free. Upgrade when you&apos;re ready.
             </h2>
-            <p className="mb-8 text-gray-400">
+            <p className="mb-8 text-dark-400">
               No credit card required. Paper trade with Apex first, then go live when you trust it.
             </p>
             <Link
               href="/register"
-              className="inline-flex items-center gap-2 rounded-xl bg-[#22c55e] px-8 py-4 text-base font-semibold text-white transition hover:bg-[#1ea94e] active:scale-[0.98]"
+              className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-8 py-4 text-base font-semibold text-black transition hover:bg-brand-400 active:scale-[0.98]"
             >
               Start free
               <ArrowRight size={18} />

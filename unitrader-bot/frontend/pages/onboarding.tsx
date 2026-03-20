@@ -28,59 +28,48 @@ const COMPARISON_ROWS = [
 
 function ContextStep({ onContinue }: { onContinue: () => void }) {
   return (
-    <div className="min-h-screen flex flex-col items-center px-4 py-12 sm:py-16" style={{ backgroundColor: "#080a0f" }}>
-      <div className="w-full max-w-2xl">
-        {/* Step indicator */}
-        <p className="mb-10 text-center text-xs text-gray-600">1 of 5</p>
+    <div className="min-h-screen flex flex-col items-center px-4 py-12 sm:py-16 bg-dark-950">
+      <div className="w-full max-w-2xl animate-fade-in">
+        <p className="mb-10 text-center text-[11px] uppercase tracking-widest text-dark-500">1 of 5</p>
 
-        {/* Heading */}
-        <h1 className="mb-4 text-center text-3xl font-bold text-white sm:text-4xl">
+        <h1 className="mb-4 text-center text-3xl font-bold tracking-tight text-white sm:text-4xl">
           Before we start — what you should know
         </h1>
-        <p className="mx-auto mb-12 max-w-lg text-center text-sm leading-relaxed text-gray-400 sm:text-base">
+        <p className="mx-auto mb-12 max-w-lg text-center text-sm leading-relaxed text-dark-400">
           Apex is the same type of AI technology that hedge funds have used for 40 years.
           The difference is you now have access to it.
         </p>
 
-        {/* Comparison table */}
-        <div className="mb-8 rounded-xl border border-white/5 p-5 sm:p-6" style={{ backgroundColor: "#0d1018" }}>
-          <h2 className="mb-5 text-sm font-semibold text-gray-300">
+        <div className="mb-8 rounded-2xl border border-dark-800 bg-[#0d1117] p-6">
+          <h2 className="section-label mb-5" style={{display:'block',fontSize:'11px',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.08em',color:'#6b7280'}}>
             What Apex gives you that was previously only for institutions
           </h2>
 
-          {/* Column headers */}
           <div className="mb-3 grid grid-cols-3 gap-3 text-[11px] font-semibold uppercase tracking-wider">
-            <span className="text-gray-500">What you need</span>
+            <span className="text-dark-500">What you need</span>
             <span className="text-red-400">What institutions pay</span>
-            <span className="text-[#22c55e]">What Apex provides</span>
+            <span className="text-brand-400">What Apex provides</span>
           </div>
 
-          {/* Rows */}
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             {COMPARISON_ROWS.map((row) => (
               <div
                 key={row.need}
-                className="grid grid-cols-3 gap-3 rounded-lg border border-white/5 px-3 py-2.5 text-xs sm:text-sm"
-                style={{ backgroundColor: "rgba(255,255,255,0.02)" }}
+                className="grid grid-cols-3 gap-3 rounded-xl border border-dark-800/50 px-3 py-2.5 text-xs sm:text-sm bg-white/[0.01]"
               >
-                <span className="text-gray-300">{row.need}</span>
+                <span className="text-dark-300">{row.need}</span>
                 <span className="text-red-400/70">{row.institution}</span>
-                <span className="text-[#22c55e]">{row.apex}</span>
+                <span className="text-brand-400">{row.apex}</span>
               </div>
             ))}
           </div>
         </div>
 
-        {/* Apex introduction card */}
-        <div
-          className="mb-8 flex gap-4 rounded-xl border-l-2 border-[#22c55e] p-5"
-          style={{ backgroundColor: "#0d1018" }}
-        >
-          {/* Avatar */}
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#22c55e]/20">
-            <Zap size={18} className="text-[#22c55e]" />
+        <div className="mb-8 flex gap-4 rounded-2xl border-l-2 border-brand-500 bg-[#0d1117] p-5">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-500/15">
+            <Zap size={18} className="text-brand-400" />
           </div>
-          <p className="text-sm leading-relaxed text-gray-300">
+          <p className="text-sm leading-relaxed text-dark-300">
             Hi, I&apos;m <strong className="text-white">Apex</strong> — your personal AI trader.
             I&apos;ll analyse the markets, tell you exactly what I&apos;m thinking and why,
             and trade on your behalf. Your money stays in your own exchange account — I only
@@ -88,17 +77,15 @@ function ContextStep({ onContinue }: { onContinue: () => void }) {
           </p>
         </div>
 
-        {/* CTA */}
         <button
           onClick={onContinue}
-          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#22c55e] py-4 text-base font-semibold text-white transition hover:bg-[#1ea94e] active:scale-[0.98]"
+          className="btn-primary w-full py-4 text-base"
         >
           Meet Apex — let&apos;s talk
           <ArrowRight size={18} />
         </button>
 
-        {/* Disclaimer */}
-        <p className="mt-6 text-center text-[10px] leading-relaxed text-gray-600">
+        <p className="mt-6 text-center text-[10px] leading-relaxed text-dark-600">
           Trading involves risk of loss. Past performance does not guarantee future results.
           Apex is an AI tool, not a regulated financial advisor.
         </p>
@@ -189,26 +176,25 @@ export default function OnboardingPage() {
     return (
       <div className="min-h-screen bg-dark-950 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-10 h-10 border-4 border-brand-600 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-dark-400">Setting up your account…</p>
+          <RefreshCw size={18} className="animate-spin text-brand-400 mx-auto mb-4" />
+          <p className="text-dark-400 text-sm">Setting up your account…</p>
         </div>
       </div>
     );
   }
 
-  // Show sync error with retry button — before any step
   if (syncError) {
     return (
       <div className="min-h-screen bg-dark-950 flex items-center justify-center px-4">
         <div className="w-full max-w-sm text-center">
-          <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-5 text-sm text-red-300">
+          <div className="mb-5 rounded-2xl border border-red-500/20 bg-red-500/[0.04] px-5 py-5 text-sm text-red-300">
             <p className="font-semibold mb-1">Could not connect</p>
             <p className="text-xs text-red-400">{syncError}</p>
           </div>
           <button
             type="button"
             onClick={runSync}
-            className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-6 py-3 text-sm font-semibold text-white transition hover:bg-brand-500"
+            className="btn-primary gap-2 w-full"
           >
             <RefreshCw size={15} /> Try again
           </button>
@@ -237,24 +223,23 @@ export default function OnboardingPage() {
       </Head>
 
       <div className="min-h-screen bg-dark-950 flex flex-col items-center justify-center px-4">
-        <div className="w-full max-w-md">
-          {/* Logo */}
-          <div className="flex items-center gap-2 mb-8 justify-center">
-            <div className="w-9 h-9 rounded-xl bg-brand-600 flex items-center justify-center">
-              <span className="text-white font-bold text-lg">U</span>
+        <div className="w-full max-w-md animate-fade-in">
+          <div className="flex items-center gap-2.5 mb-8 justify-center">
+            <div className="w-9 h-9 rounded-xl bg-brand-500/15 flex items-center justify-center">
+              <span className="text-brand-400 font-bold text-lg">U</span>
             </div>
             <span className="text-white font-bold text-xl tracking-tight">Unitrader</span>
           </div>
 
-          <div className="bg-dark-800 border border-dark-700 rounded-2xl p-8 shadow-2xl text-center">
-            <div className="w-16 h-16 rounded-2xl bg-brand-600/20 flex items-center justify-center mx-auto mb-5">
+          <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-8 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-brand-500/10 flex items-center justify-center mx-auto mb-5">
               <span className="text-3xl">😊</span>
             </div>
 
-            <h1 className="text-2xl font-bold text-white mb-2">
+            <h1 className="text-2xl font-bold tracking-tight text-white mb-2">
               Name your AI
             </h1>
-            <p className="text-dark-400 text-sm mb-8">
+            <p className="text-dark-400 text-sm mb-8 leading-relaxed">
               Give your personal trading AI a name. You&apos;ll see it throughout the dashboard.
               <br />
               <span className="text-dark-500 text-xs mt-1 block">e.g. TradeMaster, AlphaBot, Nexus</span>

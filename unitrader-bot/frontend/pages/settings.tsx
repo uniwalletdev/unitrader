@@ -91,22 +91,24 @@ export default function SettingsPage() {
   if (!isLoaded || loading) {
     return (
       <div className="flex items-center justify-center h-screen bg-dark-950">
-        <Loader className="animate-spin text-brand-500" size={32} />
+        <Loader className="animate-spin text-brand-400" size={20} />
       </div>
     );
   }
 
   if (error && !settings) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-dark-950 gap-4">
-        <AlertCircle className="text-red-400" size={36} />
-        <p className="text-white font-semibold">{error}</p>
-        <button
-          onClick={() => { setError(null); setLoading(true); authApi.getSettings().then(r => { setSettings(r.data); setDailyLossPct(r.data.max_daily_loss || 10); }).catch(e => setError(e.response?.data?.detail || "Failed to load settings")).finally(() => setLoading(false)); }}
-          className="btn-primary px-6 py-2"
-        >
-          Try Again
-        </button>
+      <div className="flex flex-col items-center justify-center h-screen bg-dark-950 gap-5 px-6">
+        <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-8 text-center max-w-sm">
+          <AlertCircle className="text-red-400 mx-auto mb-4" size={28} />
+          <p className="text-sm text-dark-300 mb-5">{error}</p>
+          <button
+            onClick={() => { setError(null); setLoading(true); authApi.getSettings().then(r => { setSettings(r.data); setDailyLossPct(r.data.max_daily_loss || 10); }).catch(e => setError(e.response?.data?.detail || "Failed to load settings")).finally(() => setLoading(false)); }}
+            className="btn-primary w-full"
+          >
+            Try Again
+          </button>
+        </div>
       </div>
     );
   }
@@ -121,59 +123,48 @@ export default function SettingsPage() {
       </Head>
 
       <div className="min-h-screen bg-dark-950">
-        {/* Header */}
-        <div className="border-b border-dark-800 bg-dark-900 px-6 py-4">
-          <div className="flex items-center gap-4 mb-4">
+        <div className="border-b border-dark-800/60 px-6 py-4">
+          <div className="flex items-center gap-4 max-w-4xl mx-auto">
             <button
               onClick={() => router.push("/app")}
-              className="rounded-lg p-2 text-dark-400 hover:bg-dark-800 hover:text-white transition-colors"
+              className="rounded-xl p-2 text-dark-400 hover:bg-dark-800/50 hover:text-white transition-colors"
             >
-              <ArrowLeft size={20} />
+              <ArrowLeft size={18} />
             </button>
             <div>
-              <h1 className="text-2xl font-bold text-white">Settings</h1>
+              <h1 className="text-xl font-bold tracking-tight text-white">Settings</h1>
               <p className="text-sm text-dark-400">Manage your trading preferences and safety controls</p>
             </div>
           </div>
         </div>
 
-        <div className="max-w-4xl mx-auto px-6 py-8">
-          {/* Global Error */}
+        <div className="max-w-4xl mx-auto px-6 py-8 space-y-6 animate-fade-in">
           {error && (
-            <div className="mb-6 flex items-start gap-3 rounded-lg bg-red-500/10 border border-red-500/30 p-4">
-              <AlertCircle className="shrink-0 text-red-500 mt-0.5" size={18} />
-              <div>
-                <p className="text-sm font-medium text-red-500">{error}</p>
-              </div>
+            <div className="flex items-start gap-3 rounded-2xl bg-red-500/[0.04] border border-red-500/15 p-4">
+              <AlertCircle className="shrink-0 text-red-400 mt-0.5" size={16} />
+              <p className="text-sm text-red-400">{error}</p>
             </div>
           )}
 
-          {/* Global Success */}
           {success && (
-            <div className="mb-6 flex items-start gap-3 rounded-lg bg-green-500/10 border border-green-500/30 p-4">
-              <Check className="shrink-0 text-green-500 mt-0.5" size={18} />
-              <div>
-                <p className="text-sm font-medium text-green-500">{success}</p>
-              </div>
+            <div className="flex items-start gap-3 rounded-2xl bg-brand-500/[0.06] border border-brand-500/15 p-4">
+              <Check className="shrink-0 text-brand-400 mt-0.5" size={16} />
+              <p className="text-sm text-brand-400">{success}</p>
             </div>
           )}
 
-          {/* Circuit Breaker Alert */}
           {isTradingPaused && (
-            <div className="mb-8">
-              <CircuitBreakerAlert
-                tradingPaused={true}
-                dailyLossPct={0} // Will show actual trading paused message
-                maxDailyLossPct={dailyLossPct}
-              />
-            </div>
+            <CircuitBreakerAlert
+              tradingPaused={true}
+              dailyLossPct={0}
+              maxDailyLossPct={dailyLossPct}
+            />
           )}
 
-          {/* Trading Safety Section */}
-          <div className="rounded-lg border border-dark-800 bg-dark-900 p-6 mb-8">
+          <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-6">
             <div className="mb-6">
-              <h2 className="text-xl font-bold text-white mb-2">Daily Loss Limit</h2>
-              <p className="text-sm text-dark-400">
+              <h2 className="text-lg font-bold tracking-tight text-white mb-1.5">Daily Loss Limit</h2>
+              <p className="text-sm text-dark-400 leading-relaxed">
                 Apex will automatically pause trading if your daily loss exceeds this limit. You can resume trading manually from this page.
               </p>
             </div>
@@ -183,7 +174,7 @@ export default function SettingsPage() {
               <div>
                 <label className="block text-sm font-medium text-white mb-3">
                   Stop trading if I lose
-                  <span className="ml-2 font-bold text-brand-500">{dailyLossPct}%</span>
+                  <span className="ml-2 font-bold text-brand-400">{dailyLossPct}%</span>
                 </label>
 
                 <input
@@ -194,30 +185,29 @@ export default function SettingsPage() {
                   value={dailyLossPct}
                   onChange={(e) => handleDailyLossChange(parseInt(e.target.value))}
                   disabled={isSaving}
-                  className="w-full h-2 bg-dark-800 rounded-lg appearance-none cursor-pointer slider accent-brand-500"
+                  className="w-full h-1.5 bg-dark-800 rounded-lg appearance-none cursor-pointer slider"
                 />
 
-                <div className="mt-3 p-3 rounded-lg bg-dark-800/50 border border-dark-700">
+                <div className="mt-3 p-3 rounded-xl bg-dark-900/50 border border-dark-800/50">
                   <p className="text-sm text-dark-300">
-                    This equals <span className="font-bold text-brand-500">approximately £{calculatedLossAmount.toFixed(2)}</span> loss
-                    <span className="text-dark-400"> (based on £{portfolioValue.toLocaleString()} portfolio)</span>
+                    This equals <span className="font-bold text-brand-400 tabular-nums">£{calculatedLossAmount.toFixed(2)}</span> loss
+                    <span className="text-dark-500"> (based on £{portfolioValue.toLocaleString()} portfolio)</span>
                   </p>
                 </div>
               </div>
 
-              {/* Quick presets */}
               <div>
-                <label className="block text-sm font-medium text-white mb-2">Quick presets</label>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-dark-500 mb-2">Quick presets</p>
                 <div className="flex flex-wrap gap-2">
                   {[5, 10, 15, 20].map((value) => (
                     <button
                       key={value}
                       onClick={() => handleDailyLossChange(value)}
                       disabled={isSaving}
-                      className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
+                      className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
                         dailyLossPct === value
-                          ? "bg-brand-500 text-white"
-                          : "bg-dark-800 text-dark-300 hover:bg-dark-700 hover:text-white"
+                          ? "bg-brand-500 text-black shadow-glow-sm"
+                          : "bg-dark-800 text-dark-300 hover:bg-dark-700 hover:text-white border border-dark-700"
                       } disabled:opacity-50 disabled:cursor-not-allowed`}
                     >
                       {value}%
@@ -226,33 +216,29 @@ export default function SettingsPage() {
                 </div>
               </div>
 
-              {/* Status indicator */}
               {isTradingPaused && (
-                <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 flex items-start gap-3">
-                  <AlertCircle className="shrink-0 text-red-500 mt-0.5" size={16} />
+                <div className="p-3 rounded-xl bg-red-500/[0.04] border border-red-500/15 flex items-start gap-3">
+                  <AlertCircle className="shrink-0 text-red-400 mt-0.5" size={15} />
                   <div>
                     <p className="text-sm font-medium text-red-400">Trading is currently paused</p>
-                    <p className="text-xs text-red-400/70 mt-1">You've reached your daily loss limit. You can adjust your limit above or resume trading.</p>
+                    <p className="text-xs text-red-400/60 mt-1">You've reached your daily loss limit. You can adjust your limit above or resume trading.</p>
                   </div>
                 </div>
               )}
 
-              {/* Saving indicator */}
               {isSaving && (
-                <div className="flex items-center gap-2 text-sm text-dark-400">
-                  <Loader className="animate-spin" size={16} />
+                <div className="flex items-center gap-2 text-xs text-dark-400">
+                  <Loader className="animate-spin" size={14} />
                   Saving...
                 </div>
               )}
             </div>
           </div>
 
-          {/* Other Settings Sections (placeholder) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Explanation Level */}
-            <div className="rounded-lg border border-dark-800 bg-dark-900 p-6">
-              <h3 className="text-lg font-semibold text-white mb-3">Trading Explanations</h3>
-              <p className="text-sm text-dark-400 mb-4">How detailed should trade explanations be?</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
+              <h3 className="text-sm font-semibold text-white mb-1.5">Trading Explanations</h3>
+              <p className="text-xs text-dark-400 mb-4">How detailed should trade explanations be?</p>
               <select
                 value={settings?.explanation_level || "detailed"}
                 onChange={(e) => {
@@ -260,7 +246,7 @@ export default function SettingsPage() {
                   authApi.updateSettings({ explanation_level: newLevel });
                   setSettings(prev => prev ? { ...prev, explanation_level: newLevel } : null);
                 }}
-                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white focus:outline-none focus:border-brand-500"
+                className="input text-sm"
               >
                 <option value="simple">Simple - Just the essentials</option>
                 <option value="detailed">Detailed - Full analysis</option>
@@ -268,10 +254,9 @@ export default function SettingsPage() {
               </select>
             </div>
 
-            {/* Trade Mode */}
-            <div className="rounded-lg border border-dark-800 bg-dark-900 p-6">
-              <h3 className="text-lg font-semibold text-white mb-3">Trading Mode</h3>
-              <p className="text-sm text-dark-400 mb-4">How should Apex execute trades?</p>
+            <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
+              <h3 className="text-sm font-semibold text-white mb-1.5">Trading Mode</h3>
+              <p className="text-xs text-dark-400 mb-4">How should Apex execute trades?</p>
               <select
                 value={settings?.trade_mode || "paper"}
                 onChange={(e) => {
@@ -279,7 +264,7 @@ export default function SettingsPage() {
                   authApi.updateSettings({ trade_mode: newMode });
                   setSettings(prev => prev ? { ...prev, trade_mode: newMode } : null);
                 }}
-                className="w-full px-3 py-2 rounded-lg bg-dark-800 border border-dark-700 text-white focus:outline-none focus:border-brand-500"
+                className="input text-sm"
               >
                 <option value="paper">Paper Trading - Simulated</option>
                 <option value="live">Live Trading - Real money</option>
@@ -289,37 +274,6 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <style jsx>{`
-        .slider::-webkit-slider-thumb {
-          appearance: none;
-          width: 20px;
-          height: 20px;
-          border-radius: 50%;
-          background: #22c55e;
-          cursor: pointer;
-          box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
-        }
-
-        .slider::-moz-range-thumb {
-          width: 20px;
-          height: 20px;
-          border-radius: 50%;
-          background: #22c55e;
-          cursor: pointer;
-          border: none;
-          box-shadow: 0 0 8px rgba(34, 197, 94, 0.3);
-        }
-
-        .slider:disabled::-webkit-slider-thumb {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-
-        .slider:disabled::-moz-range-thumb {
-          opacity: 0.5;
-          cursor: not-allowed;
-        }
-      `}</style>
     </>
   );
 }

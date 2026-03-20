@@ -205,60 +205,47 @@ export default function ConnectExchangePage() {
       </Head>
 
       <div className="min-h-screen bg-dark-950">
-        {/* Header */}
-        <header className="border-b border-dark-800">
+        <header className="border-b border-dark-800/60">
           <div className="mx-auto flex max-w-5xl items-center gap-4 px-6 py-4">
             <button
               onClick={() => router.push("/app")}
-              className="flex items-center gap-2 text-sm text-dark-400 transition hover:text-white"
+              className="flex items-center gap-2 text-sm text-dark-400 transition-colors hover:text-white"
             >
-              <ArrowLeft size={16} />
+              <ArrowLeft size={15} />
               Back to Dashboard
             </button>
           </div>
         </header>
 
-        <main className="mx-auto max-w-5xl px-6 py-10">
-          {/* Title */}
+        <main className="mx-auto max-w-5xl px-6 py-10 animate-fade-in">
           <div className="mb-8">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand-500/10">
-                <Link2 size={20} className="text-brand-400" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">Connect Exchange</h1>
-                <p className="text-sm text-dark-400">
-                  Link your brokerage accounts to enable AI-powered trading
-                </p>
-              </div>
-            </div>
+            <h1 className="page-title text-2xl">Connect Exchange</h1>
+            <p className="page-subtitle">Link your brokerage accounts to enable AI-powered trading</p>
           </div>
 
-          {/* Never-hold trust bar */}
           <div className="mb-8">
             <NeverHoldBanner />
           </div>
 
-          {/* Global message */}
           {message && !expandedId && (
             <div
               className={`mb-6 flex items-center gap-2 rounded-xl px-4 py-3 text-sm ${
                 message.type === "success"
-                  ? "bg-brand-500/10 text-brand-400"
-                  : "bg-red-500/10 text-red-400"
+                  ? "bg-brand-500/[0.06] border border-brand-500/15 text-brand-400"
+                  : "bg-red-500/[0.04] border border-red-500/15 text-red-400"
               }`}
             >
-              {message.type === "success" ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
+              {message.type === "success" ? <CheckCircle size={15} /> : <AlertCircle size={15} />}
               {message.text}
             </div>
           )}
 
           {loading ? (
             <div className="flex items-center justify-center py-20">
-              <Loader2 className="h-6 w-6 animate-spin text-dark-500" />
+              <Loader2 className="h-5 w-5 animate-spin text-brand-400" />
             </div>
           ) : (
-            <div className="grid gap-6 lg:grid-cols-3">
+            <div className="grid gap-5 lg:grid-cols-3">
               {EXCHANGES.map((ex) => {
                 const active = isConnected(ex.id);
                 const conn = getConnection(ex.id);
@@ -269,20 +256,19 @@ export default function ConnectExchangePage() {
                     key={ex.id}
                     className={`rounded-2xl border transition-all ${
                       active
-                        ? "border-brand-500/40 bg-dark-950 glow-green"
+                        ? "border-brand-500/30 bg-[#0d1117]"
                         : expanded
-                          ? "border-brand-500/20 bg-dark-950"
-                          : "border-dark-800 bg-dark-950 hover:border-dark-700"
+                          ? "border-brand-500/15 bg-[#0d1117]"
+                          : "border-dark-800 bg-[#0d1117] hover:border-dark-700"
                     }`}
                   >
-                    {/* Card header */}
-                    <div className="p-6">
+                    <div className="p-5">
                       <div className="mb-4 flex items-start justify-between">
                         <div className="flex items-center gap-3">
                           <div
-                            className={`flex h-12 w-12 items-center justify-center rounded-xl text-lg font-bold ${
+                            className={`flex h-11 w-11 items-center justify-center rounded-xl text-base font-bold ${
                               active
-                                ? "bg-brand-500/20 text-brand-400"
+                                ? "bg-brand-500/15 text-brand-400"
                                 : "bg-dark-800 text-dark-400"
                             }`}
                           >
@@ -305,10 +291,9 @@ export default function ConnectExchangePage() {
                         {ex.description}
                       </p>
 
-                      {/* Connected state */}
                       {active && conn && (
                         <div className="mb-4 space-y-2">
-                          <div className="flex items-center gap-2 rounded-lg bg-brand-500/5 px-3 py-2 text-xs">
+                          <div className="flex items-center gap-2 rounded-xl bg-brand-500/[0.06] border border-brand-500/10 px-3 py-2 text-xs">
                             <CheckCircle size={13} className="text-brand-400" />
                             <span className="text-brand-400 font-medium">
                               {conn.is_paper ? "Paper Trading" : "Live Trading"}
@@ -324,12 +309,11 @@ export default function ConnectExchangePage() {
                         </div>
                       )}
 
-                      {/* Action buttons */}
                       {active ? (
                         <button
                           onClick={() => handleDisconnect(ex.id)}
                           disabled={disconnecting === ex.id}
-                          className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/30 py-2.5 text-xs font-medium text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
+                          className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-500/20 py-2.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
                         >
                           {disconnecting === ex.id ? (
                             <Loader2 size={13} className="animate-spin" />
@@ -341,7 +325,7 @@ export default function ConnectExchangePage() {
                       ) : (
                         <button
                           onClick={() => handleExpand(ex.id)}
-                          className={`flex w-full items-center justify-center gap-2 rounded-lg py-2.5 text-xs font-medium transition ${
+                          className={`flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-xs font-medium transition-all ${
                             expanded
                               ? "border border-dark-700 text-dark-400 hover:text-dark-200"
                               : "btn-primary"
@@ -353,16 +337,14 @@ export default function ConnectExchangePage() {
                       )}
                     </div>
 
-                    {/* Expanded connect form */}
                     {expanded && !active && (
-                      <div className="border-t border-dark-800 p-6">
-                        {/* Inline message */}
+                      <div className="border-t border-dark-800/50 p-5">
                         {message && (
                           <div
-                            className={`mb-4 flex items-center gap-2 rounded-lg px-3 py-2 text-xs ${
+                            className={`mb-4 flex items-center gap-2 rounded-xl px-3 py-2 text-xs ${
                               message.type === "success"
-                                ? "bg-brand-500/10 text-brand-400"
-                                : "bg-red-500/10 text-red-400"
+                                ? "bg-brand-500/[0.06] border border-brand-500/15 text-brand-400"
+                                : "bg-red-500/[0.04] border border-red-500/15 text-red-400"
                             }`}
                           >
                             {message.type === "success" ? (
@@ -423,8 +405,7 @@ export default function ConnectExchangePage() {
                             </div>
                           </div>
 
-                          {/* Paper / Live toggle */}
-                          <div className="flex items-center justify-between rounded-lg border border-dark-800 px-3 py-2.5">
+                          <div className="flex items-center justify-between rounded-xl border border-dark-800 px-3 py-2.5">
                             <span className="text-xs text-dark-400">Trading Mode</span>
                             <button
                               type="button"
@@ -459,7 +440,6 @@ export default function ConnectExchangePage() {
                           </a>
                         </div>
 
-                        {/* Submit */}
                         <button
                           onClick={() => handleConnect(ex.id)}
                           disabled={submitting}
@@ -486,9 +466,8 @@ export default function ConnectExchangePage() {
             </div>
           )}
 
-          {/* Bottom info */}
-          <div className="mt-10 rounded-xl border border-dark-800 bg-dark-950 p-6">
-            <h2 className="mb-2 text-sm font-semibold text-white">How it works</h2>
+          <div className="mt-10 rounded-2xl border border-dark-800 bg-[#0d1117] p-6">
+            <h2 className="mb-3 text-sm font-semibold text-white">How it works</h2>
             <div className="grid gap-4 text-xs text-dark-400 sm:grid-cols-3">
               <div className="flex gap-3">
                 <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-500/10 text-[10px] font-bold text-brand-400">

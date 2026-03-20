@@ -137,8 +137,8 @@ function AIAnalysisCard({
           {/* Left — raw data */}
           <RawDataColumn analysis={analysis} />
           {/* Right — Apex verdict */}
-          <div className="rounded-xl border border-[#22c55e]/20 bg-[#22c55e]/5 p-4">
-            <div className="mb-3 text-xs font-semibold text-[#22c55e]">Apex&apos;s verdict</div>
+          <div className="rounded-xl border border-brand-500/20 bg-brand-500/5 p-4">
+            <div className="mb-3 text-xs font-semibold text-brand-400">Apex&apos;s verdict</div>
             <div className="mb-3 text-sm text-dark-200">
               {analysis.message || analysis.reasoning || "Analysis ready."}
             </div>
@@ -335,7 +335,7 @@ function TradePage() {
       {/* Page header */}
       <div className="mb-4 flex items-center gap-3">
         <h1 className="text-lg font-bold text-white">AI Trade Execution</h1>
-        <span className="rounded-full border border-[#22c55e]/30 bg-[#22c55e]/10 px-2 py-0.5 text-[10px] font-semibold text-[#22c55e]">
+        <span className="rounded-full border border-brand-500/30 bg-brand-500/10 px-2 py-0.5 text-[10px] font-semibold text-brand-400">
           Same AI as hedge funds
         </span>
       </div>
