@@ -248,7 +248,7 @@ export default function OnboardingPage() {
 
           <div className="bg-dark-800 border border-dark-700 rounded-2xl p-8 shadow-2xl text-center">
             <div className="w-16 h-16 rounded-2xl bg-brand-600/20 flex items-center justify-center mx-auto mb-5">
-              <span className="text-3xl">🤖</span>
+              <span className="text-3xl">😊</span>
             </div>
 
             <h1 className="text-2xl font-bold text-white mb-2">
