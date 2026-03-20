@@ -63,6 +63,20 @@ const EXCHANGES = [
     secretLabel: "Account ID",
     secretPlaceholder: "e.g. 001-001-12345-001",
   },
+  {
+    id: "coinbase",
+    name: "Coinbase",
+    tagline: "Crypto",
+    description:
+      "Trade Bitcoin, Ethereum and hundreds of crypto assets on one of the world's most trusted exchanges.",
+    color: "blue",
+    signupUrl: "https://www.coinbase.com/signup",
+    docsUrl: "https://www.coinbase.com/settings/api",
+    keyLabel: "API Key",
+    keyPlaceholder: "Your Coinbase API key",
+    secretLabel: "API Secret",
+    secretPlaceholder: "Your Coinbase API secret",
+  },
 ] as const;
 
 type ExchangeId = (typeof EXCHANGES)[number]["id"];

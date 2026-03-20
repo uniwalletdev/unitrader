@@ -548,6 +548,152 @@ class OandaClient(BaseExchangeClient):
 
 
 # ─────────────────────────────────────────────
+# Coinbase Advanced Trade Client
+# ─────────────────────────────────────────────
+
+class CoinbaseClient(BaseExchangeClient):
+    """Coinbase Advanced Trade REST API client.
+
+    Uses API Key + Secret (JWT-signed requests).
+    Docs: https://docs.cdp.coinbase.com/advanced-trade/docs/rest-api-overview
+    """
+
+    _BASE = "https://api.coinbase.com"
+
+    def __init__(self, api_key: str, api_secret: str):
+        super().__init__(api_key, api_secret)
+        self._http = httpx.AsyncClient(
+            base_url=self._BASE,
+            timeout=10.0,
+        )
+
+    def _headers(self, method: str, path: str, body: str = "") -> dict:
+        """Generate HMAC-SHA256 signed request headers for Coinbase Advanced Trade."""
+        timestamp = str(int(time.time()))
+        message = timestamp + method.upper() + path + body
+        sig = hmac.new(
+            self.api_secret.encode(), message.encode(), hashlib.sha256
+        ).hexdigest()
+        return {
+            "CB-ACCESS-KEY": self.api_key,
+            "CB-ACCESS-SIGN": sig,
+            "CB-ACCESS-TIMESTAMP": timestamp,
+            "Content-Type": "application/json",
+        }
+
+    async def _get(self, path: str, params: dict | None = None) -> Any:
+        import json
+        resp = await self._http.get(
+            path, params=params, headers=self._headers("GET", path)
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def _post(self, path: str, body: dict) -> Any:
+        import json
+        raw = json.dumps(body)
+        resp = await self._http.post(
+            path, content=raw, headers=self._headers("POST", path, raw)
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    async def get_account_balance(self) -> float:
+        """Return sum of USD and USDC portfolio value."""
+        data = await _with_retry(self._get, "/api/v3/brokerage/accounts")
+        total = 0.0
+        for acct in data.get("accounts", []):
+            if acct.get("currency") in ("USD", "USDC"):
+                total += float(acct.get("available_balance", {}).get("value", 0))
+        return total
+
+    async def get_current_price(self, symbol: str) -> float:
+        """symbol should be Coinbase product_id format e.g. 'BTC-USD'."""
+        product_id = symbol.replace("USDT", "-USDT").replace("USD", "-USD") if "-" not in symbol else symbol
+        data = await _with_retry(self._get, f"/api/v3/brokerage/best_bid_ask", {"product_ids": product_id})
+        pricebooks = data.get("pricebooks", [])
+        if not pricebooks:
+            raise ValueError(f"No price data for {product_id}")
+        asks = pricebooks[0].get("asks", [])
+        return float(asks[0]["price"]) if asks else 0.0
+
+    async def place_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float | None = None,
+    ) -> str:
+        product_id = symbol if "-" in symbol else f"{symbol[:3]}-USD"
+        order_config = (
+            {"limit_limit_gtc": {"base_size": str(quantity), "limit_price": str(price)}}
+            if price
+            else {"market_market_ioc": {"base_size": str(quantity)}}
+        )
+        body = {
+            "client_order_id": f"ut-{int(time.time())}",
+            "product_id": product_id,
+            "side": side.upper(),
+            "order_configuration": order_config,
+        }
+        data = await _with_retry(self._post, "/api/v3/brokerage/orders", body)
+        return str(data.get("success_response", {}).get("order_id", ""))
+
+    async def set_stop_loss(self, symbol: str, order_id: str, stop_price: float) -> bool:
+        # Coinbase Advanced Trade does not support attaching stop-loss to existing orders;
+        # a separate stop-limit order must be placed.
+        logger.warning("CoinbaseClient.set_stop_loss: separate stop-limit order required — not yet implemented")
+        return False
+
+    async def set_take_profit(self, symbol: str, order_id: str, target_price: float) -> bool:
+        logger.warning("CoinbaseClient.set_take_profit: separate limit order required — not yet implemented")
+        return False
+
+    async def get_open_orders(self, symbol: str) -> list[dict]:
+        product_id = symbol if "-" in symbol else f"{symbol[:3]}-USD"
+        data = await _with_retry(
+            self._get, "/api/v3/brokerage/orders/historical/batch",
+            {"product_id": product_id, "order_status": "OPEN"},
+        )
+        return data.get("orders", [])
+
+    async def close_position(self, symbol: str) -> bool:
+        try:
+            product_id = symbol if "-" in symbol else f"{symbol[:3]}-USD"
+            # Get current position size
+            data = await _with_retry(self._get, f"/api/v3/brokerage/portfolios")
+            # Place a market sell for the held quantity
+            positions = await _with_retry(
+                self._get, "/api/v3/brokerage/orders/historical/batch",
+                {"product_id": product_id, "order_status": "OPEN"},
+            )
+            for order in positions.get("orders", []):
+                await _with_retry(
+                    self._post,
+                    f"/api/v3/brokerage/orders/batch_cancel",
+                    {"order_ids": [order["order_id"]]},
+                )
+            return True
+        except Exception as exc:
+            logger.error("CoinbaseClient.close_position failed: %s", exc)
+            return False
+
+    async def get_order_status(self, symbol: str, order_id: str) -> dict:
+        data = await _with_retry(self._get, f"/api/v3/brokerage/orders/historical/{order_id}")
+        order = data.get("order", {})
+        return {
+            "order_id": order.get("order_id"),
+            "status": order.get("status"),
+            "filled_qty": float(order.get("filled_size", 0) or 0),
+            "price": float(order.get("average_filled_price", 0) or 0),
+            "side": order.get("side", ""),
+        }
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
+
+
+# ─────────────────────────────────────────────
 # Key Validation Helpers
 # ─────────────────────────────────────────────
 
@@ -594,6 +740,21 @@ async def validate_oanda_keys(api_key: str, account_id: str) -> bool:
         return resp.status_code == 200
 
 
+async def validate_coinbase_keys(api_key: str, api_secret: str) -> bool:
+    """Verify Coinbase Advanced Trade credentials by listing accounts."""
+    client = CoinbaseClient(api_key, api_secret)
+    try:
+        resp = await client._http.get(
+            "/api/v3/brokerage/accounts",
+            headers=client._headers("GET", "/api/v3/brokerage/accounts"),
+        )
+        return resp.status_code == 200
+    except Exception:
+        return False
+    finally:
+        await client.aclose()
+
+
 # ─────────────────────────────────────────────
 # Factory
 # ─────────────────────────────────────────────
@@ -630,4 +791,6 @@ def get_exchange_client(
         return AlpacaClient(api_key, api_secret, base_url=base_url)
     if exchange == "oanda":
         return OandaClient(api_key, api_secret, account_id=kwargs.get("account_id"))
-    raise ValueError(f"Unsupported exchange: '{exchange}'. Choose binance, alpaca, or oanda.")
+    if exchange == "coinbase":
+        return CoinbaseClient(api_key, api_secret)
+    raise ValueError(f"Unsupported exchange: '{exchange}'. Choose binance, alpaca, oanda, or coinbase.")
