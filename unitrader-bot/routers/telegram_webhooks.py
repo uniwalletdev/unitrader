@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from telegram import Update
 
+from config import settings
 from database import get_db
 from models import TelegramLinkingCode, User, UserExternalAccount
 from routers.auth import get_current_user
@@ -249,3 +250,64 @@ async def unlink_telegram(
     await db.delete(ext)
     await db.commit()
     return {"status": "unlinked"}
+
+
+# ─────────────────────────────────────────────
+# GET /api/telegram/status  (public diagnostic)
+# ─────────────────────────────────────────────
+
+@linking_router.get("/status", include_in_schema=False)
+async def telegram_status():
+    """Diagnostic endpoint — shows whether the bot service is running and what webhook is registered."""
+    svc = _telegram_bot_service
+    if not svc or not svc.app:
+        token_configured = bool(settings.telegram_bot_token)
+        return {
+            "bot_initialized": False,
+            "token_configured": token_configured,
+            "reason": "Bot started successfully but service not set" if token_configured else "TELEGRAM_BOT_TOKEN env var is not set",
+            "api_base_url": settings.api_base_url,
+            "expected_webhook": f"{settings.api_base_url}/webhooks/telegram",
+        }
+
+    try:
+        webhook_info = await svc.app.bot.get_webhook_info()
+        bot_info     = await svc.app.bot.get_me()
+        return {
+            "bot_initialized": True,
+            "bot_username": bot_info.username,
+            "bot_id": bot_info.id,
+            "webhook_url": webhook_info.url,
+            "webhook_pending_count": webhook_info.pending_update_count,
+            "webhook_last_error": webhook_info.last_error_message,
+            "api_base_url": settings.api_base_url,
+        }
+    except Exception as exc:
+        return {"bot_initialized": True, "error": str(exc)}
+
+
+# ─────────────────────────────────────────────
+# POST /api/telegram/reset-webhook  (admin only)
+# ─────────────────────────────────────────────
+
+class ResetWebhookRequest(BaseModel):
+    admin_key: str
+    webhook_url: str | None = None  # override; defaults to settings.api_base_url
+
+
+@linking_router.post("/reset-webhook", include_in_schema=False)
+async def reset_webhook(body: ResetWebhookRequest):
+    """Re-register the Telegram webhook. Requires admin_key. Use after changing API_BASE_URL."""
+    if not settings.admin_secret_key or body.admin_key != settings.admin_secret_key:
+        raise HTTPException(status_code=403, detail="Invalid admin key")
+
+    svc = _telegram_bot_service
+    if not svc or not svc.app:
+        raise HTTPException(status_code=503, detail="Telegram bot service is not initialised. Check TELEGRAM_BOT_TOKEN env var.")
+
+    url = body.webhook_url or f"{settings.api_base_url}/webhooks/telegram"
+    try:
+        await svc.set_webhook(url)
+        return {"status": "ok", "webhook_url": url}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
