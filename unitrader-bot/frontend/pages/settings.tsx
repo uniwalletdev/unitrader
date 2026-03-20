@@ -45,7 +45,11 @@ export default function SettingsPage() {
         setSettings(data);
         setDailyLossPct(data.max_daily_loss || 10);
       } catch (err: any) {
-        setError(err.response?.data?.detail || "Failed to load settings");
+        if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
+          setError("Settings took too long to load. Please refresh the page.");
+        } else {
+          setError(err.response?.data?.detail || "Failed to load settings");
+        }
       } finally {
         setLoading(false);
       }
@@ -88,6 +92,21 @@ export default function SettingsPage() {
     return (
       <div className="flex items-center justify-center h-screen bg-dark-950">
         <Loader className="animate-spin text-brand-500" size={32} />
+      </div>
+    );
+  }
+
+  if (error && !settings) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen bg-dark-950 gap-4">
+        <AlertCircle className="text-red-400" size={36} />
+        <p className="text-white font-semibold">{error}</p>
+        <button
+          onClick={() => { setError(null); setLoading(true); authApi.getSettings().then(r => { setSettings(r.data); setDailyLossPct(r.data.max_daily_loss || 10); }).catch(e => setError(e.response?.data?.detail || "Failed to load settings")).finally(() => setLoading(false)); }}
+          className="btn-primary px-6 py-2"
+        >
+          Try Again
+        </button>
       </div>
     );
   }

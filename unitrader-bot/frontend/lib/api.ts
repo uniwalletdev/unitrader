@@ -5,6 +5,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export const api = axios.create({
   baseURL: API_URL,
   headers: { "Content-Type": "application/json" },
+  timeout: 8000, // 8 seconds — prevents UI hangs on slow/cold Railway starts
 });
 
 // Attach JWT token from localStorage on every request
