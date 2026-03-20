@@ -42,6 +42,7 @@ from src.integrations.exchange_client import (
     validate_alpaca_keys,
     validate_binance_keys,
     validate_oanda_keys,
+    validate_coinbase_keys,
 )
 from src.services.trade_monitoring import enforce_loss_limits
 from src.services.subscription import check_trade_limit
@@ -71,12 +72,12 @@ def _human_account_type(trader_class: str) -> str:
 
 class ExecuteTradeRequest(BaseModel):
     symbol: str
-    exchange: str  # binance | alpaca | oanda
+    exchange: str  # binance | alpaca | oanda | coinbase
 
 
 class AnalyzeTradeRequest(BaseModel):
     symbol: str
-    exchange: str  # binance | alpaca | oanda
+    exchange: str  # binance | alpaca | oanda | coinbase
     trader_class: str | None = None
 
 
@@ -91,13 +92,13 @@ class ClosePositionRequest(BaseModel):
 
 
 class ConnectExchangeRequest(BaseModel):
-    exchange: str = Field(..., pattern="^(alpaca|binance|oanda)$")
+    exchange: str = Field(..., pattern="^(alpaca|binance|oanda|coinbase)$")
     api_key: str = Field(..., min_length=1)
     api_secret: str = Field(..., min_length=1)
     is_paper: bool = Field(True, description="Whether these are paper/sandbox keys")
 
 
-VALID_EXCHANGES = {"alpaca", "binance", "oanda"}
+VALID_EXCHANGES = {"alpaca", "binance", "oanda", "coinbase"}
 
 
 # ─────────────────────────────────────────────
@@ -122,8 +123,12 @@ async def _validate_exchange_keys(exchange: str, api_key: str, api_secret: str, 
             valid = await validate_oanda_keys(api_key, api_secret)
             if not valid:
                 raise ValueError("OANDA rejected the credentials")
+        elif exchange == "coinbase":
+            valid = await validate_coinbase_keys(api_key, api_secret)
+            if not valid:
+                raise ValueError("Coinbase rejected the credentials")
 
-        client = get_exchange_client(exchange, api_key, api_secret)
+        client = get_exchange_client(exchange, api_key, api_secret, is_paper=is_paper)
         balance = await client.get_account_balance()
         await client.aclose()
         return balance
@@ -243,7 +248,7 @@ async def list_exchange_keys(
 
 @router.delete("/exchange-keys/{exchange}")
 async def disconnect_exchange(
-    exchange: str = Path(..., pattern="^(alpaca|binance|oanda)$"),
+    exchange: str = Path(..., pattern="^(alpaca|binance|oanda|coinbase)$"),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
