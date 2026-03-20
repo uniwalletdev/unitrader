@@ -215,6 +215,61 @@ function Dashboard({ user }: { user: User | null }) {
         </button>
       </div>
 
+      {/* ── Getting Started card (new users only) ─────────────────── */}
+      {!loading && connectedExchanges.length === 0 && (
+        <div className="rounded-xl border border-[#22c55e]/30 p-5" style={{ backgroundColor: "#0a1a0e" }}>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-widest text-[#22c55e]">
+            Welcome, {user?.ai_name ? `${user.ai_name} is ready` : "you're all set"}
+          </div>
+          <h2 className="mb-4 text-base font-bold text-white">
+            3 steps to your first AI-powered trade
+          </h2>
+          <div className="space-y-3">
+            {[
+              {
+                num: "1",
+                title: "Connect your exchange",
+                desc: "Link Alpaca (free paper trading), Coinbase, Binance or OANDA. Your money stays in your account.",
+                action: "Connect now",
+                hasButton: true,
+              },
+              {
+                num: "2",
+                title: "Set your risk tolerance",
+                desc: "Go to Settings and set your daily loss limit. Apex won't trade beyond it.",
+                action: null,
+                hasButton: false,
+              },
+              {
+                num: "3",
+                title: "Chat with Apex",
+                desc: "Ask Apex anything — market analysis, what to trade, how it works. It explains every decision.",
+                action: null,
+                hasButton: false,
+              },
+            ].map((s, i) => (
+              <div key={i} className="flex items-start gap-3 rounded-lg border border-white/5 p-3" style={{ backgroundColor: "rgba(34,197,94,0.04)" }}>
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#22c55e]/20 text-xs font-bold text-[#22c55e]">
+                  {s.num}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-white">{s.title}</p>
+                  <p className="mt-0.5 text-xs text-dark-400 leading-relaxed">{s.desc}</p>
+                </div>
+                {s.hasButton && (
+                  <button
+                    onClick={() => setExchangeWizardOpen("alpaca")}
+                    className="shrink-0 rounded-lg bg-[#22c55e] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#1ea94e]"
+                  >
+                    Connect now
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Stats */}
       <div className="grid grid-cols-2 gap-2 md:gap-4 lg:grid-cols-4">
         <StatCard label="Balance" value={r.balance_usd ? `$${r.balance_usd.toLocaleString()}` : "—"} />
@@ -527,17 +582,23 @@ function Dashboard({ user }: { user: User | null }) {
 // ─────────────────────────────────────────────
 
 function Chat({ user }: { user: User | null }) {
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [isNewUser, setIsNewUser] = useState(false);
+
+  const newUserWelcome = `Hi, I'm ${user?.ai_name || "Apex"} — your personal AI trader 👋\n\nHere's how to get started:\n\n1. Connect your exchange — go to the Exchanges tab and link Alpaca (free paper trading), Coinbase, Binance or OANDA. Your money always stays in your own account.\n\n2. Set your risk limit — head to Settings and set a daily loss limit so I know how much risk you're comfortable with.\n\n3. Ask me anything — I analyse markets constantly. Try asking: "What should I trade today?" or "Explain RSI to me" or "How does stop-loss work?"\n\nWhat would you like to do first?`;
+
+  const returningWelcome = `Hi! I'm ${user?.ai_name || "your AI"}. I can help with market analysis, trade questions, performance reviews, and more. What would you like to know?`;
+
   const welcomeMsg: ChatMessage = {
     role: "assistant",
-    content: `Hi! I'm ${user?.ai_name || "your AI"}. I can help with market analysis, trade questions, performance reviews, and more. What would you like to know?`,
+    content: isNewUser ? newUserWelcome : returningWelcome,
   };
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMsg]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load conversation history on mount
+  // Load conversation history — detect new user if no history exists
   useEffect(() => {
     if (historyLoaded) return;
     chatApi.history(50).then((res) => {
@@ -552,9 +613,20 @@ function Chat({ user }: { user: User | null }) {
             });
           }
         });
-        if (past.length > 0) setMessages([welcomeMsg, ...past]);
+        if (past.length > 0) {
+          setMessages([{ role: "assistant", content: returningWelcome }, ...past]);
+        } else {
+          setIsNewUser(true);
+          setMessages([{ role: "assistant", content: newUserWelcome }]);
+        }
+      } else {
+        setIsNewUser(true);
+        setMessages([{ role: "assistant", content: newUserWelcome }]);
       }
-    }).catch(() => {}).finally(() => setHistoryLoaded(true));
+    }).catch(() => {
+      setIsNewUser(true);
+      setMessages([{ role: "assistant", content: newUserWelcome }]);
+    }).finally(() => setHistoryLoaded(true));
   }, [historyLoaded]);
 
   useEffect(() => {
