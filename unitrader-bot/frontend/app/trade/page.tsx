@@ -48,17 +48,45 @@ function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+const getAmountLimits = (traderClass: string, trustLadderStage: number) => {
+  const limits: Record<string, { min: number; max: number; step: number }> = {
+    complete_novice:    { min: 25,  max: 25,    step: 25  },
+    curious_saver:      { min: 10,  max: 500,   step: 10  },
+    self_taught:        { min: 5,   max: 5000,  step: 5   },
+    experienced:        { min: 1,   max: 10000, step: 10  },
+    semi_institutional: { min: 1,   max: 50000, step: 100 },
+    crypto_native:      { min: 5,   max: 5000,  step: 5   },
+  };
+
+  // Trust Ladder Stage 1 always caps at £25 regardless of class
+  if (trustLadderStage === 1) {
+    return { min: 25, max: 25, step: 25 };
+  }
+
+  return limits[traderClass] ?? limits["complete_novice"];
+};
+
 function AmountInput({
   value,
   onChange,
+  min,
   max,
+  step,
   label = "Amount (GBP)",
 }: {
   value: number;
   onChange: (v: number) => void;
+  min: number;
   max: number;
+  step: number;
   label?: string;
 }) {
+  const handleChange = (raw: number) => {
+    if (raw < min) { onChange(min); return; }
+    if (raw > max) { onChange(max); return; }
+    onChange(raw);
+  };
+
   return (
     <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
       <div className="mb-2 flex items-center justify-between text-xs text-dark-400">
@@ -67,14 +95,17 @@ function AmountInput({
       </div>
       <input
         type="range"
-        min={25}
+        min={min}
         max={max}
-        step={25}
+        step={step}
         value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
+        onChange={(e) => handleChange(Number(e.target.value))}
         className="w-full"
       />
-      <div className="mt-2 text-[11px] text-dark-500">Max: £{max}</div>
+      <div className="mt-2 flex justify-between text-[11px] text-dark-500">
+        <span>Min: £{min}</span>
+        <span>Max: £{max}</span>
+      </div>
     </div>
   );
 }
@@ -190,12 +221,10 @@ function TradePage() {
     return false;
   }, [trust, traderClass]);
 
-  const maxAmount = useMemo(() => {
-    if (trust?.maxAmountGbp) return trust.maxAmountGbp;
-    if (!trust) return 500;
-    if (trust.stage <= 2) return 25;
-    return 500;
-  }, [trust]);
+  const amountLimits = useMemo(
+    () => getAmountLimits(traderClass, trust?.stage ?? 1),
+    [traderClass, trust?.stage]
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -383,7 +412,7 @@ function TradePage() {
               onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
               selectedSymbols={symbol ? [symbol] : []}
             />
-            <AmountInput value={amount} onChange={setAmount} max={maxAmount} />
+            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} />
             <RiskSection variant="plain" />
             <button
               type="button"
@@ -434,7 +463,7 @@ function TradePage() {
                 <PriceChart symbol={symbol} traderClass="self_taught" signal="NONE" />
               </div>
             )}
-            <AmountInput value={amount} onChange={setAmount} max={5000} label="Amount (GBP)" />
+            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" />
             <RiskSection variant="pct" />
             <button
               type="button"
@@ -609,7 +638,7 @@ function TradePage() {
                 <PriceChart symbol={symbol} traderClass="crypto_native" signal="NONE" />
               </div>
             )}
-            <AmountInput value={amount} onChange={setAmount} max={5000} label="Amount (GBP)" />
+            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" />
             <RiskSection variant="plain" />
             <button
               type="button"
