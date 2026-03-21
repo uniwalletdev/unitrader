@@ -284,24 +284,19 @@ class MasterOrchestrator:
         # Extract expert explanation
         expert_explanation = analysis_result.explanation_expert
 
-        # Get conversation agent for translations
-        conv_agent = ConversationAgent(user_id=user_id)
-
         # Translate to simple explanation
-        simple_result = await conv_agent.translate(
+            simple_explanation = await trading_agent.translate_explanation(
             expert_text=expert_explanation,
             target="simple",
             context=ctx,
         )
-        simple_explanation = simple_result.get("translated_text", "")
 
         # Translate to metaphor explanation
-        metaphor_result = await conv_agent.translate(
+            metaphor_explanation = await trading_agent.translate_explanation(
             expert_text=expert_explanation,
             target="metaphor",
             context=ctx,
         )
-        metaphor_explanation = metaphor_result.get("translated_text", "")
 
         # Merge all explanations into result
         return {
