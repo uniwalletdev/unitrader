@@ -39,18 +39,43 @@ _subscription_lock = asyncio.Lock()
 
 # Alpaca client for REST API calls
 alpaca = None
-if AlpacaREST:
+
+
+def _get_alpaca_client() -> Any:
+    """Return a lazily initialized Alpaca REST client.
+
+    Uses the same settings-backed credentials as the rest of the application,
+    with legacy APCA_* environment variables as a fallback.
+    """
+    global alpaca
+
+    if alpaca is not None:
+        return alpaca
+
+    if not AlpacaREST:
+        raise ValueError("alpaca_trade_api not installed")
+
+    api_key = settings.alpaca_api_key or os.getenv("APCA_API_KEY_ID", "")
+    api_secret = settings.alpaca_api_secret or os.getenv("APCA_API_SECRET_KEY", "")
+    base_url = settings.alpaca_base_url or os.getenv(
+        "APCA_API_BASE_URL", "https://paper-api.alpaca.markets"
+    )
+
+    if not api_key or not api_secret:
+        raise ValueError(
+            "Alpaca client not initialized: missing ALPACA_API_KEY/ALPACA_API_SECRET configuration"
+        )
+
     try:
         alpaca = AlpacaREST(
-            base_url=os.getenv("APCA_API_BASE_URL", "https://paper-api.alpaca.markets"),
-            key_id=os.getenv("APCA_API_KEY_ID"),
-            secret_key=os.getenv("APCA_API_SECRET_KEY"),
+            base_url=base_url,
+            key_id=api_key,
+            secret_key=api_secret,
         )
-    except Exception as e:
-        logger.error(f"Failed to initialize Alpaca client: {e}")
-        alpaca = None
-else:
-    logger.warning("alpaca_trade_api not installed — WebSocket price streaming will not work")
+        return alpaca
+    except Exception as exc:
+        logger.error("Failed to initialize Alpaca client: %s", exc)
+        raise ValueError(f"Alpaca client not initialized: {exc}") from exc
 
 
 # ─────────────────────────────────────────────
@@ -137,10 +162,9 @@ def _fetch_latest_quote(symbol: str) -> Dict[str, Any]:
     Raises:
         Exception: If fetch fails
     """
-    if not alpaca:
-        raise ValueError("Alpaca client not initialized")
+    client = _get_alpaca_client()
 
-    quote = alpaca.get_last_quote(symbol)
+    quote = client.get_last_quote(symbol)
     if not quote:
         raise ValueError(f"No quote found for {symbol}")
 
