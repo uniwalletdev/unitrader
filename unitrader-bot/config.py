@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     db_max_overflow: int = 40
     db_pool_timeout: int = 30
     db_pool_recycle: int = 1800  # recycle connections every 30 min
+    # Set DB_USE_NULLPOOL=true to force NullPool for all postgres connections
+    # (only needed for PgBouncer transaction-mode poolers not on port 6543)
+    db_use_nullpool: bool = False
 
     supabase_url: str = ""
     supabase_anon_key: str = ""

@@ -8,6 +8,7 @@ Endpoints:
     GET  /api/trading/performance         — Aggregated statistics
     POST /api/trading/close-position      — Manual close at market
     GET  /api/trading/risk-analysis       — Daily loss, remaining budget
+    GET  /api/trading/simulate-history   — Historical portfolio simulation
     POST /api/trading/exchange-keys       — Save encrypted exchange API keys
     GET  /api/trading/exchange-keys       — List connected exchanges
     DELETE /api/trading/exchange-keys/{exchange} — Remove exchange keys
@@ -690,6 +691,152 @@ async def get_ohlcv(
         )
 
     return {"status": "success", "data": out}
+
+
+# ─────────────────────────────────────────────
+# GET /api/trading/simulate-history
+# ─────────────────────────────────────────────
+
+@router.get("/simulate-history")
+async def simulate_history(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    amount: float = Query(1000.0, gt=0, description="Total USD to simulate investing"),
+    days: int = Query(30, ge=1, le=365, description="Number of calendar days of history"),
+    symbols: str = Query(..., description="Comma-separated symbols e.g. AAPL,MSFT,SPY"),
+):
+    """Simulate historical portfolio performance for a set of symbols.
+
+    Distributes ``amount`` equally across ``symbols`` and calculates
+    what the portfolio value would have been over the past ``days`` days,
+    using daily closing prices from Alpaca.
+
+    Prefers the user's stored Alpaca keys; falls back to server-level keys.
+    """
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    if not symbol_list:
+        raise HTTPException(status_code=400, detail="At least one symbol required")
+    if len(symbol_list) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 symbols per request")
+
+    # Resolve Alpaca credentials: user keys > system keys
+    api_key: str | None = None
+    api_secret: str | None = None
+
+    key_res = await db.execute(
+        select(ExchangeAPIKey).where(
+            ExchangeAPIKey.user_id == current_user.id,
+            ExchangeAPIKey.exchange == "alpaca",
+            ExchangeAPIKey.is_active == True,  # noqa: E712
+        )
+    )
+    key_row = key_res.scalars().first()
+    if key_row:
+        api_key, api_secret = decrypt_api_key(
+            key_row.encrypted_api_key, key_row.encrypted_api_secret
+        )
+    elif settings.alpaca_api_key and settings.alpaca_api_secret:
+        api_key, api_secret = settings.alpaca_api_key, settings.alpaca_api_secret
+
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No Alpaca connection found. Connect your Alpaca account first.",
+        )
+
+    headers = {"APCA-API-KEY-ID": api_key, "APCA-API-SECRET-KEY": api_secret}
+    base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
+    allocation_per_symbol = amount / len(symbol_list)
+    # Fetch one extra bar as the "purchase day" baseline
+    limit = days + 1
+
+    per_symbol: dict[str, dict] = {}
+    async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
+        for sym in symbol_list:
+            try:
+                resp = await client.get(
+                    f"{base}/v2/stocks/{sym}/bars",
+                    params={"timeframe": "1Day", "limit": limit},
+                )
+                resp.raise_for_status()
+                bars: list[dict] = resp.json().get("bars") or []
+            except Exception as exc:
+                logger.warning("simulate-history: skipping %s — %s", sym, exc)
+                continue
+
+            if len(bars) < 2:
+                logger.warning("simulate-history: not enough bars for %s", sym)
+                continue
+
+            bars.sort(key=lambda b: b.get("t", ""))
+            buy_price = float(bars[0].get("c") or 0)
+            if buy_price <= 0:
+                continue
+
+            dates = [b["t"][:10] for b in bars[1:]]
+            values = [
+                round(allocation_per_symbol / buy_price * float(b.get("c") or 0), 2)
+                for b in bars[1:]
+            ]
+            per_symbol[sym] = {
+                "dates": dates,
+                "values": values,
+                "buy_price": buy_price,
+            }
+
+    if not per_symbol:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="market_data_unavailable",
+        )
+
+    # Merge all dates from all symbols and sort
+    all_dates: list[str] = sorted(
+        {d for data in per_symbol.values() for d in data["dates"]}
+    )
+
+    # For each date, sum values across symbols (carry last known value for gaps)
+    last_known: dict[str, float] = {sym: allocation_per_symbol for sym in per_symbol}
+    portfolio_values: list[float] = []
+    for date in all_dates:
+        day_total = 0.0
+        for sym, data in per_symbol.items():
+            if date in data["dates"]:
+                idx = data["dates"].index(date)
+                last_known[sym] = data["values"][idx]
+            day_total += last_known[sym]
+        portfolio_values.append(round(day_total, 2))
+
+    initial_value = round(amount, 2)
+    final_value = portfolio_values[-1] if portfolio_values else initial_value
+    total_return_pct = (
+        round((final_value - initial_value) / initial_value * 100, 2)
+        if initial_value > 0
+        else 0.0
+    )
+
+    per_symbol_summary = {
+        sym: {
+            "initial_allocation": round(allocation_per_symbol, 2),
+            "final_value": data["values"][-1] if data["values"] else round(allocation_per_symbol, 2),
+            "return_pct": round(
+                (data["values"][-1] - allocation_per_symbol) / allocation_per_symbol * 100, 2
+            ) if data["values"] and allocation_per_symbol > 0 else 0.0,
+        }
+        for sym, data in per_symbol.items()
+    }
+
+    return {
+        "status": "success",
+        "data": {
+            "dates": all_dates,
+            "portfolio_values": portfolio_values,
+            "per_symbol": per_symbol_summary,
+            "initial_value": initial_value,
+            "final_value": final_value,
+            "total_return_pct": total_return_pct,
+        },
+    }
 
 
 # ─────────────────────────────────────────────

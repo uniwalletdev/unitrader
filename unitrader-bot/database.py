@@ -37,18 +37,25 @@ elif _db_url.startswith("postgres://"):
 # SQLite doesn't support pool_size / max_overflow
 _is_sqlite = "sqlite" in _db_url
 
-# In managed production setups (Railway/Supabase/PgBouncer), asyncpg prepared
-# statement caching can produce "already exists" / "does not exist" errors.
-# Use NullPool + disabled statement caching for ALL PostgreSQL connections
-# to keep connections stateless and PgBouncer-safe.  There is no meaningful
-# downside even when PgBouncer is absent.
 _is_postgres = "postgresql+asyncpg://" in _db_url
-_pgbouncer_safe_mode = _is_postgres and not _is_sqlite
 
-# SQLAlchemy's asyncpg dialect still prepares statements by default. With the
-# Supabase transaction pooler, those statements can collide or disappear across
-# backend connections unless we disable the cache and use unique names.
-if _pgbouncer_safe_mode and "prepared_statement_cache_size=" not in _db_url:
+# NullPool is only required for the Supabase *transaction* pooler (port 6543),
+# which routes each statement to a different backend connection — making
+# persistent connections and prepared-statement caches unsafe.
+# Direct connections and session poolers (port 5432) can use QueuePool safely.
+# Set DB_USE_NULLPOOL=true in your environment to force NullPool explicitly.
+_is_transaction_pooler = _is_postgres and (
+    "pooler.supabase.com" in _db_url
+    and (":6543/" in _db_url or _db_url.endswith(":6543"))
+)
+_pgbouncer_safe_mode = _is_postgres and (
+    _is_transaction_pooler or settings.db_use_nullpool
+)
+
+# Disable asyncpg prepared-statement caching for ALL PostgreSQL connections.
+# This prevents "prepared statement already exists" errors if the app ever
+# encounters a pooler or is restarted without draining the pool.
+if _is_postgres and "prepared_statement_cache_size=" not in _db_url:
     _db_url = f"{_db_url}{'&' if '?' in _db_url else '?'}prepared_statement_cache_size=0"
 
 _engine_kwargs: dict = {
@@ -60,14 +67,18 @@ _connect_args: dict = {}
 if settings.db_ssl_args:
     _connect_args.update(settings.db_ssl_args)
 
-if _pgbouncer_safe_mode:
-    _engine_kwargs["poolclass"] = NullPool
+# Disable asyncpg statement cache for all postgres connections regardless of
+# pool mode — cheap insurance against prepared-statement collisions.
+if _is_postgres:
     _connect_args.update(
         {
             "statement_cache_size": 0,
             "prepared_statement_name_func": lambda: f"__asyncpg_{uuid4()}__",
         }
     )
+
+if _pgbouncer_safe_mode:
+    _engine_kwargs["poolclass"] = NullPool
 elif not _is_sqlite:
     _engine_kwargs.update(
         {

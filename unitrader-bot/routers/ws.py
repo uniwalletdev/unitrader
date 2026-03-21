@@ -9,6 +9,7 @@ Endpoints:
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime
 from typing import Any, Dict, Set
 
@@ -17,10 +18,12 @@ try:
 except ImportError:
     AlpacaREST = None
 
+import httpx
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from starlette.websockets import WebSocketState
-from jose import JWTError
+from jose import JWTError, jwt as jose_jwt
 
+from config import settings
 from security import verify_token
 
 logger = logging.getLogger(__name__)
@@ -54,13 +57,54 @@ else:
 # Token Validation
 # ─────────────────────────────────────────────
 
-def _validate_token(token: str) -> str:
+# In-memory JWKS cache shared by WebSocket validation
+_ws_jwks_cache: dict = {}
+
+
+async def _get_ws_jwks(jwks_url: str) -> dict:
+    """Return cached Clerk JWKS, refreshing when older than 1 hour."""
+    if _ws_jwks_cache.get("data") and (time.monotonic() - _ws_jwks_cache.get("ts", 0.0)) < 3600:
+        return _ws_jwks_cache["data"]
+    async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+        resp = await client.get(jwks_url)
+        resp.raise_for_status()
+        data = resp.json()
+    _ws_jwks_cache["data"] = data
+    _ws_jwks_cache["ts"] = time.monotonic()
+    return data
+
+
+async def _validate_token(token: str) -> str:
     """
-    Validate JWT token and return user_id.
+    Validate a JWT token (Clerk RS256 or internal HS256) and return user_id.
+
+    Tries Clerk JWKS first (RS256), then falls back to internal HS256 token.
 
     Raises:
         HTTPException: If token is invalid
     """
+    # Try Clerk RS256 via JWKS
+    jwks_url = settings.clerk_jwks_url if hasattr(settings, "clerk_jwks_url") else None
+    if jwks_url:
+        try:
+            jwks = await _get_ws_jwks(jwks_url)
+            claims = jose_jwt.decode(
+                token,
+                jwks,
+                algorithms=["RS256"],
+                options={"verify_aud": False},
+            )
+            user_id = claims.get("sub")
+            if not user_id:
+                raise ValueError("Missing 'sub' claim")
+            return user_id
+        except Exception as e:
+            logger.warning(f"JWT validation failed: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
+            )
+
+    # Fallback: internal HS256 token
     try:
         payload = verify_token(token)
         user_id = payload.get("sub")
@@ -243,7 +287,7 @@ async def websocket_price_stream(websocket: WebSocket, symbol: str, token: str =
     """
     # Validate token before accepting connection
     try:
-        user_id = _validate_token(token)
+        user_id = await _validate_token(token)
     except HTTPException:
         await websocket.close(code=4001, reason="Unauthorized")
         return
@@ -326,7 +370,7 @@ async def get_latest_price(symbol: str, token: str = Query(...)):
     """
     # Validate token
     try:
-        user_id = _validate_token(token)
+        user_id = await _validate_token(token)
     except HTTPException as e:
         raise e
 
