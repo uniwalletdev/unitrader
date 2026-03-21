@@ -48,6 +48,26 @@ function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
+const getAmountHelperText = (
+  traderClass: string,
+  trustLadderStage: number,
+  min: number,
+): string | null => {
+  if (traderClass === "complete_novice") {
+    return trustLadderStage === 1
+      ? "£25 maximum during Watch Mode \u2014 Apex is proving itself"
+      : "Apex will grow your limit as it builds your trust";
+  }
+  if (traderClass === "curious_saver") {
+    return "Minimum £10 \u2014 enough for Apex to work with";
+  }
+  if (traderClass === "self_taught" || traderClass === "crypto_native") {
+    return `\u00a3${min} minimum \u2014 set your own limit in settings`;
+  }
+  // experienced / semi_institutional — no helper text
+  return null;
+};
+
 const getAmountLimits = (traderClass: string, trustLadderStage: number) => {
   const limits: Record<string, { min: number; max: number; step: number }> = {
     complete_novice:    { min: 25,  max: 25,    step: 25  },
@@ -73,6 +93,7 @@ function AmountInput({
   max,
   step,
   label = "Amount (GBP)",
+  helperText,
 }: {
   value: number;
   onChange: (v: number) => void;
@@ -80,6 +101,7 @@ function AmountInput({
   max: number;
   step: number;
   label?: string;
+  helperText?: string | null;
 }) {
   const handleChange = (raw: number) => {
     if (raw < min) { onChange(min); return; }
@@ -106,6 +128,9 @@ function AmountInput({
         <span>Min: £{min}</span>
         <span>Max: £{max}</span>
       </div>
+      {helperText && (
+        <p className="mt-2 text-[11px] leading-relaxed text-dark-400">{helperText}</p>
+      )}
     </div>
   );
 }
@@ -224,6 +249,11 @@ function TradePage() {
   const amountLimits = useMemo(
     () => getAmountLimits(traderClass, trust?.stage ?? 1),
     [traderClass, trust?.stage]
+  );
+
+  const amountHelperText = useMemo(
+    () => getAmountHelperText(traderClass, trust?.stage ?? 1, amountLimits.min),
+    [traderClass, trust?.stage, amountLimits.min]
   );
 
   useEffect(() => {
@@ -412,7 +442,7 @@ function TradePage() {
               onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
               selectedSymbols={symbol ? [symbol] : []}
             />
-            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} />
+            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} helperText={amountHelperText} />
             <RiskSection variant="plain" />
             <button
               type="button"
@@ -463,7 +493,7 @@ function TradePage() {
                 <PriceChart symbol={symbol} traderClass="self_taught" signal="NONE" />
               </div>
             )}
-            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" />
+            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" helperText={amountHelperText} />
             <RiskSection variant="pct" />
             <button
               type="button"
@@ -638,7 +668,7 @@ function TradePage() {
                 <PriceChart symbol={symbol} traderClass="crypto_native" signal="NONE" />
               </div>
             )}
-            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" />
+            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" helperText={amountHelperText} />
             <RiskSection variant="plain" />
             <button
               type="button"

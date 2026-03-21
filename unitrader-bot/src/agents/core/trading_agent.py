@@ -58,6 +58,8 @@ CLASS_TRADE_LIMITS: dict[str, dict[str, float]] = {
 def validate_trade_amount(amount: float, ctx: SharedContext) -> dict:
     """Validate trade amount against trader-class limits and Trust Ladder stage.
 
+    Paper trades bypass all min/max validation — they are practice only.
+
     Trust Ladder overrides:
       Stage 1 (Micro Mode) — always caps at 25, regardless of class.
       Stage >= 2 (Standard) — non-novice classes use their full class max.
@@ -66,6 +68,10 @@ def validate_trade_amount(amount: float, ctx: SharedContext) -> dict:
         {"valid": True, "min": n, "max": n}
         or {"valid": False, "reason": str, "min": n, "max": n}
     """
+    # Paper trades are practice — skip all amount validation
+    if ctx.paper_trading_enabled:
+        return {"valid": True, "min": 0, "max": float("inf")}
+
     limits = dict(CLASS_TRADE_LIMITS.get(ctx.trader_class, CLASS_TRADE_LIMITS["complete_novice"]))
 
     # Trust Ladder Stage 1 — micro mode, hard cap at 25
