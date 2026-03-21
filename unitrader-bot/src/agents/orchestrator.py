@@ -279,7 +279,7 @@ class MasterOrchestrator:
 
         # Call trading agent to analyze
         trading_agent = TradingAgent(user_id=user_id)
-        analysis_result = await trading_agent.analyze(symbol=symbol, context=ctx)
+        analysis_result = await trading_agent.analyze(symbol=symbol, exchange=ctx.exchange, context=ctx)
 
         # Extract expert explanation
         expert_explanation = analysis_result.get("explanation", "")
@@ -424,7 +424,7 @@ class MasterOrchestrator:
 
         # Step 2: Get AI analysis with signal, explanation, confidence, market data
         trading_agent = TradingAgent(user_id=user_id)
-        agent_analysis = await trading_agent.analyze(symbol=symbol, context=ctx)
+        agent_analysis = await trading_agent.analyze(symbol=symbol, exchange=ctx.exchange, context=ctx)
 
         # Import risk and portfolio agents
         from src.agents.core.risk_agent import RiskAgent
