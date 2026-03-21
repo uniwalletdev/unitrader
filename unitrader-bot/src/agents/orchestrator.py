@@ -506,11 +506,10 @@ class MasterOrchestrator:
         if not message:
             raise ValueError("Missing message in payload")
 
-        conv_agent = ConversationAgent()
+        conv_agent = ConversationAgent(user_id=user_id)
         response = await conv_agent.chat(
-            message=message,
+            user_message=message,
             mode="onboarding",
-            context=ctx,
             db=db,
         )
 
