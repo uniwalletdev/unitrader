@@ -282,7 +282,7 @@ class MasterOrchestrator:
         analysis_result = await trading_agent.analyze(symbol=symbol, exchange=ctx.exchange, context=ctx)
 
         # Extract expert explanation
-        expert_explanation = analysis_result.get("explanation", "")
+        expert_explanation = analysis_result.explanation_expert
 
         # Get conversation agent for translations
         conv_agent = ConversationAgent(user_id=user_id)
@@ -305,7 +305,7 @@ class MasterOrchestrator:
 
         # Merge all explanations into result
         return {
-            **analysis_result,
+            **analysis_result.model_dump(),
             "explanations": {
                 "expert": expert_explanation,
                 "simple": simple_explanation,
@@ -472,7 +472,7 @@ class MasterOrchestrator:
             ctx=ctx,
             risk_result=risk_result,
             portfolio_result=portfolio_check,
-            agent_response=agent_analysis,
+            agent_response=agent_analysis.model_dump(),
             db=db,
         )
 
