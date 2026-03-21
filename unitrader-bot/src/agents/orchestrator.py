@@ -278,14 +278,14 @@ class MasterOrchestrator:
         sentiment_context = self._build_sentiment_context(sentiment, ctx)
 
         # Call trading agent to analyze
-        trading_agent = TradingAgent()
+        trading_agent = TradingAgent(user_id=user_id)
         analysis_result = await trading_agent.analyze(symbol=symbol, context=ctx)
 
         # Extract expert explanation
         expert_explanation = analysis_result.get("explanation", "")
 
         # Get conversation agent for translations
-        conv_agent = ConversationAgent()
+        conv_agent = ConversationAgent(user_id=user_id)
 
         # Translate to simple explanation
         simple_result = await conv_agent.translate(
@@ -423,7 +423,7 @@ class MasterOrchestrator:
             )
 
         # Step 2: Get AI analysis with signal, explanation, confidence, market data
-        trading_agent = TradingAgent()
+        trading_agent = TradingAgent(user_id=user_id)
         agent_analysis = await trading_agent.analyze(symbol=symbol, context=ctx)
 
         # Import risk and portfolio agents
@@ -552,7 +552,7 @@ class MasterOrchestrator:
         if not all([symbols, amount, days]):
             raise ValueError("Missing symbols, amount, or days in payload")
 
-        trading_agent = TradingAgent()
+        trading_agent = TradingAgent(user_id=user_id)
         backtest_result = await trading_agent.backtest(
             symbols=symbols,
             amount=amount,

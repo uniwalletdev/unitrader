@@ -145,6 +145,7 @@ async def create_tables() -> None:
             ("user_settings", "onboarding_complete", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("user_settings", "financial_goal", "VARCHAR(50)"),
             ("user_settings", "risk_level_setting", "VARCHAR(20)"),
+            ("exchange_api_keys", "is_paper", "BOOLEAN NOT NULL DEFAULT TRUE"),
         ]
         async with engine.begin() as conn:
             for table, col, col_def in pg_new_columns:

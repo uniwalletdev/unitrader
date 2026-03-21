@@ -352,6 +352,16 @@ async def _close_position_at_price(
 # Loss Limit Enforcement
 # ─────────────────────────────────────────────
 
+_LOSS_LIMIT_FALLBACK = {
+    "action": "none",
+    "daily_loss_usd": 0.0,
+    "weekly_loss_usd": 0.0,
+    "monthly_loss_usd": 0.0,
+    "balance": 10_000.0,  # safe fallback — matches internal default
+    "trader_class": "complete_novice",
+}
+
+
 async def enforce_loss_limits(user_id: str) -> dict:
     """Check daily, weekly, and monthly loss against user settings.
     
@@ -365,6 +375,15 @@ async def enforce_loss_limits(user_id: str) -> dict:
          "daily_loss_usd": ..., "weekly_loss_usd": ..., "monthly_loss_usd": ...,
          "trader_class": ..., "balance": ...}
     """
+    try:
+        return await _enforce_loss_limits_impl(user_id)
+    except Exception:
+        logger.exception("enforce_loss_limits failed for user %s — returning safe fallback", user_id)
+        return _LOSS_LIMIT_FALLBACK
+
+
+async def _enforce_loss_limits_impl(user_id: str) -> dict:
+    """Internal implementation — called by enforce_loss_limits with outer try/except."""
     now = datetime.now(timezone.utc)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     week_start = day_start - timedelta(days=now.weekday())
