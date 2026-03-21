@@ -22,7 +22,11 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     const url = err.config?.url || "";
-    const isAuthEndpoint = url.includes("/clerk-sync") || url.includes("/clerk-setup");
+    // Skip auth-flow endpoints — the page handles 401 itself for these
+    const isAuthEndpoint =
+      url.includes("/clerk-sync") ||
+      url.includes("/clerk-setup") ||
+      url.includes("/api/auth/me");  // "me" is called during silent token check
     if (err.response?.status === 401 && typeof window !== "undefined" && !isAuthEndpoint) {
       localStorage.removeItem("access_token");
       window.location.href = "/login";

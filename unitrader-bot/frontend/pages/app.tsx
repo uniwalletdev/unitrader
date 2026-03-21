@@ -1146,10 +1146,19 @@ export default function AppPage() {
           localStorage.removeItem("access_token");
         }
       }
+      let redirectedToOnboarding = false;
       try {
         const clerkToken = await getToken();
         const res = await authApi.clerkSync(clerkToken!);
-        if (res.data.status === "needs_setup") { router.replace("/onboarding"); return; }
+        if (res.data.status === "needs_setup") {
+          // Mark redirect so finally does NOT call setAuthChecked(true).
+          // If we set authChecked here the dashboard renders with user=null,
+          // fires API calls that all return 401, and the interceptor hard-
+          // navigates to /login → Clerk bounces back → infinite loop.
+          redirectedToOnboarding = true;
+          router.replace("/onboarding");
+          return;
+        }
         localStorage.setItem("access_token", res.data.access_token);
         setUser(res.data.user);
       } catch (err) {
@@ -1158,7 +1167,10 @@ export default function AppPage() {
         // Instead just let the user see the error state.
         setSyncError(true);
       } finally {
-        setAuthChecked(true);
+        // Only mark auth as done when we are NOT navigating away to onboarding.
+        // While redirectedToOnboarding=true the component shows the spinner
+        // until it unmounts on navigation.
+        if (!redirectedToOnboarding) setAuthChecked(true);
         syncingRef.current = false;
       }
     })();
