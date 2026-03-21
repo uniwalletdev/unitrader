@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import AuditLog
 from src.agents.shared_memory import SharedContext, SharedMemory
-from src.agents.core.trading_agent import TradingAgent
+from src.agents.core.trading_agent import TradingAgent, validate_trade_amount
 from src.agents.core.conversation_agent import ConversationAgent
 from src.agents.sentiment_agent import SentimentAgent
 from src.agents.portfolio_agent import PortfolioAgent
@@ -408,6 +408,18 @@ class MasterOrchestrator:
             raise HTTPException(
                 status_code=403,
                 detail="Risk disclosure not accepted — real money trading requires risk acknowledgement",
+            )
+
+        # Trade amount validation against trader-class limits + Trust Ladder stage
+        amount_check = validate_trade_amount(float(amount), ctx)
+        if not amount_check["valid"]:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": amount_check["reason"],
+                    "min_trade_amount": amount_check["min"],
+                    "max_trade_amount": amount_check["max"],
+                },
             )
 
         # Step 2: Get AI analysis with signal, explanation, confidence, market data

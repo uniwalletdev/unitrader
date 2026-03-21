@@ -528,21 +528,34 @@ async def get_settings(
     """Return the user's settings.
     
     If no settings row exists, creates one with defaults and returns it.
+    Includes computed min_trade_amount and trade_limits based on trader_class.
     """
+    from src.agents.core.trading_agent import CLASS_TRADE_LIMITS
+    from src.agents.shared_memory import SharedMemory
+
     try:
         result = await db.execute(
             select(UserSettings).where(UserSettings.user_id == current_user.id)
         )
-        settings = result.scalar_one_or_none()
+        user_settings = result.scalar_one_or_none()
 
-        if not settings:
+        if not user_settings:
             # Create defaults
-            settings = UserSettings(user_id=current_user.id)
-            db.add(settings)
+            user_settings = UserSettings(user_id=current_user.id)
+            db.add(user_settings)
             await db.commit()
-            await db.refresh(settings)
+            await db.refresh(user_settings)
 
-        return settings
+        # Compute class-based trade limits
+        trader_class = user_settings.trader_class or "complete_novice"
+        class_limits = CLASS_TRADE_LIMITS.get(trader_class, CLASS_TRADE_LIMITS["complete_novice"])
+
+        # Build response dict with computed fields merged in
+        response = UserSettingsResponse.model_validate(user_settings)
+        response.min_trade_amount = class_limits["min"]
+        response.trade_limits = CLASS_TRADE_LIMITS.get(trader_class, {})
+
+        return response
 
     except Exception as exc:
         logger.error(f"Failed to get settings for user {current_user.id}: {exc}")

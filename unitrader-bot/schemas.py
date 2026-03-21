@@ -266,6 +266,9 @@ class UserSettingsResponse(BaseModel):
     push_token: str | None
     trader_class: str | None = None
     updated_at: datetime
+    # Computed trade-size limits (from trader_class + trust ladder stage)
+    min_trade_amount: float | None = None
+    trade_limits: dict | None = None
 
     model_config = {"from_attributes": True}
 

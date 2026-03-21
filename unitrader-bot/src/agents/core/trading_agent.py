@@ -41,6 +41,59 @@ logger = logging.getLogger(__name__)
 
 _CLAUDE_MODEL = "claude-3-haiku-20240307"
 
+# ─────────────────────────────────────────────
+# Trader-class trade-size limits (in GBP/USD)
+# ─────────────────────────────────────────────
+
+CLASS_TRADE_LIMITS: dict[str, dict[str, float]] = {
+    "complete_novice":    {"min": 25,  "max": 25},
+    "curious_saver":      {"min": 10,  "max": 500},
+    "self_taught":        {"min": 5,   "max": 5000},
+    "experienced":        {"min": 1,   "max": 10000},
+    "semi_institutional": {"min": 1,   "max": 50000},
+    "crypto_native":      {"min": 5,   "max": 5000},
+}
+
+
+def validate_trade_amount(amount: float, ctx: SharedContext) -> dict:
+    """Validate trade amount against trader-class limits and Trust Ladder stage.
+
+    Trust Ladder overrides:
+      Stage 1 (Micro Mode) — always caps at 25, regardless of class.
+      Stage >= 2 (Standard) — non-novice classes use their full class max.
+
+    Returns:
+        {"valid": True, "min": n, "max": n}
+        or {"valid": False, "reason": str, "min": n, "max": n}
+    """
+    limits = dict(CLASS_TRADE_LIMITS.get(ctx.trader_class, CLASS_TRADE_LIMITS["complete_novice"]))
+
+    # Trust Ladder Stage 1 — micro mode, hard cap at 25
+    if ctx.trust_ladder_stage == 1:
+        limits = {"min": 25, "max": 25}
+    elif ctx.trust_ladder_stage >= 2 and not ctx.is_novice():
+        # Non-novice traders at Stage 2+ keep their full class max
+        limits["max"] = CLASS_TRADE_LIMITS.get(ctx.trader_class, {}).get("max", 5000)
+
+    if amount < limits["min"]:
+        return {
+            "valid": False,
+            "reason": f"Minimum trade amount is £{limits['min']} for your account level.",
+            "min": limits["min"],
+            "max": limits["max"],
+        }
+
+    if amount > limits["max"]:
+        return {
+            "valid": False,
+            "reason": f"Maximum trade amount is £{limits['max']} for your account level.",
+            "min": limits["min"],
+            "max": limits["max"],
+        }
+
+    return {"valid": True, "min": limits["min"], "max": limits["max"]}
+
+
 class TradingDecision(BaseModel):
     """Normalized trade decision returned to the orchestrator.
 
