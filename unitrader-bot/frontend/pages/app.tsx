@@ -171,36 +171,38 @@ function Dashboard({ user }: { user: User | null }) {
 
   const load = async () => {
     setLoading(true);
+    // Use allSettled so one failing call doesn't blank out the whole dashboard
+    const [perfRes, riskRes, posRes, exRes] = await Promise.allSettled([
+      tradingApi.performance(),
+      tradingApi.riskAnalysis(),
+      tradingApi.openPositions(),
+      exchangeApi.list(),
+    ]);
+    if (perfRes.status === "fulfilled") setPerf(perfRes.value.data.data ?? perfRes.value.data);
+    if (riskRes.status === "fulfilled") setRisk(riskRes.value.data.data ?? riskRes.value.data);
+    if (posRes.status === "fulfilled") setOpenPositions(posRes.value.data.data?.positions || []);
+    if (exRes.status === "fulfilled") setConnectedExchanges(exRes.value.data.data || []);
+
+    // Secondary calls — non-critical, fail silently
     try {
-      const [perfRes, riskRes, posRes, exRes] = await Promise.all([
-        tradingApi.performance(),
-        tradingApi.riskAnalysis(),
-        tradingApi.openPositions(),
-        exchangeApi.list(),
+      const learnRes = await api.get("/api/learning/articles", { params: { limit: 2, offset: 0 } });
+      const arts = learnRes.data.articles || learnRes.data.data?.articles || [];
+      setLearningArticles(arts);
+    } catch {
+      setLearningArticles([]);
+    }
+    try {
+      const [histRes, goalsRes] = await Promise.allSettled([
+        api.get("/api/trading/history", { params: { limit: 10 } }),
+        api.get("/api/goals/progress"),
       ]);
-      setPerf(perfRes.data.data);
-      setRisk(riskRes.data.data);
-      setOpenPositions(posRes.data.data?.positions || []);
-      setConnectedExchanges(exRes.data.data || []);
-      try {
-        const learnRes = await api.get("/api/learning/articles", { params: { limit: 2, offset: 0 } });
-        const arts = learnRes.data.articles || learnRes.data.data?.articles || [];
-        setLearningArticles(arts);
-      } catch {
-        setLearningArticles([]);
-      }
-      try {
-        const [histRes, goalsRes] = await Promise.all([
-          api.get("/api/trading/history", { params: { limit: 10 } }),
-          api.get("/api/goals/progress"),
-        ]);
-        setTradeHistory(histRes.data?.data?.trades || histRes.data?.trades || histRes.data?.data || []);
-        setGoalsProgress(goalsRes.data?.data || goalsRes.data || null);
-      } catch {
-        setTradeHistory([]);
-        setGoalsProgress(null);
-      }
-    } catch {}
+      if (histRes.status === "fulfilled")
+        setTradeHistory(histRes.value.data?.data?.trades || histRes.value.data?.trades || []);
+      if (goalsRes.status === "fulfilled")
+        setGoalsProgress(goalsRes.value.data?.data || goalsRes.value.data || null);
+    } catch {
+      // ignore
+    }
     setLoading(false);
   };
 
@@ -281,7 +283,10 @@ function Dashboard({ user }: { user: User | null }) {
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
-        <StatCard label="Balance" value={r.balance_usd ? `$${r.balance_usd.toLocaleString()}` : "—"} />
+        <StatCard
+          label="Balance"
+          value={loading ? "…" : r.balance_usd ? `$${Number(r.balance_usd).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : connectedExchanges.length === 0 ? "No exchange" : "—"}
+        />
         <StatCard
           label="Net P&L"
           value={d.net_pnl_usd !== undefined ? `${d.net_pnl_usd >= 0 ? "+" : ""}$${d.net_pnl_usd?.toFixed(2)}` : "—"}
@@ -1020,7 +1025,7 @@ function History() {
 // Settings
 // ─────────────────────────────────────────────
 
-function SettingsPanel({ user }: { user: User | null }) {
+function SettingsPanel({ user, onExchangeConnected }: { user: User | null; onExchangeConnected?: () => void }) {
   const handleUpgrade = async () => {
     try {
       const res = await billingApi.checkout();
@@ -1059,7 +1064,7 @@ function SettingsPanel({ user }: { user: User | null }) {
       </div>
 
       <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
-        <ExchangeConnections />
+        <ExchangeConnections onConnected={onExchangeConnected} />
       </div>
 
       <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
@@ -1086,6 +1091,9 @@ function SettingsPanel({ user }: { user: User | null }) {
 export default function AppPage() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [user, setUser] = useState<User | null>(null);
+  // Bump this to force Dashboard to remount + re-fetch after a key event (e.g. exchange connect)
+  const [dashboardKey, setDashboardKey] = useState(0);
+  const refreshDashboard = () => setDashboardKey((k) => k + 1);
   const [authChecked, setAuthChecked] = useState(false);
   const [syncError, setSyncError] = useState(false);
   const [syncRetry, setSyncRetry] = useState(0);
@@ -1325,7 +1333,7 @@ export default function AppPage() {
           </div>
 
           <main className={isNative ? "flex-1 overflow-y-auto px-4 py-5 pb-20" : "flex-1 overflow-y-auto px-4 md:px-8 py-5 md:py-7"}>
-            {activeTab === "dashboard" && <Dashboard user={user} />}
+            {activeTab === "dashboard" && <Dashboard key={dashboardKey} user={user} />}
             {activeTab === "trade" && <TradePanel onNavigate={setActiveTab} />}
             {activeTab === "chat" && (
               <div className="flex h-full flex-col">
@@ -1337,7 +1345,12 @@ export default function AppPage() {
             {activeTab === "performance" && <Performance />}
             {activeTab === "content" && <ContentPanel />}
             {activeTab === "learning" && <LearningPanel user={user} />}
-            {activeTab === "settings" && <SettingsPanel user={user} />}
+            {activeTab === "settings" && (
+              <SettingsPanel
+                user={user}
+                onExchangeConnected={() => { refreshDashboard(); setActiveTab("dashboard"); }}
+              />
+            )}
           </main>
 
           {isNative && (

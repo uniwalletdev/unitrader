@@ -44,7 +44,7 @@ const EXCHANGES = [
   },
 ];
 
-export default function ExchangeConnections() {
+export default function ExchangeConnections({ onConnected }: { onConnected?: () => void } = {}) {
   const [connected, setConnected] = useState<ConnectedExchange[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -91,6 +91,8 @@ export default function ExchangeConnections() {
       setFormValues((v) => ({ ...v, [`${exchangeId}_api_key`]: "", [`${exchangeId}_api_secret`]: "" }));
       setExpandedId(null);
       await loadConnected();
+      // Notify parent (e.g. dashboard) that an exchange was connected
+      onConnected?.();
     } catch (err: any) {
       const detail = err.response?.data?.detail || "Connection failed. Check your keys and try again.";
       setMessage({ type: "error", text: detail });
