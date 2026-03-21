@@ -245,12 +245,12 @@ class SharedMemory:
             context = SharedContext(
                 user_id=user_id,
                 apex_name=user.ai_name or "Claude",
-                goal="grow_savings",  # Default — extend with user_settings table if needed
-                risk_level="balanced",  # Default — extend with user_settings table if needed
-                max_trade_amount=1000.0,  # Default — extend with user_settings table if needed
+                goal=getattr(settings, "financial_goal", None) or "grow_savings",
+                risk_level=getattr(settings, "risk_level_setting", None) or "balanced",
+                max_trade_amount=settings.max_trade_amount or 1000.0,
                 exchange="alpaca",  # Default — could query from ExchangeAPIKey
-                explanation_level="simple",  # Default — extend with user_settings table if needed
-                trade_mode="guided",  # Default — extend with user_settings table if needed
+                explanation_level=settings.explanation_level or "simple",
+                trade_mode=settings.trade_mode or "guided",
                 paper_trading_enabled=True,  # Default — extend with user_settings table if needed
                 trust_ladder_stage=1,  # Default — extend with user_settings table if needed
                 trading_paused=not user.is_active,
@@ -264,7 +264,7 @@ class SharedMemory:
                 ),
                 risk_disclosure_accepted=settings.risk_disclosure_accepted or False,
                 max_daily_loss_pct=settings.max_daily_loss or 5.0,
-                onboarding_complete=False,  # Default — extend with user_settings table if needed
+                onboarding_complete=getattr(settings, "onboarding_complete", False) or False,
                 trader_class=settings.trader_class or "complete_novice",
                 trust_score=int(getattr(settings, "trust_score", 100) or 100),
                 onboarding_profile={},  # Could store as JSON in user_settings

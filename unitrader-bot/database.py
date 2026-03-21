@@ -142,6 +142,9 @@ async def create_tables() -> None:
     if not _is_sqlite:
         pg_new_columns = [
             ("user_settings", "push_token", "VARCHAR(512)"),
+            ("user_settings", "onboarding_complete", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("user_settings", "financial_goal", "VARCHAR(50)"),
+            ("user_settings", "risk_level_setting", "VARCHAR(20)"),
         ]
         async with engine.begin() as conn:
             for table, col, col_def in pg_new_columns:

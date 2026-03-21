@@ -285,7 +285,7 @@ function Dashboard({ user }: { user: User | null }) {
       <div className="grid grid-cols-2 gap-3 md:gap-4 lg:grid-cols-4">
         <StatCard
           label="Balance"
-          value={loading ? "…" : r.balance_usd ? `$${Number(r.balance_usd).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : connectedExchanges.length === 0 ? "No exchange" : "—"}
+          value={loading ? "…" : r.balance_usd != null ? `$${Number(r.balance_usd).toLocaleString(undefined, { maximumFractionDigits: 2 })}` : connectedExchanges.length === 0 ? "No exchange" : "—"}
         />
         <StatCard
           label="Net P&L"

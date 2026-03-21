@@ -397,6 +397,11 @@ class UserSettings(Base):
     class_detected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     class_detection_method: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
+    # Onboarding profile (filled in by AI-guided onboarding chat)
+    onboarding_complete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    financial_goal: Mapped[str | None] = mapped_column(String(50), nullable=True)   # grow_savings / generate_income / learn_trading / crypto_focus
+    risk_level_setting: Mapped[str | None] = mapped_column(String(20), nullable=True)  # conservative / balanced / aggressive
+
     # Feedback / trust
     trust_score: Mapped[int] = mapped_column(Integer, default=100, nullable=False)  # 0–100
 

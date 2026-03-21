@@ -818,66 +818,61 @@ class ConversationAgent:
         messages: list[dict] | None = None,
         db: AsyncSession | None = None,
     ) -> None:
-        """Call POST /api/onboarding/complete and detect trader class.
-        
+        """Save the completed onboarding profile directly to UserSettings and detect trader class.
+
         Args:
             profile_data: Dict with goal, risk_level, budget, exchange
             messages: List of onboarding conversation messages for trader class detection
             db: Optional database session for direct updates
         """
         try:
-            import httpx
-
-            endpoint = f"{settings.api_url or 'http://localhost:8000'}/api/onboarding/complete"
-            headers = {"Content-Type": "application/json"}
-
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(
-                    endpoint,
-                    json={
-                        "user_id": self.user_id,
-                        "goal": profile_data.get("goal"),
-                        "risk_level": profile_data.get("risk_level"),
-                        "budget": profile_data.get("budget"),
-                        "exchange": profile_data.get("exchange"),
-                    },
-                    headers=headers,
-                )
-
-            # Detect trader class from messages
+            # Detect trader class from conversation messages
             detected_class = "complete_novice"
             if messages:
                 detected_class = detect_trader_class(messages)
 
-            # Save trader class to UserSettings
-            try:
-                async with AsyncSessionLocal() as _db:
-                    await _db.execute(
-                        update(UserSettings).where(
-                            UserSettings.user_id == self.user_id
-                        ).values(
-                            trader_class=detected_class,
-                            class_detected_at=datetime.utcnow(),
-                            class_detection_method="onboarding_chat",
-                        )
-                    )
-                    await _db.commit()
-                    logger.info(
-                        "Trader class detected for user %s: %s",
-                        self.user_id,
-                        detected_class,
-                    )
+            goal = profile_data.get("goal")
+            risk_level = profile_data.get("risk_level")
+            budget = profile_data.get("budget")
 
-                # Invalidate SharedMemory cache so new trader_class is loaded
-                SharedMemory.invalidate(self.user_id)
+            # Map risk_level to max_trade_amount if budget not provided
+            budget_amount = float(budget) if budget else None
 
-            except Exception as e:
-                logger.error(
-                    "Failed to save trader class for user %s: %s", self.user_id, e
+            # Save all profile data + trader class + onboarding_complete to UserSettings
+            async with AsyncSessionLocal() as _db:
+                update_vals: dict = {
+                    "onboarding_complete": True,
+                    "trader_class": detected_class,
+                    "class_detected_at": datetime.utcnow(),
+                    "class_detection_method": "onboarding_chat",
+                }
+                if goal:
+                    update_vals["financial_goal"] = goal
+                if risk_level:
+                    update_vals["risk_level_setting"] = risk_level
+                if budget_amount is not None:
+                    update_vals["max_trade_amount"] = budget_amount
+
+                await _db.execute(
+                    update(UserSettings).where(
+                        UserSettings.user_id == self.user_id
+                    ).values(**update_vals)
+                )
+                await _db.commit()
+                logger.info(
+                    "Onboarding complete for user %s: class=%s goal=%s risk=%s budget=%s",
+                    self.user_id,
+                    detected_class,
+                    goal,
+                    risk_level,
+                    budget_amount,
                 )
 
+            # Invalidate SharedMemory cache so new settings are loaded on next request
+            SharedMemory.invalidate(self.user_id)
+
         except Exception as e:
-            logger.error(f"Failed to complete onboarding internally: {e}")
+            logger.error("Failed to complete onboarding for user %s: %s", self.user_id, e)
             raise
 
     class ConversationResponse(BaseModel):
