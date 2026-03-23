@@ -1,45 +1,42 @@
-import RiskWarning from "./RiskWarning";
-
 export default function Footer() {
   return (
     <footer className="border-t border-dark-800/50 bg-dark-950 px-4 py-12 sm:px-6">
       <div className="mx-auto max-w-4xl space-y-8">
         {/* Links row */}
-        <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-dark-500">
-          <a href="/privacy" className="transition hover:text-white">Privacy Policy</a>
-          <span className="text-dark-700">|</span>
-          <a href="/terms" className="transition hover:text-white">Terms of Service</a>
-          <span className="text-dark-700">|</span>
-          <a href="/risk" className="transition hover:text-white">Risk Disclosure</a>
-          <span className="text-dark-700">|</span>
-          <a href="/contact" className="transition hover:text-white">Support</a>
-        </div>
-
-        {/* Company row */}
-        <div className="text-center text-xs leading-relaxed text-dark-600">
-          <p>Unitrader Ltd — Registered in England and Wales</p>
-          <p className="mt-1">
-            <a href="mailto:support@unitrader.ai" className="text-dark-500 transition hover:text-white">
-              support@unitrader.ai
-            </a>
-          </p>
+        <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-[12px] text-[#6b7280]">
+          <a href="/privacy" className="transition hover:text-[#9ca3af]">Privacy Policy</a>
+          <a href="/terms" className="transition hover:text-[#9ca3af]">Terms of Service</a>
+          <a href="/risk" className="transition hover:text-[#9ca3af]">Risk Disclosure</a>
+          <a href="/support" className="transition hover:text-[#9ca3af]">Support</a>
         </div>
 
         {/* Risk warning */}
-        <div className="text-center">
-          <RiskWarning variant="footer" />
+        <div
+          style={{
+            fontSize: "10px",
+            color: "#374151",
+            textAlign: "center",
+            maxWidth: "680px",
+            margin: "0 auto",
+            lineHeight: 1.7,
+          }}
+        >
+          Trading involves significant risk of loss and is not suitable for all investors. Your
+          capital is at risk. Past performance does not guarantee future results. Unitrader is a
+          software tool operated by Universal Wallet Ltd. We are not regulated by the Financial
+          Conduct Authority (FCA). Your funds are held in your own exchange account at all times —
+          Universal Wallet Ltd never holds your money.
         </div>
 
-        {/* Bottom strip */}
-        <div className="rounded-2xl bg-[#0d1117] border border-dark-800 px-4 py-3 text-center text-xs leading-relaxed text-dark-500">
-          Unitrader is a software tool. We are not a financial broker, investment
-          advisor, or FCA regulated firm. Your funds are held in your own exchange
-          account at all times.
+        {/* Company row */}
+        <div className="text-center leading-relaxed" style={{ fontSize: "11px", color: "#374151" }}>
+          <p>Universal Wallet Ltd — 128 City Road, London, EC1V 2NX</p>
+          <p className="mt-1">Company No. 16695347 | ICO Reg: ZC068643</p>
         </div>
 
         {/* Copyright */}
         <p className="text-center text-xs text-dark-700">
-          &copy; {new Date().getFullYear()} Unitrader
+          &copy; {new Date().getFullYear()} Universal Wallet Ltd
         </p>
       </div>
     </footer>

@@ -143,7 +143,7 @@ export const exchangeApi = {
 
 // ── Chat ─────────────────────────────────────────────────────────────────────
 export const chatApi = {
-  sendMessage: (message: string) => api.post("/api/chat/message", { message }),
+  sendMessage: (message: string) => api.post("/api/chat/message", { message }, { timeout: 60000 }),
   history: (limit = 50) => api.get("/api/chat/history", { params: { limit } }),
 };
 
