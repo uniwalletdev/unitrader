@@ -84,7 +84,7 @@ export default function TrustLadderDetail() {
       {
         key: "2",
         title: "Stage 2 — Micro Mode",
-        unlocksWhen: ["Complete onboarding", "Apex places a few paper trades"],
+        unlocksWhen: ["Complete onboarding", "Unitrader places a few paper trades"],
       },
       {
         key: "3",
@@ -104,7 +104,7 @@ export default function TrustLadderDetail() {
       <div>
         <div className="text-sm font-semibold text-white">Trust Ladder</div>
         <div className="mt-1 text-xs text-dark-400">
-          A structured path that unlocks more trading capability as Apex earns your trust.
+          A structured path that unlocks more trading capability as Unitrader earns your trust.
         </div>
       </div>
 

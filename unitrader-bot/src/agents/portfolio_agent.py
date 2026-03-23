@@ -82,7 +82,7 @@ CLASS_LIMITS = {
 # User-friendly messages for novices
 NOVICE_MESSAGES = {
     "max_positions": {
-        "reason": "Apex thinks you have enough trades open right now.",
+        "reason": "Unitrader thinks you have enough trades open right now.",
         "suggestion": "Close one of your current positions before opening a new one — this keeps your risk manageable.",
     },
     "sector_concentration": {

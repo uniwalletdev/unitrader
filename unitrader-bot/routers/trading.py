@@ -1006,7 +1006,7 @@ async def performance_summary(
 
         # Trust ladder summary derived from SharedContext; paper_trades_count unavailable in DB.
         stage = int(getattr(ctx, "trust_ladder_stage", 1) or 1)
-        payload["goal_progress_message"] = goal_progress_message or "Keep going — Apex is tracking your progress."
+        payload["goal_progress_message"] = goal_progress_message or "Keep going — Unitrader is tracking your progress."
         payload["trust_ladder_summary"] = {
             "stage": stage,
             "days_until_advance": 0,
@@ -1266,12 +1266,12 @@ async def share_card(
             days_since_started = 0
 
     CLASS_SHARE_TEXT = {
-        "complete_novice": "Apex grew my savings by {pct}% last month - and I only started {days} days ago!",
+        "complete_novice": "Unitrader grew my savings by {pct}% last month - and I only started {days} days ago!",
         "curious_saver": "My AI trader just outperformed my index fund by {vs_index}% last month",
-        "self_taught": "Apex's AI strategy beat buy-and-hold by {vs_hold}% - worth trying",
-        "experienced": "Apex hit {win_rate}% win rate with {sharpe:.1f} Sharpe last month",
-        "semi_institutional": "Apex: {win_rate}% win rate, {sharpe:.1f} Sharpe, {drawdown}% max drawdown",
-        "crypto_native": "Apex turned my crypto portfolio +{pct}% last month. AI trading works.",
+        "self_taught": "Unitrader's AI strategy beat buy-and-hold by {vs_hold}% - worth trying",
+        "experienced": "Unitrader hit {win_rate}% win rate with {sharpe:.1f} Sharpe last month",
+        "semi_institutional": "Unitrader: {win_rate}% win rate, {sharpe:.1f} Sharpe, {drawdown}% max drawdown",
+        "crypto_native": "Unitrader turned my crypto portfolio +{pct}% last month. AI trading works.",
     }
     tmpl = CLASS_SHARE_TEXT.get(trader_class, CLASS_SHARE_TEXT["complete_novice"])
 

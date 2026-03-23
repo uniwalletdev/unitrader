@@ -7,14 +7,14 @@ export default function RiskPage() {
         <strong>Read this before trading with real money.</strong>
       </p>
 
-      <h2>What Apex is</h2>
+      <h2>What Unitrader is</h2>
       <p>
-        Apex is an AI-powered trading tool built by Universal Wallet Ltd. It analyses market data
+        Unitrader is an AI-powered trading tool built by Universal Wallet Ltd. It analyses market data
         and executes trades through your own exchange account.
       </p>
       <p>
-        Apex is <strong>not</strong> a financial advisor, fund manager, or FCA-regulated service.
-        Nothing Apex says or does constitutes investment advice or a personal recommendation under
+        Unitrader is <strong>not</strong> a financial advisor, fund manager, or FCA-regulated service.
+        Nothing Unitrader says or does constitutes investment advice or a personal recommendation under
         UK law.
       </p>
 
@@ -25,8 +25,8 @@ export default function RiskPage() {
         has occurred for users of this platform.
       </p>
       <p>
-        <strong>Apex can be wrong.</strong> AI systems make mistakes. Market conditions change
-        faster than any AI can react. Apex does not have access to all market information. A high
+        <strong>Unitrader can be wrong.</strong> AI systems make mistakes. Market conditions change
+        faster than any AI can react. Unitrader does not have access to all market information. A high
         confidence score does not guarantee a profitable trade.
       </p>
       <p>
@@ -60,7 +60,7 @@ export default function RiskPage() {
       <p>Ask yourself:</p>
       <ul>
         <li>Can I afford to lose this money entirely?</li>
-        <li>Do I understand that Apex is a software tool, not a financial advisor?</li>
+        <li>Do I understand that Unitrader is a software tool, not a financial advisor?</li>
         <li>Have I read and understood the Terms of Service?</li>
         <li>Am I 18 years of age or older?</li>
       </ul>

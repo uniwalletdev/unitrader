@@ -11,17 +11,17 @@ const FAQ_ITEMS: FAQItem[] = [
   {
     question: "Is my money safe with Unitrader?",
     answer:
-      "Your money never touches Unitrader. Apex trades through your own Alpaca or Coinbase account. Universal Wallet Ltd never holds, controls, or has access to your funds. Your money sits with regulated exchanges (Alpaca is FINRA-registered, Coinbase is FCA-registered) at all times.",
+      "Your money never touches Unitrader. Unitrader trades through your own Alpaca or Coinbase account. Universal Wallet Ltd never holds, controls, or has access to your funds. Your money sits with regulated exchanges (Alpaca is FINRA-registered, Coinbase is FCA-registered) at all times.",
   },
   {
-    question: "What does Apex actually do?",
+    question: "What does Unitrader actually do?",
     answer:
-      "Apex is an AI that analyses market data — including price movements, technical indicators (RSI, MACD), and news sentiment — and places trades through your exchange account when it finds a high-confidence signal. You set the parameters. You can pause Apex at any time.",
+      "Unitrader is an AI that analyses market data — including price movements, technical indicators (RSI, MACD), and news sentiment — and places trades through your exchange account when it finds a high-confidence signal. You set the parameters. You can pause Unitrader at any time.",
   },
   {
-    question: "What if Apex makes a bad trade?",
+    question: "What if Unitrader makes a bad trade?",
     answer:
-      "Every trade has a stop-loss set automatically to limit losses. You can also pause Apex at any time from the app or by sending /pause to the Telegram bot. Trading involves risk — please read our Risk Disclosure before trading with real money.",
+      "Every trade has a stop-loss set automatically to limit losses. You can also pause Unitrader at any time from the app or by sending /pause to the Telegram bot. Trading involves risk — please read our Risk Disclosure before trading with real money.",
   },
   {
     question: "How do I connect my exchange account?",

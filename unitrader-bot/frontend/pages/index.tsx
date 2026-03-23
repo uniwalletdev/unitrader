@@ -33,27 +33,27 @@ const STATS_DATA = [
 const STEPS = [
   {
     num: "01",
-    title: "Tell Apex your goal",
-    desc: "A short conversation. No forms. Apex learns whether you want to grow savings, generate income, or explore crypto.",
+    title: "Tell Unitrader your goal",
+    desc: "A short conversation. No forms. Unitrader learns whether you want to grow savings, generate income, or explore crypto.",
   },
   {
     num: "02",
-    title: "Watch Apex prove itself",
-    desc: "Apex starts in Watch Mode — trading with paper money first. You see every decision and why. No real money at risk.",
+    title: "Watch Unitrader prove itself",
+    desc: "Unitrader starts in Watch Mode — trading with paper money first. You see every decision and why. No real money at risk.",
   },
   {
     num: "03",
-    title: "Let Apex trade for you",
-    desc: "Once you trust Apex, it trades with real money through your own Alpaca or Coinbase account. You keep 100% of profits.",
+    title: "Let Unitrader trade for you",
+    desc: "Once you trust Unitrader, it trades with real money through your own Alpaca or Coinbase account. You keep 100% of profits.",
   },
 ];
 
 const TRUST_SIGNALS = [
-  "Apex never holds your funds",
-  "Paper trading first — watch Apex prove itself",
+  "Unitrader never holds your funds",
+  "Paper trading first — watch Unitrader prove itself",
   "FCA risk warnings on every trade",
   "Full audit trail of every AI decision",
-  "Pause Apex any time",
+  "Pause Unitrader any time",
 ];
 
 // ─────────────────────────────────────────────
@@ -69,7 +69,7 @@ export default function LandingPage() {
         <title>Unitrader — Your Personal AI Trader</title>
         <meta
           name="description"
-          content="Apex is your personal AI trader. The same technology that's made hedge funds billions — now available to anyone."
+          content="Unitrader is your personal AI trader. The same technology that's made hedge funds billions — now available to anyone."
         />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <link rel="icon" href="/favicon.ico" />
@@ -167,7 +167,7 @@ export default function LandingPage() {
 
             {/* Subheading */}
             <p className="mx-auto mb-10 max-w-[480px] text-base leading-relaxed text-dark-400 sm:text-lg">
-              Apex is your personal AI trader. It analyses markets, executes
+              Unitrader is your personal AI trader. It analyses markets, executes
               trades through your own exchange account, and works 24/7 —
               the same technology that&apos;s made institutions billions,
               now available to anyone.
@@ -178,7 +178,7 @@ export default function LandingPage() {
               href="/onboarding"
               className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-brand-500 px-8 py-4 text-base font-semibold text-black transition hover:bg-brand-400 active:scale-[0.98] sm:w-auto"
             >
-              See what Apex would have done with your money
+              See what Unitrader would have done with your money
               <ArrowRight size={18} />
             </Link>
 
@@ -233,10 +233,10 @@ export default function LandingPage() {
                 <div className="hidden h-full w-px bg-dark-800 md:block" />
               </div>
 
-              {/* Apex column */}
+              {/* Unitrader column */}
               <div>
                 <div className="mb-5 inline-block rounded-full bg-brand-500/10 px-3 py-1 text-xs font-semibold text-brand-400 border border-brand-500/15">
-                  You — with Apex
+                  You — with Unitrader
                 </div>
                 <ul className="space-y-3">
                   {APEX_POINTS.map((p) => (
@@ -316,7 +316,7 @@ export default function LandingPage() {
               Start for free. Upgrade when you&apos;re ready.
             </h2>
             <p className="mb-8 text-dark-400">
-              No credit card required. Paper trade with Apex first, then go live when you trust it.
+              No credit card required. Paper trade with Unitrader first, then go live when you trust it.
             </p>
             <Link
               href="/register"

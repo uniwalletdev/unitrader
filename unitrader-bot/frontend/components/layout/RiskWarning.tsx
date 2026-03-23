@@ -8,7 +8,7 @@ const BAR_TEXT =
 const FOOTER_TEXT =
   "Trading involves significant risk of loss and is not suitable for all investors. " +
   "Past performance does not guarantee future results. Unitrader is a software tool, " +
-  "not a financial broker or registered investment advisor. Apex is an AI tool. " +
+  "not a financial broker or registered investment advisor. Unitrader is an AI tool. " +
   "Always consider your financial situation before trading.";
 
 export default function RiskWarning({ variant }: RiskWarningProps) {

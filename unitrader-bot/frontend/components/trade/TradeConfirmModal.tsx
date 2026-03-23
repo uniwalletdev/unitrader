@@ -111,7 +111,7 @@ export default function TradeConfirmModal({
 
   const confirmText = useMemo(() => {
     if (traderClass === "complete_novice" || traderClass === "curious_saver") {
-      return isPaper ? "Confirm practice trade" : "Yes, let Apex make this trade";
+      return isPaper ? "Confirm practice trade" : "Yes, let Unitrader make this trade";
     }
     if (traderClass === "self_taught") return isPaper ? "Confirm paper trade" : "Confirm trade";
     if (traderClass === "experienced") return isPaper ? "Submit paper" : "Execute";
@@ -218,7 +218,7 @@ export default function TradeConfirmModal({
                     label="Protection"
                     value={
                       slPlain
-                        ? `Apex will sell automatically if it drops to ${slPlain}`
+                        ? `Unitrader will sell automatically if it drops to ${slPlain}`
                         : "—"
                     }
                   />
@@ -226,7 +226,7 @@ export default function TradeConfirmModal({
                     label="Target"
                     value={
                       tpPlain
-                        ? `Apex will sell when it reaches ${tpPlain}`
+                        ? `Unitrader will sell when it reaches ${tpPlain}`
                         : "—"
                     }
                   />
@@ -238,7 +238,7 @@ export default function TradeConfirmModal({
               </div>
 
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                <div className="text-xs font-semibold text-dark-200">Apex summary</div>
+                <div className="text-xs font-semibold text-dark-200">Unitrader summary</div>
                 <div className="mt-2 text-sm text-dark-200">
                   {apexSummary || "—"}
                 </div>

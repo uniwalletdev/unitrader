@@ -74,7 +74,7 @@ export default function CircuitBreakerAlert({
             </div>
             <div className="flex-1">
               <p className="text-red-500 font-semibold text-sm sm:text-base">
-                Apex has paused trading — your daily loss limit of{" "}
+                Unitrader has paused trading — your daily loss limit of{" "}
                 <span className="font-bold">{maxDailyLossPct}%</span> was
                 reached today (
                 <span className="font-bold">{dailyLossPct.toFixed(1)}%</span>

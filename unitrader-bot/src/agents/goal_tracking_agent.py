@@ -53,13 +53,13 @@ class GoalTrackingAgent:
         if not trades:
             empty_msg = {
                 "complete_novice": (
-                    "No trades yet - Apex is watching the market for you in practice mode."
+                    "No trades yet - Unitrader is watching the market for you in practice mode."
                 ),
-                "curious_saver": "No trades yet - Apex is getting ready. Check back soon.",
-                "self_taught": "No closed trades yet. Apex is building your strategy.",
-                "experienced": "No closed positions. Apex is monitoring open positions.",
+                "curious_saver": "No trades yet - Unitrader is getting ready. Check back soon.",
+                "self_taught": "No closed trades yet. Unitrader is building your strategy.",
+                "experienced": "No closed positions. Unitrader is monitoring open positions.",
                 "semi_institutional": "No closed positions this period.",
-                "crypto_native": "No trades yet - Apex is watching the crypto market.",
+                "crypto_native": "No trades yet - Unitrader is watching the crypto market.",
             }
             return {
                 "message": empty_msg.get(ctx.trader_class, "No trades yet."),
@@ -80,7 +80,7 @@ class GoalTrackingAgent:
         # ─────────────────────────────────────────────────────────────────────────
         if ctx.is_pro():
             prompt = (
-                f"You are Apex. Write a concise 3-sentence performance analysis.\n"
+                f"You are Unitrader. Write a concise 3-sentence performance analysis.\n"
                 f"Trader class: {ctx.trader_class}. Goal: {ctx.goal}.\n"
                 f"Stats: {len(trades)} trades, {pct_change:+.1f}% change, {win_rate:.0f}% win rate.\n"
                 f"Include win rate vs typical retail benchmark (40%), and one strategy adjustment.\n"
@@ -88,7 +88,7 @@ class GoalTrackingAgent:
             )
         elif ctx.is_crypto_native():
             prompt = (
-                f"You are Apex. Write a 3-sentence crypto portfolio update.\n"
+                f"You are Unitrader. Write a 3-sentence crypto portfolio update.\n"
                 f"Stats: {len(trades)} trades, {pct_change:+.1f}% change, {win_rate:.0f}% win rate.\n"
                 f"Reference market cycle context if relevant. End with one actionable insight."
             )
@@ -102,7 +102,7 @@ class GoalTrackingAgent:
             }.get(ctx.goal, "achieve your financial goals")
 
             prompt = (
-                f"You are Apex, a warm and friendly AI trading companion.\n"
+                f"You are Unitrader, a warm and friendly AI trading companion.\n"
                 f"Write a 3-sentence weekly update for someone who wants to {goal_text}.\n"
                 f"Stats: {len(trades)} trades, {pct_change:+.1f}% portfolio change, "
                 f"{win_rate:.0f}% success rate.\n"
@@ -214,7 +214,7 @@ class GoalTrackingAgent:
                 tg_chat_id = int(ext_account.external_id)
                 await bot_service.app.bot.send_message(
                     chat_id=tg_chat_id,
-                    text=f"📈 *Your Apex Weekly Report*\n\n{message}",
+                    text=f"📈 *Your Unitrader Weekly Report*\n\n{message}",
                     parse_mode="Markdown",
                 )
                 logger.info("Telegram message sent to user %s", user_id)

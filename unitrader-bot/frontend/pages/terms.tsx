@@ -21,12 +21,12 @@ export default function TermsPage() {
 
       <h2>2. Nature of the service — important</h2>
       <p>
-        <strong>Not financial advice:</strong> Nothing Apex says or executes constitutes financial
-        advice or investment advice. All Apex outputs are automated analysis from a software tool.
+        <strong>Not financial advice:</strong> Nothing Unitrader says or executes constitutes financial
+        advice or investment advice. All Unitrader outputs are automated analysis from a software tool.
       </p>
       <p>
         <strong>Your responsibility:</strong> All trading decisions made through Unitrader are
-        ultimately your responsibility. You can pause Apex, adjust parameters, or close positions
+        ultimately your responsibility. You can pause Unitrader, adjust parameters, or close positions
         at any time.
       </p>
       <p>
@@ -35,7 +35,7 @@ export default function TermsPage() {
         move, withdraw, or transfer your money.
       </p>
       <p>
-        <strong>AI limitations:</strong> Apex may make incorrect analyses, miss market events, fail
+        <strong>AI limitations:</strong> Unitrader may make incorrect analyses, miss market events, fail
         to execute trades due to technical issues, or perform differently to historical simulations.
         You acknowledge these limitations.
       </p>
@@ -99,7 +99,7 @@ export default function TermsPage() {
       <h2>7. Termination</h2>
       <p>
         You may close your account at any time by contacting{" "}
-        <a href="mailto:support@unitrader.ai">support@unitrader.ai</a>. On termination, Apex will
+        <a href="mailto:support@unitrader.ai">support@unitrader.ai</a>. On termination, Unitrader will
         cease trading. You remain responsible for any open positions. Trade history and audit logs
         are retained for 7 years after closure.
       </p>

@@ -277,7 +277,7 @@ export default function AccountDashboard() {
       ? null
       : accounts.find((account) => account.id === liveSwitchTargetId) ?? null;
 
-  function toggleApex(accountId: string) {
+  function toggleUnitrader(accountId: string) {
     setAccounts((prev) =>
       prev.map((account) =>
         account.id === accountId ? { ...account, apexActive: !account.apexActive } : account
@@ -385,7 +385,7 @@ export default function AccountDashboard() {
             <div className="space-y-1">
               {overlapWarnings.map((warning) => (
                 <p key={warning.key}>
-                  Apex is holding {warning.label} across multiple live accounts - your total exposure is {warning.combinedAmount.toLocaleString()} units.
+                  Unitrader is holding {warning.label} across multiple live accounts - your total exposure is {warning.combinedAmount.toLocaleString()} units.
                 </p>
               ))}
             </div>
@@ -494,11 +494,11 @@ export default function AccountDashboard() {
               <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => toggleApex(selectedAccount.id)}
+                  onClick={() => toggleUnitrader(selectedAccount.id)}
                   className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 hover:border-slate-600"
                 >
                   {selectedAccount.apexActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-                  {selectedAccount.apexActive ? "Pause Apex" : "Resume Apex"}
+                  {selectedAccount.apexActive ? "Pause Unitrader" : "Resume Unitrader"}
                 </button>
 
                 {selectedAccount.mode === "paper" && (
@@ -531,7 +531,7 @@ export default function AccountDashboard() {
               />
               <MetricCard
                 icon={<Activity className="h-4 w-4" />}
-                label="Apex Status"
+                label="Unitrader Status"
                 value={selectedAccount.apexActive ? "Active" : "Paused"}
                 tone={selectedAccount.apexActive ? "text-emerald-300" : "text-amber-300"}
                 pulse={selectedAccount.apexActive}
@@ -553,7 +553,7 @@ export default function AccountDashboard() {
                     <th className="px-3 py-2">Amount</th>
                     <th className="px-3 py-2">Price</th>
                     <th className="px-3 py-2">Time</th>
-                    <th className="px-3 py-2">Apex Reason</th>
+                    <th className="px-3 py-2">Unitrader Reason</th>
                     <th className="px-3 py-2">Outcome</th>
                     <th className="px-3 py-2">P&L</th>
                   </tr>
@@ -686,8 +686,8 @@ export default function AccountDashboard() {
                 </h4>
                 <p className="mt-1 text-sm text-slate-300">
                   {targetAccount.exchange === "Oanda"
-                    ? "You are about to switch from Oanda Practice to Oanda Live. Apex will trade with real funds from your Oanda Live account."
-                    : "You are about to enable real-money trading for this account. Apex will execute using live funds."}
+                    ? "You are about to switch from Oanda Practice to Oanda Live. Unitrader will trade with real funds from your Oanda Live account."
+                    : "You are about to enable real-money trading for this account. Unitrader will execute using live funds."}
                 </p>
               </div>
             </div>

@@ -301,7 +301,7 @@ export default function PerformancePage() {
               >
                 {monthPnl >= 0
                   ? `You are up ${formatGBP(monthPnl)} this month`
-                  : `Apex is learning - down ${formatGBP(Math.abs(monthPnl))} this month`}
+                  : `Unitrader is learning - down ${formatGBP(Math.abs(monthPnl))} this month`}
               </div>
               {summary.encouragement && (
                 <div className="mt-2 text-sm text-dark-200">{summary.encouragement}</div>
@@ -312,7 +312,7 @@ export default function PerformancePage() {
               <div className="rounded-2xl border border-dark-800 bg-dark-950 p-5 md:col-span-2">
                 <div className="text-sm font-semibold text-white">Progress toward your goal</div>
                 <div className="mt-2 text-sm text-dark-200">
-                  {summary.goal_progress_message || "Apex is tracking your progress."}
+                  {summary.goal_progress_message || "Unitrader is tracking your progress."}
                 </div>
               </div>
 
@@ -328,11 +328,11 @@ export default function PerformancePage() {
             </div>
 
             <div className="rounded-2xl border border-dark-800 bg-dark-950 p-5">
-              <div className="text-sm font-semibold text-white">Apex weekly message</div>
+              <div className="text-sm font-semibold text-white">Unitrader weekly message</div>
               <div className="mt-3 max-w-3xl rounded-2xl border border-dark-800 bg-dark-900/30 p-4 text-sm text-dark-200">
                 {Object.values(summary.monthly_summary || {})[0] !== undefined
-                  ? "Apex: Keep building consistency — I’ll keep looking for clean setups and protect downside."
-                  : "Apex: No closed trades yet — I’m watching the market for you."}
+                  ? "Unitrader: Keep building consistency — I’ll keep looking for clean setups and protect downside."
+                  : "Unitrader: No closed trades yet — I’m watching the market for you."}
               </div>
             </div>
 
@@ -372,14 +372,14 @@ export default function PerformancePage() {
               </div>
             </div>
 
-            {/* Your influence on Apex */}
+            {/* Your influence on Unitrader */}
             <div className="rounded-2xl border border-dark-800 bg-dark-950 p-5">
-              <div className="text-sm font-semibold text-white">Your influence on Apex</div>
+              <div className="text-sm font-semibold text-white">Your influence on Unitrader</div>
               {feedbackStats ? (
                 <>
                   {feedbackStats.total_rated === 0 ? (
                     <div className="mt-2 text-sm text-dark-200">
-                      You haven&apos;t rated any trades yet. Head to History to give Apex feedback on its decisions.
+                      You haven&apos;t rated any trades yet. Head to History to give Unitrader feedback on its decisions.
                       <div className="mt-3">
                         <a
                           href="/app?tab=history"
@@ -392,8 +392,8 @@ export default function PerformancePage() {
                   ) : (
                     <>
                       <div className="mt-2 text-sm text-dark-200">
-                        You have rated {feedbackStats.total_rated} of Apex&apos;s decisions.{" "}
-                        {feedbackStats.positive_pct.toFixed(1)}% were rated positively. Apex uses your ratings to refine
+                        You have rated {feedbackStats.total_rated} of Unitrader&apos;s decisions.{" "}
+                        {feedbackStats.positive_pct.toFixed(1)}% were rated positively. Unitrader uses your ratings to refine
                         its strategy for you.
                       </div>
                       <div className="mt-4">
@@ -435,7 +435,7 @@ export default function PerformancePage() {
                     </>
                   )}
                   <div className="mt-3 text-[11px] text-dark-500">
-                    The more you rate, the more personalised Apex becomes. Your feedback directly changes how Apex trades
+                    The more you rate, the more personalised Unitrader becomes. Your feedback directly changes how Unitrader trades
                     for you.
                   </div>
                 </>

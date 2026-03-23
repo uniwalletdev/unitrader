@@ -29,10 +29,10 @@ export default function PrivacyPage() {
       </p>
       <p>
         <strong>Trading data</strong> (trade history, positions, P&amp;L) — to provide the service
-        and improve Apex. Legal basis: contract performance and legitimate interests.
+        and improve Unitrader. Legal basis: contract performance and legitimate interests.
       </p>
       <p>
-        <strong>Chat and onboarding messages</strong> — to personalise your Apex experience. Legal
+        <strong>Chat and onboarding messages</strong> — to personalise your Unitrader experience. Legal
         basis: contract performance.
       </p>
       <p>
@@ -48,7 +48,7 @@ export default function PrivacyPage() {
       <ul>
         <li>
           <strong>Anthropic</strong> — AI analysis via Claude API. Your trade context is sent to
-          generate Apex&apos;s responses.
+          generate Unitrader&apos;s responses.
         </li>
         <li>
           <strong>Clerk</strong> — authentication and account management.

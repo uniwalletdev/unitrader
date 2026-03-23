@@ -6,7 +6,7 @@ import { authApi } from "@/lib/api";
 
 const DISCLOSURES = [
   "I understand that trading involves risk of loss, and I could lose some or all of my invested capital.",
-  "I understand that Apex is an AI tool, not a regulated financial advisor. Past performance does not guarantee future results.",
+  "I understand that Unitrader is an AI tool, not a regulated financial advisor. Past performance does not guarantee future results.",
   "I understand that Unitrader never holds my funds — I trade through my own exchange account.",
 ];
 
@@ -44,12 +44,12 @@ export default function RiskDisclosurePage() {
   return (
     <>
       <Head>
-        <title>Risk Disclosure - Apex Trading</title>
+        <title>Risk Disclosure - Unitrader Trading</title>
       </Head>
 
       <div className="min-h-screen flex items-center justify-center bg-dark-950 px-4 py-8">
         <div className="w-full max-w-2xl">
-          {/* Apex Avatar */}
+          {/* Unitrader Avatar */}
           <div className="flex justify-center mb-8">
             <div className="relative w-24 h-24 rounded-full bg-gradient-to-br from-brand-500 to-brand-600 flex items-center justify-center shadow-lg">
               <svg
@@ -66,7 +66,7 @@ export default function RiskDisclosurePage() {
 
           {/* Heading */}
           <h1 className="text-3xl md:text-4xl font-bold text-white text-center mb-3">
-            Before Apex trades with real money
+            Before Unitrader trades with real money
           </h1>
 
           <p className="text-base md:text-lg text-dark-400 text-center mb-12">

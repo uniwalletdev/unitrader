@@ -119,7 +119,7 @@ export default function SettingsPage() {
   return (
     <>
       <Head>
-        <title>Settings - Apex Trading</title>
+        <title>Settings - Unitrader Trading</title>
       </Head>
 
       <div className="min-h-screen bg-dark-950">
@@ -165,7 +165,7 @@ export default function SettingsPage() {
             <div className="mb-6">
               <h2 className="text-lg font-bold tracking-tight text-white mb-1.5">Daily Loss Limit</h2>
               <p className="text-sm text-dark-400 leading-relaxed">
-                Apex will automatically pause trading if your daily loss exceeds this limit. You can resume trading manually from this page.
+                Unitrader will automatically pause trading if your daily loss exceeds this limit. You can resume trading manually from this page.
               </p>
             </div>
 
@@ -256,7 +256,7 @@ export default function SettingsPage() {
 
             <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
               <h3 className="text-sm font-semibold text-white mb-1.5">Trading Mode</h3>
-              <p className="text-xs text-dark-400 mb-4">How should Apex execute trades?</p>
+              <p className="text-xs text-dark-400 mb-4">How should Unitrader execute trades?</p>
               <select
                 value={settings?.trade_mode || "paper"}
                 onChange={(e) => {

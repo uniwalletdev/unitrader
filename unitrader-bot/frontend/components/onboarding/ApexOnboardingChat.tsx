@@ -188,12 +188,12 @@ const STAGE_QUESTIONS: Record<TraderClass, string[]> = {
     "Let's connect your exchange.",
   ],
   self_taught: [
-    "What can Apex help you with?",
+    "What can Unitrader help you with?",
     "What's your risk tolerance?",
     "Which markets do you trade?",
   ],
   experienced: [
-    "How can Apex optimize your strategy?",
+    "How can Unitrader optimize your strategy?",
     "What's your execution preference?",
   ],
   crypto_native: [
@@ -213,7 +213,7 @@ export default function ApexOnboardingChat() {
     {
       id: "welcome",
       role: "assistant",
-      content: "Hi! I'm Apex, your AI trading companion. Let's get you started. What's your main goal?",
+      content: "Hi! I'm Unitrader, your AI trading companion. Let's get you started. What's your main goal?",
       timestamp: new Date(),
     },
   ]);
@@ -348,7 +348,7 @@ export default function ApexOnboardingChat() {
       {/* Header */}
       <div className="px-4 py-3 border-b border-slate-700 bg-slate-800/50">
         <div className="flex items-center justify-between mb-2">
-          <h1 className="text-lg font-semibold">Welcome to Apex</h1>
+          <h1 className="text-lg font-semibold">Welcome to Unitrader</h1>
           <span className="text-xs text-slate-400">
             {currentStage + 1} of {maxStages}
           </span>

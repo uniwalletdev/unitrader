@@ -251,12 +251,12 @@ function _LegacyDashboard({ user }: { user: User | null }) {
               {
                 num: "2",
                 title: "Set your risk tolerance",
-                desc: "Go to Settings and set your daily loss limit. Apex won't trade beyond it.",
+                desc: "Go to Settings and set your daily loss limit. Unitrader won't trade beyond it.",
                 hasButton: false,
               },
               {
                 num: "3",
-                title: "Chat with Apex",
+                title: "Chat with Unitrader",
                 desc: "Ask anything — market analysis, what to trade, how it works. It explains every decision.",
                 hasButton: false,
               },
@@ -422,7 +422,7 @@ function _LegacyDashboard({ user }: { user: User | null }) {
             </div>
           ) : (
             <p className="text-sm text-dark-500">
-              Apex is watching the market. Activity will appear here.
+              Unitrader is watching the market. Activity will appear here.
             </p>
           )}
         </div>
@@ -443,8 +443,8 @@ function _LegacyDashboard({ user }: { user: User | null }) {
               </div>
               <p className="text-sm leading-relaxed text-dark-300">
                 {tradeCount > 0
-                  ? `Apex scanned ${scanCount} assets using sentiment analysis and technical indicators. It found ${tradeCount} strong signal${tradeCount !== 1 ? "s" : ""} and passed on ${skipCount}. Your money is in your ${exchangeName} account.`
-                  : `Apex scanned the market but found no signals above your confidence threshold. This is normal — Apex only trades when genuinely confident. Your money stays safe in your ${exchangeName} account.`}
+                  ? `Unitrader scanned ${scanCount} assets using sentiment analysis and technical indicators. It found ${tradeCount} strong signal${tradeCount !== 1 ? "s" : ""} and passed on ${skipCount}. Your money is in your ${exchangeName} account.`
+                  : `Unitrader scanned the market but found no signals above your confidence threshold. This is normal — Unitrader only trades when genuinely confident. Your money stays safe in your ${exchangeName} account.`}
               </p>
             </div>
           );
@@ -481,12 +481,12 @@ function _LegacyDashboard({ user }: { user: User | null }) {
         </div>
       )}
 
-      {/* Learn with Apex */}
+      {/* Learn with Unitrader */}
       <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
         <div className="flex items-center justify-between gap-2 mb-3">
           <div className="flex items-center gap-2">
             <BookOpen size={14} className="text-brand-400" />
-            <h2 className="text-sm font-semibold text-white">Learn with Apex</h2>
+            <h2 className="text-sm font-semibold text-white">Learn with Unitrader</h2>
           </div>
           <button
             type="button"
@@ -497,7 +497,7 @@ function _LegacyDashboard({ user }: { user: User | null }) {
           </button>
         </div>
         <p className="text-xs text-dark-400 mb-3">
-          Short, plain-English articles explaining what Apex does and why.
+          Short, plain-English articles explaining what Unitrader does and why.
         </p>
         {learningArticles.length > 0 && (
           <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -541,7 +541,7 @@ function _LegacyDashboard({ user }: { user: User | null }) {
                   <tr className="border-b border-dark-800 text-left">
                     <th className="pb-2.5 pr-4 text-[11px] font-medium uppercase tracking-wider text-dark-500">Item</th>
                     <th className="pb-2.5 pr-4 text-[11px] font-medium uppercase tracking-wider text-red-400/70">Hedge fund</th>
-                    <th className="pb-2.5 text-[11px] font-medium uppercase tracking-wider text-brand-400/70">Apex</th>
+                    <th className="pb-2.5 text-[11px] font-medium uppercase tracking-wider text-brand-400/70">Unitrader</th>
                   </tr>
                 </thead>
                 <tbody className="text-dark-300">
@@ -597,7 +597,7 @@ function Chat({ user }: { user: User | null }) {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [isNewUser, setIsNewUser] = useState(false);
 
-  const newUserWelcome = `Hi, I'm ${user?.ai_name || "Apex"} — your personal AI trader 👋\n\nHere's how to get started:\n\n1. Connect your exchange — go to the Exchanges tab and link Alpaca (free paper trading), Coinbase, Binance or OANDA. Your money always stays in your own account.\n\n2. Set your risk limit — head to Settings and set a daily loss limit so I know how much risk you're comfortable with.\n\n3. Ask me anything — I analyse markets constantly. Try asking: "What should I trade today?" or "Explain RSI to me" or "How does stop-loss work?"\n\nWhat would you like to do first?`;
+  const newUserWelcome = `Hi, I'm ${user?.ai_name || "Unitrader"} — your personal AI trader 👋\n\nHere's how to get started:\n\n1. Connect your exchange — go to the Exchanges tab and link Alpaca (free paper trading), Coinbase, Binance or OANDA. Your money always stays in your own account.\n\n2. Set your risk limit — head to Settings and set a daily loss limit so I know how much risk you're comfortable with.\n\n3. Ask me anything — I analyse markets constantly. Try asking: "What should I trade today?" or "Explain RSI to me" or "How does stop-loss work?"\n\nWhat would you like to do first?`;
 
   const returningWelcome = `Hi! I'm ${user?.ai_name || "your AI"}. I can help with market analysis, trade questions, performance reviews, and more. What would you like to know?`;
 
@@ -957,7 +957,7 @@ function History() {
                     <td className="px-4 py-3 text-dark-500">{new Date(t.created_at).toLocaleDateString()}</td>
                     <td className="px-4 py-3">
                       {showThankYou ? (
-                        <span className="text-[11px] text-brand-400">Thanks — Apex will learn</span>
+                        <span className="text-[11px] text-brand-400">Thanks — Unitrader will learn</span>
                       ) : !isActive ? (
                         <div className="flex items-center gap-1">
                           <button
@@ -989,14 +989,14 @@ function History() {
                       <td colSpan={8} className="px-4 pb-4 pt-2">
                         <div className="rounded-xl border border-dark-800 bg-[#0d1117] p-3.5">
                           <p className="mb-2 text-[11px] text-dark-400">
-                            {activeRating === 1 ? "What did Apex do well? (optional)" : "What could Apex improve? (optional)"}
+                            {activeRating === 1 ? "What did Unitrader do well? (optional)" : "What could Unitrader improve? (optional)"}
                           </p>
                           <textarea
                             value={comment}
                             onChange={(e) => { if (e.target.value.length <= 280) setComment(e.target.value); }}
                             rows={2}
                             className="input resize-none text-xs"
-                            placeholder="Your feedback helps Apex learn..."
+                            placeholder="Your feedback helps Unitrader learn..."
                           />
                           <div className="mt-2 flex items-center justify-between">
                             <span className="text-[10px] text-dark-600 tabular-nums">{comment.length}/280</span>
@@ -1367,7 +1367,7 @@ export default function AppPage() {
       {/* Trial choice modal — disabled for free access */}
       {false && showTrialModal && trial && (
         <TrialChoiceModal
-          aiName={trial?.aiName ?? "Apex"}
+          aiName={trial?.aiName ?? "Unitrader"}
           daysRemaining={trial?.daysRemaining ?? 0}
           stats={trial?.performance ?? ({} as any)}
           onClose={mustShowModal ? undefined : () => setShowTrialModal(false)}

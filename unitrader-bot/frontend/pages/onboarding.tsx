@@ -1,7 +1,7 @@
 /**
  * Onboarding — shown after Clerk sign-up.
  * Step 0: Context screen ("Before we start")
- * Step 1: Name your AI (existing Apex chat / setup)
+ * Step 1: Name your AI (existing Unitrader chat / setup)
  */
 import { useAuth } from "@clerk/nextjs";
 import Head from "next/head";
@@ -15,8 +15,8 @@ import { authApi } from "@/lib/api";
 // ─────────────────────────────────────────────
 
 const COMPARISON_ROWS = [
-  { need: "Market analysis", institution: "£10M trading desk", apex: "Apex — included" },
-  { need: "Sentiment analysis", institution: "Bloomberg Terminal £24k/yr", apex: "Built into Apex" },
+  { need: "Market analysis", institution: "£10M trading desk", apex: "Unitrader — included" },
+  { need: "Sentiment analysis", institution: "Bloomberg Terminal £24k/yr", apex: "Built into Unitrader" },
   { need: "24/7 position watch", institution: "Operations team", apex: "Position Monitor Agent" },
   { need: "Risk management", institution: "Risk department", apex: "Risk Agent + circuit breaker" },
   { need: "Trade execution", institution: "Execution desk", apex: "Direct to Alpaca or Coinbase" },
@@ -36,19 +36,19 @@ function ContextStep({ onContinue }: { onContinue: () => void }) {
           Before we start — what you should know
         </h1>
         <p className="mx-auto mb-12 max-w-lg text-center text-sm leading-relaxed text-dark-400">
-          Apex is the same type of AI technology that hedge funds have used for 40 years.
+          Unitrader is the same type of AI technology that hedge funds have used for 40 years.
           The difference is you now have access to it.
         </p>
 
         <div className="mb-8 rounded-2xl border border-dark-800 bg-[#0d1117] p-6">
           <h2 className="section-label mb-5" style={{display:'block',fontSize:'11px',fontWeight:600,textTransform:'uppercase',letterSpacing:'0.08em',color:'#6b7280'}}>
-            What Apex gives you that was previously only for institutions
+            What Unitrader gives you that was previously only for institutions
           </h2>
 
           <div className="mb-3 grid grid-cols-3 gap-3 text-[11px] font-semibold uppercase tracking-wider">
             <span className="text-dark-500">What you need</span>
             <span className="text-red-400">What institutions pay</span>
-            <span className="text-brand-400">What Apex provides</span>
+            <span className="text-brand-400">What Unitrader provides</span>
           </div>
 
           <div className="space-y-1.5">
@@ -70,7 +70,7 @@ function ContextStep({ onContinue }: { onContinue: () => void }) {
             <Zap size={18} className="text-brand-400" />
           </div>
           <p className="text-sm leading-relaxed text-dark-300">
-            Hi, I&apos;m <strong className="text-white">Apex</strong> — your personal AI trader.
+            Hi, I&apos;m <strong className="text-white">Unitrader</strong> — your personal AI trader.
             I&apos;ll analyse the markets, tell you exactly what I&apos;m thinking and why,
             and trade on your behalf. Your money stays in your own exchange account — I only
             place the orders. You can pause me any time. Let&apos;s set you up.
@@ -81,13 +81,13 @@ function ContextStep({ onContinue }: { onContinue: () => void }) {
           onClick={onContinue}
           className="btn-primary w-full py-4 text-base"
         >
-          Meet Apex — let&apos;s talk
+          Meet Unitrader — let&apos;s talk
           <ArrowRight size={18} />
         </button>
 
         <p className="mt-6 text-center text-[10px] leading-relaxed text-dark-600">
           Trading involves risk of loss. Past performance does not guarantee future results.
-          Apex is an AI tool, not a regulated financial advisor.
+          Unitrader is an AI tool, not a regulated financial advisor.
         </p>
       </div>
     </div>

@@ -305,7 +305,7 @@ export default function PositionsPage() {
 
   const emptyMessage = useMemo(() => {
     if (traderClass === "complete_novice") {
-      return "No open positions yet — when Apex places a trade, it’ll show up here with live profit/loss.";
+      return "No open positions yet — when Unitrader places a trade, it’ll show up here with live profit/loss.";
     }
     if (traderClass === "curious_saver") {
       return "No open positions yet — start a trade to track live P&L and hold time.";

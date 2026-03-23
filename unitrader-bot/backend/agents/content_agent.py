@@ -71,14 +71,14 @@ class ContentAgent:
                     bullets.append(f"- {sym}: {side}")
                 context = "\n".join(bullets) if bullets else "- (No recorded decisions this week)"
                 prompt = (
-                    "Write a 500-word educational article about how Apex traded this week.\n"
-                    "Include: what signals Apex saw, what decisions it made, and what the outcomes were.\n"
-                    "Write in plain English for a beginner investor. Heading: 'How Apex traded this week'.\n"
+                    "Write a 500-word educational article about how Unitrader traded this week.\n"
+                    "Include: what signals Unitrader saw, what decisions it made, and what the outcomes were.\n"
+                    "Write in plain English for a beginner investor. Heading: 'How Unitrader traded this week'.\n"
                     "Include a key lesson at the end.\n\n"
                     "Here are the recorded decisions (symbol + signal):\n"
                     f"{context}\n"
                 )
-                fallback_title = "How Apex traded this week"
+                fallback_title = "How Unitrader traded this week"
 
             elif topic == "concept_explanation":
                 # concept name can be passed as "concept_explanation:RSI" or via related_trades[0]
@@ -93,20 +93,20 @@ class ContentAgent:
                 concept = str(concept).strip()[:100]
                 prompt = (
                     f"Write a 400-word plain-English explanation of {concept} for a complete beginner.\n"
-                    "Include: what it is, why it matters, and how Apex uses it. Real-world analogy required.\n"
+                    "Include: what it is, why it matters, and how Unitrader uses it. Real-world analogy required.\n"
                 )
                 fallback_title = f"{concept} explained for beginners"
 
             else:  # market_update
                 prompt = (
                     "Write a 450-word market update for a beginner investor.\n"
-                    "Explain what's been happening recently, what it could mean for risk, and how Apex adapts.\n"
+                    "Explain what's been happening recently, what it could mean for risk, and how Unitrader adapts.\n"
                     "Heading: 'Market update'. End with one practical tip.\n"
                 )
                 fallback_title = "Market update"
 
             system = (
-                "You are Apex, a helpful trading tutor. "
+                "You are Unitrader, a helpful trading tutor. "
                 "Write clear, beginner-friendly educational content. "
                 "Never give guarantees or financial advice. "
                 "Output markdown with headings and short paragraphs."

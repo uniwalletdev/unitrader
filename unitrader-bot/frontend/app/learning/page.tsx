@@ -64,15 +64,15 @@ export default function LearningIndexPage() {
         <title>Learn to trade | Unitrader</title>
         <meta
           name="description"
-          content="Plain-English trading education from Apex AI — concepts, recaps, and market insights."
+          content="Plain-English trading education from Unitrader AI — concepts, recaps, and market insights."
         />
       </Head>
       <div className="min-h-screen bg-dark-950 px-4 py-6 md:px-6">
         <div className="mx-auto flex max-w-5xl flex-col gap-4 md:gap-6">
           <div>
-            <h1 className="text-xl font-bold text-white md:text-2xl">Learn with Apex</h1>
+            <h1 className="text-xl font-bold text-white md:text-2xl">Learn with Unitrader</h1>
             <p className="mt-1 text-sm text-dark-300">
-              Plain-English trading education from Apex AI — weekly recaps, core concepts, and market updates.
+              Plain-English trading education from Unitrader AI — weekly recaps, core concepts, and market updates.
             </p>
           </div>
 
@@ -88,7 +88,7 @@ export default function LearningIndexPage() {
 
           {!loading && !error && articles.length === 0 && (
             <div className="rounded-xl border border-dark-800 bg-dark-950 p-6 text-sm text-dark-300">
-              No learning articles yet. Check back soon — Apex is still writing.
+              No learning articles yet. Check back soon — Unitrader is still writing.
             </div>
           )}
 
@@ -111,7 +111,7 @@ export default function LearningIndexPage() {
                       </span>
                       {isWeekly && (
                         <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-300">
-                          Based on real Apex trades
+                          Based on real Unitrader trades
                         </span>
                       )}
                     </div>

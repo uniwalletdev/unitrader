@@ -55,11 +55,11 @@ const getAmountHelperText = (
 ): string | null => {
   if (traderClass === "complete_novice") {
     return trustLadderStage === 1
-      ? "£25 maximum during Watch Mode \u2014 Apex is proving itself"
-      : "Apex will grow your limit as it builds your trust";
+      ? "£25 maximum during Watch Mode \u2014 Unitrader is proving itself"
+      : "Unitrader will grow your limit as it builds your trust";
   }
   if (traderClass === "curious_saver") {
-    return "Minimum £10 \u2014 enough for Apex to work with";
+    return "Minimum £10 \u2014 enough for Unitrader to work with";
   }
   if (traderClass === "self_taught" || traderClass === "crypto_native") {
     return `\u00a3${min} minimum \u2014 set your own limit in settings`;
@@ -141,7 +141,7 @@ function RiskSection({ variant }: { variant: "plain" | "pct" }) {
       <div className="text-xs font-semibold text-white">Risk</div>
       <div className="mt-2 text-xs text-dark-300">
         {variant === "plain"
-          ? "Apex uses stop-loss and take-profit to manage downside and lock gains."
+          ? "Unitrader uses stop-loss and take-profit to manage downside and lock gains."
           : "Stop-loss and take-profit are applied as % distances from entry where possible."}
       </div>
     </div>
@@ -192,9 +192,9 @@ function AIAnalysisCard({
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {/* Left — raw data */}
           <RawDataColumn analysis={analysis} />
-          {/* Right — Apex verdict */}
+          {/* Right — Unitrader verdict */}
           <div className="rounded-xl border border-brand-500/20 bg-brand-500/5 p-4">
-            <div className="mb-3 text-xs font-semibold text-brand-400">Apex&apos;s verdict</div>
+            <div className="mb-3 text-xs font-semibold text-brand-400">Unitrader&apos;s verdict</div>
             <div className="mb-3 text-sm text-dark-200">
               {analysis.message || analysis.reasoning || "Analysis ready."}
             </div>
@@ -209,7 +209,7 @@ function AIAnalysisCard({
     <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 md:p-5">
       <div className="mb-3 text-sm font-semibold text-white">{title}</div>
       <div className="mb-4 rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-400">
-        Run analysis to see Apex&apos;s reasoning here.
+        Run analysis to see Unitrader&apos;s reasoning here.
       </div>
       {children}
     </div>
@@ -451,7 +451,7 @@ function TradePage() {
               title={marketStatus?.analyzeTooltip}
               className="btn-primary w-full disabled:opacity-60"
             >
-              {analyzing ? "Analysing…" : "Analyse with Apex"}
+              {analyzing ? "Analysing…" : "Analyse with Unitrader"}
             </button>
             {marketStatus?.analyzeIndicator && (
               <div className="text-xs text-amber-300">{marketStatus.analyzeIndicator.text}</div>

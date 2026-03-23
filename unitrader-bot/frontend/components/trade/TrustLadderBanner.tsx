@@ -61,8 +61,8 @@ export default function TrustLadderBanner(props: TrustLadderBannerProps) {
       };
 
   const leftText = isStage1
-    ? "Watch Mode - Apex is using paper money. Zero real risk to you."
-    : "Micro Mode - trades capped at 25 GBP while Apex earns your trust";
+    ? "Watch Mode - Unitrader is using paper money. Zero real risk to you."
+    : "Micro Mode - trades capped at 25 GBP while Unitrader earns your trust";
 
   const progressPct = Math.max(
     0,

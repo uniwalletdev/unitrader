@@ -16,8 +16,8 @@ export default function NeverHoldBanner() {
         <path d="M20 6 9 17l-5-5" />
       </svg>
       <p className="text-[11px] leading-relaxed text-brand-300">
-        Apex never holds your money. All trades execute through your own exchange
-        account. Your funds stay with you — Apex only places the orders.
+        Unitrader never holds your money. All trades execute through your own exchange
+        account. Your funds stay with you — Unitrader only places the orders.
       </p>
     </div>
   );

@@ -362,10 +362,10 @@ export default function ExchangeConnectWizard({ exchange, onSuccess, onClose }: 
             {/* Success message */}
             <div className="text-center space-y-2">
               <h3 className="text-lg font-bold text-white">
-                Apex connected to {config.name} successfully
+                Unitrader connected to {config.name} successfully
               </h3>
               <p className="text-sm text-dark-400">
-                Apex is ready to start trading for you
+                Unitrader is ready to start trading for you
               </p>
             </div>
 

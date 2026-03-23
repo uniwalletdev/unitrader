@@ -288,7 +288,7 @@ export default function BrandPicker({
     if (traderClass === "complete_novice") {
       const picks = favourites.slice(0, 3).map((sym) => ({ symbol: sym, brand: sym }));
       return picks.length
-        ? { title: "Apex's picks for you", items: picks }
+        ? { title: "Unitrader's picks for you", items: picks }
         : null;
     }
     if (traderClass === "curious_saver") {

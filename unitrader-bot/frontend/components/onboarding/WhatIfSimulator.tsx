@@ -28,7 +28,7 @@ type SimResponse = {
 
 const DISCLAIMER =
   "Past performance does not guarantee future results. This simulation applies\n" +
-  "Apex's current strategy retroactively to historical market data.";
+  "Unitrader's current strategy retroactively to historical market data.";
 
 function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -168,7 +168,7 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
     const yourPicks = approvedAssets.length ? approvedAssets : ["AAPL", "MSFT", "SPY"];
     return [
       { id: "your_picks", label: "Your picks", symbols: yourPicks.slice(0, 6) },
-      { id: "apex_recommends", label: "Apex recommends", symbols: ["SPY", "VOO", "AAPL", "MSFT"] },
+      { id: "apex_recommends", label: "Unitrader recommends", symbols: ["SPY", "VOO", "AAPL", "MSFT"] },
       { id: "crypto", label: "Crypto", symbols: ["BTC/USD", "ETH/USD"] },
     ];
   }, [traderClass, approvedAssets]);
@@ -180,10 +180,10 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
   const heading = useMemo(() => {
     if (!traderClass) return "";
     if (traderClass === "complete_novice" || traderClass === "curious_saver") {
-      return "If Apex had traded for you last month";
+      return "If Unitrader had traded for you last month";
     }
-    if (traderClass === "self_taught") return "How Apex's strategy compares to yours";
-    if (traderClass === "crypto_native") return "What Apex would have done with your crypto";
+    if (traderClass === "self_taught") return "How Unitrader's strategy compares to yours";
+    if (traderClass === "crypto_native") return "What Unitrader would have done with your crypto";
     return "Backtest";
   }, [traderClass]);
 

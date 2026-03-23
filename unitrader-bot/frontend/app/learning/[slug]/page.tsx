@@ -58,7 +58,7 @@ export default function LearningArticlePage() {
   }, [slug]);
 
   const description = useMemo(() => {
-    if (!article?.content) return "Plain-English trading education from Apex AI.";
+    if (!article?.content) return "Plain-English trading education from Unitrader AI.";
     const plain = article.content.replace(/\s+/g, " ").trim();
     return plain.slice(0, 160);
   }, [article]);
@@ -70,7 +70,7 @@ export default function LearningArticlePage() {
             "@context": "https://schema.org",
             "@type": "Article",
             headline: article.title,
-            author: { "@type": "Person", name: "Apex AI" },
+            author: { "@type": "Person", name: "Unitrader AI" },
           }
         : null,
     [article],
@@ -82,16 +82,16 @@ export default function LearningArticlePage() {
       : `${process.env.NEXT_PUBLIC_FRONTEND_URL || ""}/learning/${slug}`;
 
   const twitterHref = `https://twitter.com/intent/tweet?text=${encodeURIComponent(
-    article?.title || "Great article from Apex AI",
+    article?.title || "Great article from Unitrader AI",
   )}&url=${encodeURIComponent(shareUrl)}`;
   const whatsappHref = `https://wa.me/?text=${encodeURIComponent(
-    `${article?.title || "Great article from Apex AI"} — ${shareUrl}`,
+    `${article?.title || "Great article from Unitrader AI"} — ${shareUrl}`,
   )}`;
 
   return (
     <>
       <Head>
-        <title>{article ? `${article.title} | Learn with Apex` : "Learning article | Apex"}</title>
+        <title>{article ? `${article.title} | Learn with Unitrader` : "Learning article | Unitrader"}</title>
         <meta name="description" content={description} />
         {jsonLd && (
           <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />

@@ -94,8 +94,8 @@ function getAmountLimits(traderClass: string, trustStage: number) {
 
 function getAmountHelperText(traderClass: string, trustStage: number, min: number): string | null {
   if (traderClass === "complete_novice")
-    return trustStage === 1 ? "£25 maximum during Watch Mode — Apex is proving itself" : "Apex will grow your limit as it builds your trust";
-  if (traderClass === "curious_saver") return "Minimum £10 — enough for Apex to work with";
+    return trustStage === 1 ? "£25 maximum during Watch Mode — Unitrader is proving itself" : "Unitrader will grow your limit as it builds your trust";
+  if (traderClass === "curious_saver") return "Minimum £10 — enough for Unitrader to work with";
   if (traderClass === "self_taught" || traderClass === "crypto_native") return `£${min} minimum — set your own limit in settings`;
   return null;
 }
@@ -284,7 +284,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
 
   // ── Analyze button label ──
   const analyzeLabel = isNoviceOrSaver
-    ? "Analyse with Apex"
+    ? "Analyse with Unitrader"
     : traderClass === "semi_institutional"
       ? "Bulk analyse"
       : "Analyse";
@@ -495,7 +495,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
             <div className="mt-2 text-xs text-dark-300">
               {traderClass === "self_taught" || traderClass === "experienced" || traderClass === "semi_institutional"
                 ? "Stop-loss and take-profit are applied as % distances from entry where possible."
-                : "Apex uses stop-loss and take-profit to manage downside and lock gains."}
+                : "Unitrader uses stop-loss and take-profit to manage downside and lock gains."}
             </div>
           </div>
 
