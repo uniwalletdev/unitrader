@@ -285,14 +285,14 @@ class MasterOrchestrator:
         expert_explanation = analysis_result.explanation_expert
 
         # Translate to simple explanation
-            simple_explanation = await trading_agent.translate_explanation(
+        simple_explanation = await trading_agent.translate_explanation(
             expert_text=expert_explanation,
             target="simple",
             context=ctx,
         )
 
         # Translate to metaphor explanation
-            metaphor_explanation = await trading_agent.translate_explanation(
+        metaphor_explanation = await trading_agent.translate_explanation(
             expert_text=expert_explanation,
             target="metaphor",
             context=ctx,
