@@ -58,29 +58,25 @@ const getAmountHelperText = (
       ? "£25 maximum during Watch Mode \u2014 Unitrader is proving itself"
       : "Unitrader will grow your limit as it builds your trust";
   }
-  if (traderClass === "curious_saver") {
-    return "Minimum £10 \u2014 enough for Unitrader to work with";
+  if (traderClass === "experienced" || traderClass === "semi_institutional") {
+    return null;
   }
-  if (traderClass === "self_taught" || traderClass === "crypto_native") {
-    return `\u00a3${min} minimum \u2014 set your own limit in settings`;
-  }
-  // experienced / semi_institutional — no helper text
-  return null;
+  return "Unitrader works best with £25 or more \u2014 smaller amounts earn very small returns";
 };
 
 const getAmountLimits = (traderClass: string, trustLadderStage: number) => {
   const limits: Record<string, { min: number; max: number; step: number }> = {
-    complete_novice:    { min: 25,  max: 25,    step: 25  },
-    curious_saver:      { min: 10,  max: 500,   step: 10  },
-    self_taught:        { min: 5,   max: 5000,  step: 5   },
-    experienced:        { min: 1,   max: 10000, step: 10  },
-    semi_institutional: { min: 1,   max: 50000, step: 100 },
-    crypto_native:      { min: 5,   max: 5000,  step: 5   },
+    complete_novice:    { min: 1,  max: 25,    step: 1   },
+    curious_saver:      { min: 1,  max: 500,   step: 1   },
+    self_taught:        { min: 1,  max: 5000,  step: 5   },
+    experienced:        { min: 1,  max: 10000, step: 10  },
+    semi_institutional: { min: 1,  max: 50000, step: 100 },
+    crypto_native:      { min: 1,  max: 5000,  step: 5   },
   };
 
-  // Trust Ladder Stage 1 always caps at £25 regardless of class
+  // Trust Ladder Stage 1 always caps at £25 regardless of class (no minimum floor)
   if (trustLadderStage === 1) {
-    return { min: 25, max: 25, step: 25 };
+    return { min: 1, max: 25, step: 1 };
   }
 
   return limits[traderClass] ?? limits["complete_novice"];

@@ -81,23 +81,22 @@ function normaliseSymbol(sym: string, exchange: string): string {
 
 function getAmountLimits(traderClass: string, trustStage: number) {
   const limits: Record<string, { min: number; max: number; step: number }> = {
-    complete_novice:    { min: 25,  max: 25,    step: 25  },
-    curious_saver:      { min: 10,  max: 500,   step: 10  },
-    self_taught:        { min: 5,   max: 5000,  step: 5   },
-    experienced:        { min: 1,   max: 10000, step: 10  },
-    semi_institutional: { min: 1,   max: 50000, step: 100 },
-    crypto_native:      { min: 5,   max: 5000,  step: 5   },
+    complete_novice:    { min: 1,  max: 25,    step: 1   },
+    curious_saver:      { min: 1,  max: 500,   step: 1   },
+    self_taught:        { min: 1,  max: 5000,  step: 5   },
+    experienced:        { min: 1,  max: 10000, step: 10  },
+    semi_institutional: { min: 1,  max: 50000, step: 100 },
+    crypto_native:      { min: 1,  max: 5000,  step: 5   },
   };
-  if (trustStage === 1) return { min: 25, max: 25, step: 25 };
+  if (trustStage === 1) return { min: 1, max: 25, step: 1 };
   return limits[traderClass] ?? limits["complete_novice"];
 }
 
 function getAmountHelperText(traderClass: string, trustStage: number, min: number): string | null {
   if (traderClass === "complete_novice")
     return trustStage === 1 ? "£25 maximum during Watch Mode — Unitrader is proving itself" : "Unitrader will grow your limit as it builds your trust";
-  if (traderClass === "curious_saver") return "Minimum £10 — enough for Unitrader to work with";
-  if (traderClass === "self_taught" || traderClass === "crypto_native") return `£${min} minimum — set your own limit in settings`;
-  return null;
+  if (traderClass === "experienced" || traderClass === "semi_institutional") return null;
+  return "Unitrader works best with £25 or more — smaller amounts earn very small returns";
 }
 
 export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) => void }) {

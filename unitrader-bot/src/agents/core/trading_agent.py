@@ -46,12 +46,12 @@ _CLAUDE_MODEL = "claude-3-haiku-20240307"
 # ─────────────────────────────────────────────
 
 CLASS_TRADE_LIMITS: dict[str, dict[str, float]] = {
-    "complete_novice":    {"min": 25,  "max": 25},
-    "curious_saver":      {"min": 10,  "max": 500},
-    "self_taught":        {"min": 5,   "max": 5000},
-    "experienced":        {"min": 1,   "max": 10000},
-    "semi_institutional": {"min": 1,   "max": 50000},
-    "crypto_native":      {"min": 5,   "max": 5000},
+    "complete_novice":    {"min": 1,  "max": 25},
+    "curious_saver":      {"min": 1,  "max": 500},
+    "self_taught":        {"min": 1,  "max": 5000},
+    "experienced":        {"min": 1,  "max": 10000},
+    "semi_institutional": {"min": 1,  "max": 50000},
+    "crypto_native":      {"min": 1,  "max": 5000},
 }
 
 
@@ -61,43 +61,43 @@ def validate_trade_amount(amount: float, ctx: SharedContext) -> dict:
     Paper trades bypass all min/max validation — they are practice only.
 
     Trust Ladder overrides:
-      Stage 1 (Micro Mode) — always caps at 25, regardless of class.
+      Stage 1 (Micro Mode) — caps at £25, no minimum floor enforced.
       Stage >= 2 (Standard) — non-novice classes use their full class max.
 
     Returns:
-        {"valid": True, "min": n, "max": n}
-        or {"valid": False, "reason": str, "min": n, "max": n}
+        {"valid": True, "min": 1, "max": n}
+        or {"valid": False, "reason": str, "min": 1, "max": n}
     """
     # Paper trades are practice — skip all amount validation
     if ctx.paper_trading_enabled:
-        return {"valid": True, "min": 0, "max": float("inf")}
+        return {"valid": True, "min": 1, "max": float("inf")}
 
     limits = dict(CLASS_TRADE_LIMITS.get(ctx.trader_class, CLASS_TRADE_LIMITS["complete_novice"]))
 
-    # Trust Ladder Stage 1 — micro mode, hard cap at 25
+    # Trust Ladder Stage 1 — micro mode, hard cap at £25 (no minimum floor)
     if ctx.trust_ladder_stage == 1:
-        limits = {"min": 25, "max": 25}
+        limits["max"] = 25
     elif ctx.trust_ladder_stage >= 2 and not ctx.is_novice():
         # Non-novice traders at Stage 2+ keep their full class max
         limits["max"] = CLASS_TRADE_LIMITS.get(ctx.trader_class, {}).get("max", 5000)
 
-    if amount < limits["min"]:
+    if ctx.trust_ladder_stage == 1 and amount > 25:
         return {
             "valid": False,
-            "reason": f"Minimum trade amount is £{limits['min']} for your account level.",
-            "min": limits["min"],
-            "max": limits["max"],
+            "reason": "Unitrader is in Stage 1 — maximum £25 while building your trust.",
+            "min": 1,
+            "max": 25,
         }
 
     if amount > limits["max"]:
         return {
             "valid": False,
             "reason": f"Maximum trade amount is £{limits['max']} for your account level.",
-            "min": limits["min"],
+            "min": 1,
             "max": limits["max"],
         }
 
-    return {"valid": True, "min": limits["min"], "max": limits["max"]}
+    return {"valid": True, "min": 1, "max": limits["max"]}
 
 
 class TradingDecision(BaseModel):
