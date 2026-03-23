@@ -114,7 +114,7 @@ export const exchangeApi = {
   list: () => api.get<{ status: string; data: ConnectedExchange[] }>("/api/trading/exchange-keys"),
 
   balances: () =>
-    api.get<{ status: string; data: AccountBalance[] }>("/api/trading/account-balances"),
+    api.get<{ status: string; data: AccountBalance[] }>("/api/trading/account-balances", { timeout: 30000 }),
 
   testConnection: (exchange: string) =>
     api.get<{

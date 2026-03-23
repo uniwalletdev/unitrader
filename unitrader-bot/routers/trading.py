@@ -14,6 +14,7 @@ Endpoints:
     DELETE /api/trading/exchange-keys/{exchange} — Remove exchange keys
 """
 
+import asyncio
 import csv
 import io
 import logging
@@ -305,8 +306,7 @@ async def get_account_balances(
     )
     keys = result.scalars().all()
 
-    items: list[dict] = []
-    for k in keys:
+    async def _fetch_one(k: ExchangeAPIKey) -> dict:
         entry = {
             "exchange": k.exchange,
             "is_paper": k.is_paper,
@@ -326,7 +326,6 @@ async def get_account_balances(
             balance = await client.get_account_balance()
             await client.aclose()
             entry["balance"] = round(balance, 2)
-            # Oanda accounts may be denominated in GBP
             if k.exchange == "oanda":
                 entry["currency"] = "GBP"
         except Exception as exc:
@@ -335,10 +334,11 @@ async def get_account_balances(
                 k.exchange, current_user.id, exc,
             )
             entry["error"] = str(exc)
+        return entry
 
-        items.append(entry)
+    items = await asyncio.gather(*[_fetch_one(k) for k in keys])
 
-    return {"status": "success", "data": items}
+    return {"status": "success", "data": list(items)}
 
 
 # ─────────────────────────────────────────────
