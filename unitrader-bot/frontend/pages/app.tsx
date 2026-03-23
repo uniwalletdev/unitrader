@@ -155,10 +155,11 @@ function StatCard({ label, value, sub, positive }: {
 }
 
 // ─────────────────────────────────────────────
-// Dashboard
+// Dashboard (legacy inline — replaced by AccountDashboard component)
+// Kept as reference during migration. Remove when stable.
 // ─────────────────────────────────────────────
 
-function Dashboard({ user }: { user: User | null }) {
+function _LegacyDashboard({ user }: { user: User | null }) {
   const [perf, setPerf] = useState<any>(null);
   const [risk, setRisk] = useState<any>(null);
   const [openPositions, setOpenPositions] = useState<Trade[]>([]);

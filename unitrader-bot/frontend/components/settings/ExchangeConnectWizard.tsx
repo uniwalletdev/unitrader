@@ -87,6 +87,7 @@ export default function ExchangeConnectWizard({ exchange, onSuccess, onClose }: 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<TestResult | null>(null);
+  const [isPaper, setIsPaper] = useState(true);
 
   const handleSaveAndTest = async () => {
     if (!apiKey.trim() || !apiSecret.trim()) {
@@ -99,7 +100,7 @@ export default function ExchangeConnectWizard({ exchange, onSuccess, onClose }: 
 
     try {
       // Step 1: Save the API keys
-      await exchangeApi.connect(exchange, apiKey, apiSecret, true);
+      await exchangeApi.connect(exchange, apiKey, apiSecret, isPaper);
 
       // Step 2: Test the connection
       const testRes = await exchangeApi.testConnection(exchange);
@@ -269,6 +270,29 @@ export default function ExchangeConnectWizard({ exchange, onSuccess, onClose }: 
             <p className="text-[10px] text-dark-500 border-t border-dark-700 pt-4 mt-4">
               Your API credentials are encrypted and stored securely. We only use them to execute trades on your behalf and will never share them with third parties.
             </p>
+
+            {/* Paper / Live toggle */}
+            <div className="flex items-center justify-between rounded-lg border border-dark-700 bg-dark-800/50 px-4 py-3">
+              <div>
+                <p className="text-xs font-medium text-white">{isPaper ? "Paper Trading" : "Live Trading"}</p>
+                <p className="text-[10px] text-dark-500 mt-0.5">
+                  {isPaper ? "Simulated trades — no real money at risk" : "Real-money trades — funds will be used"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsPaper((v) => !v)}
+                className={`relative h-6 w-11 rounded-full transition-colors ${
+                  isPaper ? "bg-amber-500" : "bg-emerald-500"
+                }`}
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white transition-transform ${
+                    !isPaper ? "translate-x-5" : ""
+                  }`}
+                />
+              </button>
+            </div>
           </div>
 
           {/* Footer */}

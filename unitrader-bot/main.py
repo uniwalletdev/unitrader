@@ -350,8 +350,6 @@ async def _trading_loop() -> None:
                         logger.info(
                             "Trading loop: user=%s (disabled pending orchestrator migration)",
                             user.id,
-                            orch.result.get("status") if isinstance(orch.result, dict) else "unknown",
-                            orch.result.get("count") if isinstance(orch.result, dict) else None,
                         )
 
                 except Exception as exc:
