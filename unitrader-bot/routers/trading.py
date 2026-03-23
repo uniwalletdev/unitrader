@@ -284,6 +284,64 @@ async def disconnect_exchange(
 
 
 # ─────────────────────────────────────────────
+# GET /api/trading/account-balances — Live balance per connected exchange
+# ─────────────────────────────────────────────
+
+@router.get("/account-balances")
+async def get_account_balances(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fetch live balance for every active exchange key the user has.
+
+    Returns per-key data:  exchange, is_paper, balance, currency.
+    Errors on individual exchanges are returned as balance=None.
+    """
+    result = await db.execute(
+        select(ExchangeAPIKey).where(
+            ExchangeAPIKey.user_id == current_user.id,
+            ExchangeAPIKey.is_active == True,  # noqa: E712
+        )
+    )
+    keys = result.scalars().all()
+
+    items: list[dict] = []
+    for k in keys:
+        entry = {
+            "exchange": k.exchange,
+            "is_paper": k.is_paper,
+            "connected_at": k.created_at.isoformat() if k.created_at else None,
+            "last_used": k.last_used_at.isoformat() if k.last_used_at else None,
+            "balance": None,
+            "currency": "USD",
+            "error": None,
+        }
+        try:
+            api_key, api_secret = decrypt_api_key(
+                k.encrypted_api_key, k.encrypted_api_secret
+            )
+            client = get_exchange_client(
+                k.exchange, api_key, api_secret, is_paper=k.is_paper
+            )
+            balance = await client.get_account_balance()
+            await client.aclose()
+            entry["balance"] = round(balance, 2)
+            # Oanda accounts may be denominated in GBP
+            if k.exchange == "oanda":
+                entry["currency"] = "GBP"
+        except Exception as exc:
+            logger.warning(
+                "Failed to fetch balance for %s (user %s): %s",
+                k.exchange, current_user.id, exc,
+            )
+            entry["error"] = str(exc)
+
+        items.append(entry)
+
+    return {"status": "success", "data": items}
+
+
+# ─────────────────────────────────────────────
 # POST /api/trading/execute
 # ─────────────────────────────────────────────
 

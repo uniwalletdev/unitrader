@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
   BarChart3,
   Building2,
+  Loader2,
   Pause,
   Play,
   Plus,
@@ -13,6 +14,13 @@ import {
   Wallet,
   X,
 } from "lucide-react";
+import {
+  exchangeApi,
+  tradingAPI,
+  type AccountBalance,
+  type BackendTrade,
+  type PerformanceData,
+} from "../lib/api";
 
 type Exchange = "Alpaca" | "Coinbase" | "Binance" | "Oanda";
 type Mode = "paper" | "live";
@@ -44,215 +52,32 @@ type Account = {
   oandaSubtype?: "Practice" | "Live";
 };
 
-const INITIAL_ACCOUNTS: Account[] = [
-  {
-    id: "alpaca-paper-1",
-    exchange: "Alpaca",
-    mode: "paper",
-    status: "connected",
-    balance: 11480,
-    currency: "USD",
-    apexActive: true,
-    pnl: 1284,
-    pnlPercent: 12.59,
-    trades: [
-      {
-        id: "ap1-t1",
-        asset: "AAPL",
-        direction: "buy",
-        amount: 25,
-        price: 189.2,
-        timestamp: "2026-03-20T14:22:00Z",
-        reason: "RSI oversold + positive earnings momentum",
-        outcome: "win",
-        pnl: 212,
-      },
-      {
-        id: "ap1-t2",
-        asset: "TSLA",
-        direction: "buy",
-        amount: 8,
-        price: 174.5,
-        timestamp: "2026-03-20T16:01:00Z",
-        reason: "Breakout above resistance with rising volume",
-        outcome: "open",
-        pnl: 0,
-      },
-      {
-        id: "ap1-t3",
-        asset: "MSFT",
-        direction: "sell",
-        amount: 10,
-        price: 418.3,
-        timestamp: "2026-03-19T09:35:00Z",
-        reason: "Mean reversion signal after RSI divergence",
-        outcome: "win",
-        pnl: 164,
-      },
-      {
-        id: "ap1-t4",
-        asset: "NVDA",
-        direction: "buy",
-        amount: 5,
-        price: 868.4,
-        timestamp: "2026-03-18T13:08:00Z",
-        reason: "Momentum continuation + analyst upgrades",
-        outcome: "loss",
-        pnl: -96,
-      },
-      {
-        id: "ap1-t5",
-        asset: "AMZN",
-        direction: "buy",
-        amount: 14,
-        price: 181.0,
-        timestamp: "2026-03-17T11:45:00Z",
-        reason: "MACD bullish crossover + strong sentiment",
-        outcome: "win",
-        pnl: 138,
-      },
-    ],
-  },
-  {
-    id: "alpaca-live-1",
-    exchange: "Alpaca",
-    mode: "live",
-    status: "connected",
-    balance: 23950,
-    currency: "USD",
-    apexActive: true,
-    pnl: 316,
-    pnlPercent: 1.34,
-    trades: [
-      {
-        id: "al1-t1",
-        asset: "AAPL",
-        direction: "buy",
-        amount: 40,
-        price: 190.1,
-        timestamp: "2026-03-20T10:33:00Z",
-        reason: "Trend support retest + strong breadth",
-        outcome: "open",
-        pnl: 0,
-      },
-      {
-        id: "al1-t2",
-        asset: "GOOGL",
-        direction: "sell",
-        amount: 12,
-        price: 152.9,
-        timestamp: "2026-03-19T15:11:00Z",
-        reason: "Overbought RSI with weakening momentum",
-        outcome: "win",
-        pnl: 204,
-      },
-      {
-        id: "al1-t3",
-        asset: "META",
-        direction: "buy",
-        amount: 9,
-        price: 493.4,
-        timestamp: "2026-03-18T12:58:00Z",
-        reason: "Breakout failure risk controlled with tight stop",
-        outcome: "loss",
-        pnl: -121,
-      },
-    ],
-  },
-  {
-    id: "coinbase-live-1",
-    exchange: "Coinbase",
-    mode: "live",
-    status: "connected",
-    balance: 17120,
-    currency: "USD",
-    apexActive: false,
-    pnl: -842,
-    pnlPercent: -4.69,
-    trades: [
-      {
-        id: "cb1-t1",
-        asset: "BTC/USD",
-        direction: "buy",
-        amount: 0.22,
-        price: 68320,
-        timestamp: "2026-03-20T07:20:00Z",
-        reason: "On-chain inflow slowdown + support bounce",
-        outcome: "open",
-        pnl: 0,
-      },
-      {
-        id: "cb1-t2",
-        asset: "ETH/USD",
-        direction: "buy",
-        amount: 3.4,
-        price: 3685,
-        timestamp: "2026-03-18T21:44:00Z",
-        reason: "Funding normalized + positive sentiment reversal",
-        outcome: "loss",
-        pnl: -842,
-      },
-    ],
-  },
-  {
-    id: "oanda-practice-1",
-    exchange: "Oanda",
-    mode: "paper",
-    oandaSubtype: "Practice",
-    status: "connected",
-    balance: 9320,
-    currency: "GBP",
-    apexActive: true,
-    pnl: 286,
-    pnlPercent: 3.16,
-    trades: [
-      {
-        id: "oa1-t1",
-        asset: "EUR/USD",
-        direction: "buy",
-        amount: 25000,
-        price: 1.0832,
-        timestamp: "2026-03-20T06:40:00Z",
-        reason: "DXY weakness + bullish macro sentiment",
-        outcome: "win",
-        pnl: 122,
-      },
-      {
-        id: "oa1-t2",
-        asset: "GBP/JPY",
-        direction: "sell",
-        amount: 12000,
-        price: 196.43,
-        timestamp: "2026-03-19T08:12:00Z",
-        reason: "Bearish divergence + risk-off flow",
-        outcome: "win",
-        pnl: 98,
-      },
-      {
-        id: "oa1-t3",
-        asset: "XAU/USD",
-        direction: "buy",
-        amount: 7,
-        price: 2191.4,
-        timestamp: "2026-03-18T10:08:00Z",
-        reason: "Safe-haven bid + breakout continuation",
-        outcome: "open",
-        pnl: 0,
-      },
-      {
-        id: "oa1-t4",
-        asset: "USD/CAD",
-        direction: "buy",
-        amount: 18000,
-        price: 1.3571,
-        timestamp: "2026-03-17T14:52:00Z",
-        reason: "Rate differential widening signal",
-        outcome: "loss",
-        pnl: -46,
-      },
-    ],
-  },
-];
+function mapExchangeName(raw: string): Exchange {
+  const m: Record<string, Exchange> = {
+    alpaca: "Alpaca",
+    coinbase: "Coinbase",
+    binance: "Binance",
+    oanda: "Oanda",
+  };
+  return m[raw.toLowerCase()] ?? ("Alpaca" as Exchange);
+}
+
+function backendTradeToTrade(t: BackendTrade): Trade {
+  const pnl = (t.profit ?? 0) - (t.loss ?? 0);
+  let outcome: "win" | "loss" | "open" = "open";
+  if (t.status === "closed") outcome = pnl >= 0 ? "win" : "loss";
+  return {
+    id: t.id,
+    asset: t.symbol,
+    direction: t.side?.toLowerCase() === "sell" ? "sell" : "buy",
+    amount: t.quantity,
+    price: t.entry_price,
+    timestamp: t.created_at ?? new Date().toISOString(),
+    reason: t.market_condition ?? "",
+    outcome,
+    pnl: t.status === "closed" ? pnl : 0,
+  };
+}
 
 const fxToUsd: Record<string, number> = {
   USD: 1,
@@ -303,11 +128,81 @@ function exchangeTone(exchange: Exchange) {
 }
 
 export default function AccountDashboard() {
-  const [accounts, setAccounts] = useState<Account[]>(INITIAL_ACCOUNTS);
-  const [selectedAccountId, setSelectedAccountId] = useState<string>(INITIAL_ACCOUNTS[0].id);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [liveSwitchTargetId, setLiveSwitchTargetId] = useState<string | null>(null);
   const [confirmLiveText, setConfirmLiveText] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchAccounts = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const [balancesRes, positionsRes, historyRes, perfRes] = await Promise.all([
+        exchangeApi.balances(),
+        tradingAPI.getOpenPositions(),
+        tradingAPI.getTradeHistory({ limit: 100 }),
+        tradingAPI.getPerformance(),
+      ]);
+
+      const balances: AccountBalance[] = balancesRes.data?.data ?? [];
+      const openPositions: BackendTrade[] = positionsRes.data?.data?.positions ?? [];
+      const closedTrades: BackendTrade[] = historyRes.data?.data?.trades ?? [];
+      const perf: PerformanceData = perfRes.data?.data ?? {};
+
+      const allTrades = [...openPositions, ...closedTrades].map(backendTradeToTrade);
+      const netPnl = perf.net_pnl_usd ?? 0;
+
+      const mapped: Account[] = balances.map((b) => {
+        const exchange = mapExchangeName(b.exchange);
+        const mode: Mode = b.is_paper ? "paper" : "live";
+        const id = `${b.exchange}-${mode}`;
+        const currency = b.currency || "USD";
+        const balance = b.balance ?? 0;
+
+        // Show all trades; backend groups by user, not per key
+        const accountTrades = allTrades;
+
+        // Use performance data for P&L; distribute across accounts proportionally
+        const accountPnl = balances.length > 0 ? netPnl / balances.length : 0;
+        const accountPnlPct = balance > 0 ? (accountPnl / balance) * 100 : 0;
+
+        return {
+          id,
+          exchange,
+          mode,
+          status: b.error ? "error" as AccountStatus : "connected" as AccountStatus,
+          balance,
+          currency,
+          apexActive: true,
+          pnl: Math.round(accountPnl * 100) / 100,
+          pnlPercent: Math.round(accountPnlPct * 100) / 100,
+          trades: accountTrades,
+          ...(exchange === "Oanda" && { oandaSubtype: mode === "paper" ? "Practice" as const : "Live" as const }),
+        };
+      });
+
+      setAccounts(mapped);
+      setSelectedAccountId((prev) => {
+        if (mapped.length > 0 && !mapped.find((a) => a.id === prev)) {
+          return mapped[0].id;
+        }
+        return prev;
+      });
+    } catch (err) {
+      console.error("Failed to fetch account data:", err);
+      setError("Failed to load account data. Please check your connection.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAccounts();
+  }, [fetchAccounts]);
 
   const selectedAccount =
     accounts.find((account) => account.id === selectedAccountId) ?? accounts[0] ?? null;
@@ -413,10 +308,35 @@ export default function AccountDashboard() {
     setConfirmLiveText("");
   }
 
+  if (loading) {
+    return (
+      <div className="flex min-h-[400px] items-center justify-center rounded-2xl border border-slate-800 bg-slate-950 p-6 text-slate-100">
+        <Loader2 className="mr-2 h-5 w-5 animate-spin text-sky-400" />
+        Loading accounts...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-2xl border border-slate-800 bg-slate-950 p-6 text-slate-100">
+        <p className="text-rose-300">{error}</p>
+        <button
+          type="button"
+          onClick={fetchAccounts}
+          className="mt-3 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 hover:border-slate-600"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
   if (!selectedAccount) {
     return (
       <div className="rounded-2xl border border-slate-800 bg-slate-950 p-6 text-slate-100">
-        No accounts available.
+        <p>No connected exchange accounts found.</p>
+        <p className="mt-1 text-sm text-slate-400">Connect an exchange in Settings to get started.</p>
       </div>
     );
   }

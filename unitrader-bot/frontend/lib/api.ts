@@ -100,8 +100,21 @@ export interface ConnectExchangeResponse {
   message: string;
 }
 
+export interface AccountBalance {
+  exchange: string;
+  is_paper: boolean;
+  connected_at: string | null;
+  last_used: string | null;
+  balance: number | null;
+  currency: string;
+  error: string | null;
+}
+
 export const exchangeApi = {
   list: () => api.get<{ status: string; data: ConnectedExchange[] }>("/api/trading/exchange-keys"),
+
+  balances: () =>
+    api.get<{ status: string; data: AccountBalance[] }>("/api/trading/account-balances"),
 
   testConnection: (exchange: string) =>
     api.get<{
