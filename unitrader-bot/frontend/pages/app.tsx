@@ -653,7 +653,9 @@ function Chat({ user }: { user: User | null }) {
     try {
       const res = await chatApi.sendMessage(text);
       const d = res.data.data;
-      setMessages((m) => [...m, { role: "assistant", content: d.message || d.response, context: d.context_label }]);
+      const content = d.message || d.response || "";
+      const contextLabel = d.context_label ?? undefined;
+      setMessages((m) => [...m, { role: "assistant", content, context: contextLabel }]);
     } catch {
       setMessages((m) => [...m, { role: "assistant", content: "I'm having trouble connecting. Please try again." }]);
     }

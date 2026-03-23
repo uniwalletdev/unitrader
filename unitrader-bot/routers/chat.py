@@ -71,9 +71,17 @@ async def send_message(
     - Saves the exchange to the database
     """
     orchestrator = get_orchestrator()
+
+    # Route to the correct agent based on whether onboarding is complete.
+    # Onboarding-incomplete users get the tool-based profile-collection flow.
+    # Everyone else gets the full trading conversation agent.
+    from src.agents.shared_memory import SharedMemory
+    ctx = await SharedMemory.load(current_user.id, db)
+    action = "chat" if ctx.onboarding_complete else "onboarding_chat"
+
     result = await orchestrator.route(
         user_id=current_user.id,
-        action="onboarding_chat",
+        action=action,
         payload={"message": body.message},
         db=db,
     )

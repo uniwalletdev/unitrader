@@ -7,6 +7,7 @@ Loads SharedContext once per request, passes to agents, writes audit trails.
 Actions:
   "trade_analyze"     → TradingAgent.analyze (expert + simple + metaphor explanations)
   "trade_execute"     → Risk + Portfolio checks, then execute (paper/live)
+  "chat"              → ConversationAgent.respond (post-onboarding trading chat)
   "onboarding_chat"   → ConversationAgent.chat in onboarding mode
   "backtest"          → TradingAgent.backtest for strategy validation
 """
@@ -216,6 +217,9 @@ class MasterOrchestrator:
 
             elif action == "trade_execute":
                 return await self._trade_execute(user_id, ctx, payload, db)
+
+            elif action == "chat":
+                return await self._chat(user_id, ctx, payload, db)
 
             elif action == "onboarding_chat":
                 return await self._onboarding_chat(user_id, ctx, payload, db)
@@ -492,6 +496,34 @@ class MasterOrchestrator:
         return trade_result
 
     # ─────────────────────────────────────────────────────────────────────────
+    # CHAT (post-onboarding trading chat)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _chat(
+        self,
+        user_id: str,
+        ctx: SharedContext,
+        payload: dict,
+        db: AsyncSession,
+    ) -> dict:
+        """Route to ConversationAgent.respond() for post-onboarding chats.
+
+        Returns a normalised dict with keys the frontend expects:
+          response, context_label, message (alias), completed=False
+        """
+        message = payload.get("message")
+        if not message:
+            raise ValueError("Missing message in payload")
+
+        conv_agent = ConversationAgent(user_id=user_id)
+        result = await conv_agent.respond(message, db)
+
+        # Normalise: expose both 'response' and 'message' so either frontend
+        # field read pattern works
+        result.setdefault("message", result.get("response", ""))
+        result.setdefault("completed", False)
+        return result
+
     # ONBOARDING CHAT
     # ─────────────────────────────────────────────────────────────────────────
 
