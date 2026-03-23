@@ -19,6 +19,7 @@ import ContentPanel from "@/components/ContentPanel";
 import LearningPanel from "@/components/LearningPanel";
 import SecuritySettings from "@/components/SecuritySettings";
 import TrialChoiceModal from "@/components/TrialChoiceModal";
+import AccountDashboard from "@/components/AccountDashboard";
 import { useTrialStatus, clearTrialCache } from "@/hooks/useTrialStatus";
 import MobileNav from "@/components/layout/MobileNav";
 import { isNative } from "@/hooks/useCapacitor";
@@ -1333,7 +1334,7 @@ export default function AppPage() {
           </div>
 
           <main className={isNative ? "flex-1 overflow-y-auto px-4 py-5 pb-20" : "flex-1 overflow-y-auto px-4 md:px-8 py-5 md:py-7"}>
-            {activeTab === "dashboard" && <Dashboard key={dashboardKey} user={user} />}
+            {activeTab === "dashboard" && <AccountDashboard />}
             {activeTab === "trade" && <TradePanel onNavigate={setActiveTab} />}
             {activeTab === "chat" && (
               <div className="flex h-full flex-col">
