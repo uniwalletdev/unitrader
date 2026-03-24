@@ -1030,6 +1030,28 @@ function History() {
 // ─────────────────────────────────────────────
 
 function SettingsPanel({ user, onExchangeConnected }: { user: User | null; onExchangeConnected?: () => void }) {
+  const [dailyLoss, setDailyLoss] = useState(5);
+  const [positionSize, setPositionSize] = useState(2);
+  const [riskSaving, setRiskSaving] = useState(false);
+  const [riskSaved, setRiskSaved] = useState(false);
+
+  useEffect(() => {
+    authApi.getSettings().then(res => {
+      if (res.data.max_daily_loss != null) setDailyLoss(res.data.max_daily_loss);
+      if (res.data.max_position_size != null) setPositionSize(res.data.max_position_size);
+    }).catch(() => {});
+  }, []);
+
+  const saveRiskSettings = async () => {
+    setRiskSaving(true);
+    try {
+      await authApi.updateSettings({ max_daily_loss: dailyLoss, max_position_size: positionSize });
+      setRiskSaved(true);
+      setTimeout(() => setRiskSaved(false), 2500);
+    } catch { /* ignore */ }
+    setRiskSaving(false);
+  };
+
   const handleUpgrade = async () => {
     try {
       const res = await billingApi.checkout();
@@ -1073,6 +1095,59 @@ function SettingsPanel({ user, onExchangeConnected }: { user: User | null; onExc
 
       <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
         <SecuritySettings />
+      </div>
+
+      {/* Risk Settings */}
+      <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
+        <div className="mb-4 flex items-center gap-2">
+          <Shield size={15} className="text-amber-400" />
+          <h2 className="text-sm font-semibold text-white">Risk Limits</h2>
+        </div>
+        <p className="mb-5 text-[11px] text-dark-500 leading-relaxed">
+          These limits protect your account. Trading pauses automatically if they are exceeded.
+        </p>
+        <div className="space-y-5">
+          {/* Daily Loss Limit */}
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs text-dark-300">Daily loss limit</span>
+              <span className="text-xs font-semibold text-amber-400">{dailyLoss}%</span>
+            </div>
+            <input
+              type="range" min={1} max={50} step={1}
+              value={dailyLoss}
+              onChange={e => setDailyLoss(Number(e.target.value))}
+              className="w-full accent-amber-400"
+            />
+            <p className="mt-1 text-[10px] text-dark-600">
+              If your account drops {dailyLoss}% in a single day, trading pauses until you resume it.
+            </p>
+          </div>
+          {/* Max Position Size */}
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs text-dark-300">Max position size</span>
+              <span className="text-xs font-semibold text-brand-400">{positionSize}%</span>
+            </div>
+            <input
+              type="range" min={1} max={20} step={1}
+              value={positionSize}
+              onChange={e => setPositionSize(Number(e.target.value))}
+              className="w-full accent-brand-400"
+            />
+            <p className="mt-1 text-[10px] text-dark-600">
+              Maximum % of your account balance per trade.
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={saveRiskSettings}
+          disabled={riskSaving}
+          className="mt-5 flex items-center gap-2 rounded-xl bg-brand-500 px-4 py-2 text-xs font-semibold text-dark-950 transition hover:bg-brand-400 disabled:opacity-60"
+        >
+          {riskSaving ? <RefreshCw size={12} className="animate-spin" /> : null}
+          {riskSaved ? "Saved ✓" : riskSaving ? "Saving…" : "Save risk limits"}
+        </button>
       </div>
 
       <div className="rounded-2xl border border-brand-500/20 bg-brand-500/[0.04] p-5">

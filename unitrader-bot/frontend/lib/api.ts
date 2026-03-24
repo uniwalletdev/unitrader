@@ -59,6 +59,7 @@ export const authApi = {
     trade_mode?: string;
     max_trade_amount?: number;
     max_daily_loss?: number;
+    max_position_size?: number;
     trading_paused?: boolean;
     leaderboard_opt_out?: boolean;
     approved_assets?: string[];

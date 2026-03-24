@@ -283,6 +283,7 @@ class UpdateUserSettingsRequest(BaseModel):
     trade_mode: str | None = None
     max_trade_amount: float | None = None
     max_daily_loss: float | None = None
+    max_position_size: float | None = None
     trading_paused: bool | None = None
     leaderboard_opt_out: bool | None = None
     approved_assets: list[str] | None = None
