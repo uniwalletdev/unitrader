@@ -302,9 +302,37 @@ class MasterOrchestrator:
             context=ctx,
         )
 
-        # Merge all explanations into result
+        # Compute absolute price levels from percentages
+        entry_price = analysis_result.market_data.get("price", 0) if analysis_result.market_data else 0
+        sl_pct = analysis_result.suggested_stop_loss_pct
+        tp_pct = analysis_result.suggested_take_profit_pct
+        stop_loss = round(entry_price * (1 - sl_pct / 100), 4) if entry_price and sl_pct else None
+        take_profit = round(entry_price * (1 + tp_pct / 100), 4) if entry_price and tp_pct else None
+
+        # Extract technical indicators for experienced-user display
+        indicators = analysis_result.market_data.get("indicators", {}) if analysis_result.market_data else {}
+
+        signal = analysis_result.signal  # "buy" | "sell" | "wait"
+
         return {
             **analysis_result.model_dump(),
+            # ── Frontend-expected field names ────────────────────────────────────
+            "status": "wait" if signal == "wait" else "executed",
+            "decision": signal.upper(),          # "BUY" | "SELL" | "WAIT"
+            # Top-level explanations (frontend reads these directly)
+            "expert": expert_explanation,
+            "simple": simple_explanation,
+            "metaphor": metaphor_explanation,
+            # Absolute price levels
+            "entry_price": entry_price if entry_price else None,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            # Technical indicators for experienced traders
+            "rsi": indicators.get("rsi"),
+            "macd": indicators.get("macd", {}).get("histogram") if indicators.get("macd") else None,
+            "volume_ratio": indicators.get("volume_ratio"),
+            "market_trend": analysis_result.market_data.get("trend") if analysis_result.market_data else None,
+            # ── Nested versions preserved ────────────────────────────────────────
             "explanations": {
                 "expert": expert_explanation,
                 "simple": simple_explanation,
