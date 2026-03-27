@@ -24,6 +24,30 @@ function formatDate(iso: string | null | undefined) {
 export default function TrustLadderDetail() {
   const [traderClass, setTraderClass] = useState<TraderClass | "other" | null>(null);
   const [status, setStatus] = useState<LadderStatus | null>(null);
+  const stages = useMemo(() => {
+    return [
+      {
+        key: "1",
+        title: "Stage 1 — Watch Mode",
+        unlocksWhen: ["Paper trading enabled"],
+      },
+      {
+        key: "2",
+        title: "Stage 2 — Micro Mode",
+        unlocksWhen: ["Complete onboarding", "Unitrader places a few paper trades"],
+      },
+      {
+        key: "3",
+        title: "Stage 3 — Full Trading",
+        unlocksWhen: ["5 paper trades completed", "Risk disclosure accepted"],
+      },
+      {
+        key: "4",
+        title: "Stage 4 — Autonomy",
+        unlocksWhen: ["Sustained performance", "No recent circuit breaker triggers"],
+      },
+    ];
+  }, []);
 
   // CRITICAL RULE: check trader_class before rendering anything.
   useEffect(() => {
@@ -73,31 +97,6 @@ export default function TrustLadderDetail() {
   if (traderClass === "other") return null;
 
   const stage = status?.stage ?? 1;
-
-  const stages = useMemo(() => {
-    return [
-      {
-        key: "1",
-        title: "Stage 1 — Watch Mode",
-        unlocksWhen: ["Paper trading enabled"],
-      },
-      {
-        key: "2",
-        title: "Stage 2 — Micro Mode",
-        unlocksWhen: ["Complete onboarding", "Unitrader places a few paper trades"],
-      },
-      {
-        key: "3",
-        title: "Stage 3 — Full Trading",
-        unlocksWhen: ["5 paper trades completed", "Risk disclosure accepted"],
-      },
-      {
-        key: "4",
-        title: "Stage 4 — Autonomy",
-        unlocksWhen: ["Sustained performance", "No recent circuit breaker triggers"],
-      },
-    ];
-  }, []);
 
   return (
     <div className="space-y-4">
