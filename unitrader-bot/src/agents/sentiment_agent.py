@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 import anthropic
 import httpx
 
+from config import settings
 from src.agents.shared_memory import SharedContext
 
 logger = logging.getLogger(__name__)
@@ -141,11 +142,20 @@ class SentimentAgent:
         # Normalize symbol for Alpaca API
         alpaca_symbol = symbol.replace("/", "")  # BTC/USD -> BTCUSD
 
-        url = f"{self.alpaca_base_url}/v1beta1/news"
+        api_key = self.alpaca_api_key or settings.alpaca_api_key
+        api_secret = getattr(settings, "alpaca_api_secret", None)
+        if not api_key:
+            logger.warning(f"No Alpaca API key available — skipping news fetch for {symbol}")
+            return []
+
+        # News lives on the data subdomain, not the trading API
+        url = "https://data.alpaca.markets/v1beta1/news"
         headers = {
-            "APCA-API-KEY-ID": self.alpaca_api_key,
+            "APCA-API-KEY-ID": api_key,
             "Content-Type": "application/json",
         }
+        if api_secret:
+            headers["APCA-API-SECRET-KEY"] = api_secret
         params = {"symbols": alpaca_symbol, "limit": 10}
 
         try:

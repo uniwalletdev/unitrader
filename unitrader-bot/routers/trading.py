@@ -732,7 +732,7 @@ async def get_ohlcv(
         logger.error("OHLCV fetch failed for %s: %s", sym, exc)
         raise HTTPException(status_code=500, detail="ohlcv_fetch_failed")
 
-    bars = payload.get("bars", []) if isinstance(payload, dict) else []
+    bars = (payload.get("bars") or []) if isinstance(payload, dict) else []
     out = []
     for b in bars:
         t = b.get("t")

@@ -152,40 +152,46 @@ async def _validate_token(token: str) -> str:
 # Price Fetching
 # ─────────────────────────────────────────────
 
-def _fetch_latest_quote(symbol: str) -> Dict[str, Any]:
+async def _fetch_latest_quote(symbol: str) -> Dict[str, Any]:
     """
-    Fetch latest quote from Alpaca REST API.
+    Fetch latest quote from Alpaca data REST API via httpx.
 
     Returns:
-        Dict with symbol, price, bid, ask, volume, change_pct, timestamp
+        Dict with symbol, price, bid, ask, bid_size, ask_size, timestamp
 
     Raises:
-        Exception: If fetch fails
+        Exception: If fetch fails or credentials are missing
     """
-    client = _get_alpaca_client()
+    api_key = settings.alpaca_api_key or os.getenv("APCA_API_KEY_ID", "")
+    api_secret = settings.alpaca_api_secret or os.getenv("APCA_API_SECRET_KEY", "")
 
-    quote = client.get_last_quote(symbol)
-    if not quote:
-        raise ValueError(f"No quote found for {symbol}")
+    if not api_key or not api_secret:
+        raise ValueError("Alpaca credentials not configured for price stream")
 
-    # Extract timestamp if available
-    timestamp = datetime.utcnow().isoformat()
-    if hasattr(quote, "timestamp"):
-        timestamp = (
-            quote.timestamp.isoformat()
-            if isinstance(quote.timestamp, datetime)
-            else str(quote.timestamp)
-        )
+    headers = {
+        "APCA-API-KEY-ID": api_key,
+        "APCA-API-SECRET-KEY": api_secret,
+    }
+    url = f"https://data.alpaca.markets/v2/stocks/{symbol}/quotes/latest"
 
-    # Build response
+    async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        payload = resp.json()
+
+    q = payload.get("quote", {}) or {}
+    bid = float(q.get("bp", 0) or 0)
+    ask = float(q.get("ap", 0) or 0)
+    price = (bid + ask) / 2 if bid and ask else (ask or bid)
+
     return {
         "symbol": symbol.upper(),
-        "price": float(quote.last),
-        "bid": float(quote.bid),
-        "ask": float(quote.ask),
-        "bid_size": int(quote.bid_size) if hasattr(quote, "bid_size") else 0,
-        "ask_size": int(quote.ask_size) if hasattr(quote, "ask_size") else 0,
-        "timestamp": timestamp,
+        "price": price,
+        "bid": bid,
+        "ask": ask,
+        "bid_size": int(q.get("bs", 0) or 0),
+        "ask_size": int(q.get("as", 0) or 0),
+        "timestamp": q.get("t", datetime.utcnow().isoformat()),
     }
 
 
@@ -238,7 +244,7 @@ async def _poll_and_broadcast(symbol: str):
         while symbol in _alpaca_subscriptions and error_count < max_errors:
             try:
                 # Fetch latest quote
-                message = _fetch_latest_quote(symbol)
+                message = await _fetch_latest_quote(symbol)
 
                 # Broadcast to all subscribers
                 if symbol in _symbol_subscribers:
@@ -330,14 +336,12 @@ async def websocket_price_stream(websocket: WebSocket, symbol: str, token: str =
         # Subscribe to Alpaca stream if not already active
         await _subscribe_to_symbol(symbol)
 
-        # Send initial quote
+        # Send initial quote — failure is non-fatal; the poll loop will deliver prices
         try:
-            initial_quote = _fetch_latest_quote(symbol)
+            initial_quote = await _fetch_latest_quote(symbol)
             await websocket.send_json(initial_quote)
         except Exception as e:
             logger.error(f"Failed to send initial quote for {symbol}: {e}")
-            await websocket.close(code=4000, reason="Failed to fetch price")
-            return
 
         # Keep connection alive, listen for disconnect
         while True:
