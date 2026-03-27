@@ -284,16 +284,16 @@ function TradePage() {
     };
   }, []);
 
-  // onboarding_complete gate: only render chat full screen
-  if (!loading && settings?.onboarding_complete === false) {
-    return <ApexOnboardingChat />;
-  }
-
   useEffect(() => {
     if (!toast) return;
     const t = window.setTimeout(() => setToast(null), 3000);
     return () => window.clearTimeout(t);
   }, [toast]);
+
+  // onboarding_complete gate: only render chat full screen
+  if (!loading && settings?.onboarding_complete === false) {
+    return <ApexOnboardingChat />;
+  }
 
   const handleAnalyse = async () => {
     if (!symbol.trim()) return;
