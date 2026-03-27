@@ -568,16 +568,31 @@ class CoinbaseClient(BaseExchangeClient):
         )
 
     def _headers(self, method: str, path: str, body: str = "") -> dict:
-        """Generate HMAC-SHA256 signed request headers for Coinbase Advanced Trade."""
-        timestamp = str(int(time.time()))
-        message = timestamp + method.upper() + path + body
-        sig = hmac.new(
-            self.api_secret.encode(), message.encode(), hashlib.sha256
-        ).hexdigest()
+        """Generate JWT auth headers for Coinbase CDP Advanced Trade REST API."""
+        import secrets
+
+        from jose import jwt as jose_jwt
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+        now = int(time.time())
+        nonce = secrets.token_hex(16)
+        private_key = load_pem_private_key(self.api_secret.encode(), password=None)
+
+        payload = {
+            "sub": self.api_key,
+            "iss": "cdp",
+            "nbf": now,
+            "exp": now + 120,
+        }
+        token = jose_jwt.encode(
+            payload,
+            private_key,
+            algorithm="ES256",
+            headers={"kid": self.api_key, "nonce": nonce},
+        )
+
         return {
-            "CB-ACCESS-KEY": self.api_key,
-            "CB-ACCESS-SIGN": sig,
-            "CB-ACCESS-TIMESTAMP": timestamp,
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
 
@@ -640,14 +655,62 @@ class CoinbaseClient(BaseExchangeClient):
         return str(data.get("success_response", {}).get("order_id", ""))
 
     async def set_stop_loss(self, symbol: str, order_id: str, stop_price: float) -> bool:
-        # Coinbase Advanced Trade does not support attaching stop-loss to existing orders;
-        # a separate stop-limit order must be placed.
-        logger.warning("CoinbaseClient.set_stop_loss: separate stop-limit order required — not yet implemented")
-        return False
+        try:
+            product_id = symbol if "-" in symbol else f"{symbol[:3]}-USD"
+            current = await self.get_current_price(product_id)
+            side = "SELL" if stop_price < current else "BUY"
+            limit_price = stop_price * (0.999 if side == "SELL" else 1.001)
+
+            status = await self.get_order_status(product_id, order_id)
+            base_size = float(status.get("filled_qty") or 0)
+            if base_size <= 0:
+                raise ValueError("Cannot place stop-loss: original order not filled yet")
+
+            body = {
+                "client_order_id": f"ut-sl-{int(time.time())}",
+                "product_id": product_id,
+                "side": side,
+                "order_configuration": {
+                    "stop_limit_stop_limit_gtc": {
+                        "base_size": str(base_size),
+                        "stop_price": str(stop_price),
+                        "limit_price": str(limit_price),
+                    }
+                },
+            }
+            data = await _with_retry(self._post, "/api/v3/brokerage/orders", body)
+            return bool(data.get("success", True)) and bool(data.get("success_response", {}).get("order_id"))
+        except Exception as exc:
+            logger.error("Coinbase set_stop_loss failed: %s", exc)
+            return False
 
     async def set_take_profit(self, symbol: str, order_id: str, target_price: float) -> bool:
-        logger.warning("CoinbaseClient.set_take_profit: separate limit order required — not yet implemented")
-        return False
+        try:
+            product_id = symbol if "-" in symbol else f"{symbol[:3]}-USD"
+            current = await self.get_current_price(product_id)
+            side = "SELL" if target_price > current else "BUY"
+
+            status = await self.get_order_status(product_id, order_id)
+            base_size = float(status.get("filled_qty") or 0)
+            if base_size <= 0:
+                raise ValueError("Cannot place take-profit: original order not filled yet")
+
+            body = {
+                "client_order_id": f"ut-tp-{int(time.time())}",
+                "product_id": product_id,
+                "side": side,
+                "order_configuration": {
+                    "limit_limit_gtc": {
+                        "base_size": str(base_size),
+                        "limit_price": str(target_price),
+                    }
+                },
+            }
+            data = await _with_retry(self._post, "/api/v3/brokerage/orders", body)
+            return bool(data.get("success", True)) and bool(data.get("success_response", {}).get("order_id"))
+        except Exception as exc:
+            logger.error("Coinbase set_take_profit failed: %s", exc)
+            return False
 
     async def get_open_orders(self, symbol: str) -> list[dict]:
         product_id = symbol if "-" in symbol else f"{symbol[:3]}-USD"

@@ -11,7 +11,22 @@ interface ConnectedExchange {
   last_used: string | null;
 }
 
-const EXCHANGES = [
+type ExchangeField = {
+  key: "api_key" | "api_secret";
+  label: string;
+  placeholder: string;
+  multiline?: boolean;
+};
+
+type ExchangeDef = {
+  id: string;
+  name: string;
+  description: string;
+  docsUrl: string;
+  fields: ExchangeField[];
+};
+
+const EXCHANGES: ExchangeDef[] = [
   {
     id: "alpaca",
     name: "Alpaca",
@@ -40,6 +55,16 @@ const EXCHANGES = [
     fields: [
       { key: "api_key", label: "API Token", placeholder: "Your OANDA API token" },
       { key: "api_secret", label: "Account ID", placeholder: "Your OANDA account ID" },
+    ],
+  },
+  {
+    id: "coinbase",
+    name: "Coinbase",
+    description: "Crypto exchange — Advanced Trade (CDP keys)",
+    docsUrl: "https://portal.cdp.coinbase.com/",
+    fields: [
+      { key: "api_key", label: "API Key Name", placeholder: "organizations/.../apiKeys/..." },
+      { key: "api_secret", label: "Private Key (PEM)", placeholder: "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----", multiline: true },
     ],
   },
 ];
@@ -219,17 +244,41 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
             {/* Expansion form */}
             {expanded && !active && (
               <div className="border-t border-dark-800 p-4">
-                <div className="mb-3 flex items-center gap-1 text-[10px] text-dark-500">
-                  Get your API keys from
-                  <a
-                    href={exchange.docsUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-0.5 text-brand-400 hover:underline"
-                  >
-                    {exchange.name} dashboard <ExternalLink size={9} />
-                  </a>
-                </div>
+                {exchange.id === "coinbase" ? (
+                  <div className="mb-3 rounded-lg border border-dark-800 bg-dark-900/40 p-3 text-[11px] text-dark-400">
+                    <div className="mb-2 flex items-center gap-1 text-[10px] text-dark-500">
+                      Create Coinbase CDP API keys at
+                      <a
+                        href={exchange.docsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-0.5 text-brand-400 hover:underline"
+                      >
+                        portal.cdp.coinbase.com <ExternalLink size={9} />
+                      </a>
+                    </div>
+                    <ol className="list-decimal space-y-1 pl-4">
+                      <li>Go to Projects → your project → API Keys</li>
+                      <li>Click Create API Key (name it “Unitrader”)</li>
+                      <li>Enable trade permissions</li>
+                      <li>Copy API Key Name (looks like organizations/.../apiKeys/...)</li>
+                      <li>Copy the full Private Key block including BEGIN/END lines</li>
+                      <li>Paste both above</li>
+                    </ol>
+                  </div>
+                ) : (
+                  <div className="mb-3 flex items-center gap-1 text-[10px] text-dark-500">
+                    Get your API keys from
+                    <a
+                      href={exchange.docsUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-0.5 text-brand-400 hover:underline"
+                    >
+                      {exchange.name} dashboard <ExternalLink size={9} />
+                    </a>
+                  </div>
+                )}
                 <div className="space-y-3">
                   {exchange.fields.map((field) => {
                     const fieldId = `${exchange.id}_${field.key}`;
@@ -238,16 +287,29 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                       <div key={field.key}>
                         <label className="mb-1 block text-xs text-dark-400">{field.label}</label>
                         <div className="relative">
-                          <input
-                            type={isSecret && !showSecrets[fieldId] ? "password" : "text"}
-                            value={formValues[fieldId] || ""}
-                            onChange={(e) =>
-                              setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
-                            }
-                            placeholder={field.placeholder}
-                            className="input w-full pr-9 font-mono text-xs"
-                            autoComplete="off"
-                          />
+                          {field.multiline ? (
+                            <textarea
+                              rows={6}
+                              value={formValues[fieldId] || ""}
+                              onChange={(e) =>
+                                setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
+                              }
+                              placeholder={field.placeholder}
+                              className="input w-full font-mono text-xs resize-none"
+                              autoComplete="off"
+                            />
+                          ) : (
+                            <input
+                              type={isSecret && !showSecrets[fieldId] ? "password" : "text"}
+                              value={formValues[fieldId] || ""}
+                              onChange={(e) =>
+                                setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
+                              }
+                              placeholder={field.placeholder}
+                              className="input w-full pr-9 font-mono text-xs"
+                              autoComplete="off"
+                            />
+                          )}
                           {isSecret && (
                             <button
                               type="button"
