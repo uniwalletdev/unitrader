@@ -263,6 +263,12 @@ class MasterOrchestrator:
         if not symbol:
             raise ValueError("Missing symbol in payload")
 
+        # Override ctx.exchange with the exchange specified in the request payload
+        # so market data and analysis use the correct exchange (e.g. coinbase for BTC-USD)
+        exchange = payload.get("exchange")
+        if exchange:
+            ctx.exchange = exchange.lower()
+
         # Check subscription
         if not ctx.subscription_active:
             raise HTTPException(status_code=402, detail="Subscription required to analyze trades")

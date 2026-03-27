@@ -30,6 +30,7 @@ _TIMEOUT = 10.0
 EXCHANGE_CAPABILITIES = {
     "alpaca": {"stocks": True, "crypto": True, "forex": False},
     "binance": {"stocks": False, "crypto": True, "forex": False},
+    "coinbase": {"stocks": False, "crypto": True, "forex": False},
     "oanda": {"stocks": False, "crypto": False, "forex": True},
 }
 
@@ -61,7 +62,7 @@ def classify_asset(symbol: str) -> str:
     if len(parts) == 3:
         clean = f"{parts[0]}/{parts[1]}"
 
-    base = clean.split("/")[0].split("_")[0]
+    base = clean.split("/")[0].split("_")[0].split("-")[0]
 
     # Strip stablecoin suffixes to get the actual symbol
     for stable in ["USDT", "USDC", "BUSD", "USD"]:
@@ -118,6 +119,17 @@ def normalise_symbol(symbol: str, exchange: str) -> str:
             if base.endswith(s):
                 base = base[: -len(s)]
         return f"{base}USDT"
+
+    if ex == "coinbase":
+        if asset_type != "crypto":
+            raise ValueError(
+                f"Coinbase only supports crypto — cannot trade {symbol} ({asset_type})"
+            )
+        base = clean.split("/")[0].split("_")[0].split("-")[0]
+        for s in ["USDT", "USDC", "BUSD", "USD"]:
+            if base.endswith(s):
+                base = base[: -len(s)]
+        return f"{base}-USD"
 
     if ex == "oanda":
         if asset_type != "forex":
@@ -196,6 +208,8 @@ async def fetch_market_data(symbol: str, exchange: str) -> dict:
     
     if ex == "binance":
         return await _fetch_binance(normalised)
+    if ex == "coinbase":
+        return await _fetch_coinbase_spot(normalised)
     if ex == "oanda":
         return await _fetch_oanda(normalised)
     
@@ -217,6 +231,50 @@ async def _fetch_binance(symbol: str) -> dict:
         "low_24h": float(d["lowPrice"]),
         "volume": float(d["quoteVolume"]),
         "price_change_pct": float(d["priceChangePercent"]),
+        "timestamp": datetime.now(timezone.utc),
+    }
+
+
+async def _fetch_coinbase_spot(symbol: str) -> dict:
+    """Symbol already normalised to BTC-USD format.
+
+    Uses the public Coinbase Advanced Trade prices API — no auth required.
+    Falls back to approximate 24h change using open/close from stats endpoint.
+    """
+    base_url = "https://api.coinbase.com/v2/prices"
+    stats_url = f"https://api.exchange.coinbase.com/products/{symbol}/stats"
+
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        spot_resp = await client.get(f"{base_url}/{symbol}/spot")
+        spot_resp.raise_for_status()
+        spot_data = spot_resp.json()
+        price = float(spot_data["data"]["amount"])
+
+        high_24h = price
+        low_24h = price
+        volume = 0.0
+        price_change_pct = 0.0
+
+        try:
+            stats_resp = await client.get(stats_url)
+            if stats_resp.status_code == 200:
+                s = stats_resp.json()
+                high_24h = float(s.get("high", price))
+                low_24h = float(s.get("low", price))
+                volume = float(s.get("volume", 0.0))
+                open_price = float(s.get("open", price))
+                if open_price:
+                    price_change_pct = ((price - open_price) / open_price) * 100
+        except Exception:
+            logger.debug("Coinbase stats fetch failed for %s — using spot price only", symbol)
+
+    return {
+        "symbol": symbol,
+        "price": price,
+        "high_24h": high_24h,
+        "low_24h": low_24h,
+        "volume": volume,
+        "price_change_pct": price_change_pct,
         "timestamp": datetime.now(timezone.utc),
     }
 

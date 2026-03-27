@@ -617,7 +617,7 @@ async def execute_trade(
         result = await orchestrator.route(
             user_id=current_user.id,
             action="trade_analyze",
-            payload={"symbol": body.symbol.upper()},
+            payload={"symbol": body.symbol.upper(), "exchange": body.exchange},
             db=db,
         )
 

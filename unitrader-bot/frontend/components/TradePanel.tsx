@@ -178,6 +178,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   const [searchLoading, setSearchLoading]   = useState(false);
   const [searchOpen, setSearchOpen]         = useState(false);
   const searchRef                           = useRef<HTMLDivElement>(null);
+  const [symbolMappingNote, setSymbolMappingNote] = useState<string | null>(null);
 
   const isPaper = useMemo(() => {
     if (!trust) return traderClass === "complete_novice" || traderClass === "curious_saver";
@@ -342,8 +343,20 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
     setOdAnalyzing(true);
     setOdResult(null);
     setOdError("");
+    setSymbolMappingNote(null);
+
+    // If user typed free text without picking from the dropdown, auto-resolve to top result
+    let resolvedSymbol = odSymbol.trim();
+    if (searchQuery.trim() && searchResults.length > 0) {
+      resolvedSymbol = searchResults[0].symbol;
+      setOdSymbol(resolvedSymbol);
+      setSearchQuery("");
+      setSearchOpen(false);
+      setSymbolMappingNote(`Using symbol: ${resolvedSymbol}`);
+    }
+
     try {
-      const sym = normaliseSymbol(odSymbol, selectedExchange);
+      const sym = normaliseSymbol(resolvedSymbol, selectedExchange);
       const res = await tradingApi.execute(sym, selectedExchange);
       const data = res.data?.data ?? res.data;
       setOdResult(data);
@@ -459,7 +472,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
               }`}
             >
               Full Autopilot
-              <span className="ml-1.5 hidden sm:inline text-[11px] font-normal opacity-70">AI decides & trades</span>
+              <span className="ml-1.5 hidden sm:inline text-[11px] font-normal opacity-70">AI trades automatically</span>
             </button>
             <button
               type="button"
@@ -472,13 +485,13 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
               }`}
             >
               AI Picks
-              <span className="ml-1.5 hidden sm:inline text-[11px] font-normal opacity-70">You choose which to trade</span>
+              <span className="ml-1.5 hidden sm:inline text-[11px] font-normal opacity-70">You review & tap to trade</span>
             </button>
           </div>
           <p className="mt-2 text-[11px] text-dark-500 leading-relaxed">
             {tradeMode === "auto"
-              ? "Your AI runs fully autonomously — analysing markets, spotting opportunities, and executing trades for you automatically."
-              : "Your AI analyses the market and presents the best picks. You decide which one to trade with one tap."}
+              ? "Your AI scans the market every 5 minutes and places trades automatically. No action needed from you."
+              : "Your AI finds the best opportunities right now. You review them and tap to trade — you stay in control."}
           </p>
         </div>
 
@@ -671,6 +684,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
                     onChange={(e) => {
                       const v = e.target.value.toUpperCase();
                       setOdSymbol(v);
+                      setSymbolMappingNote(null);
                       handleSearchChange(v);
                     }}
                     onFocus={() => { if (searchResults.length > 0) setSearchOpen(true); }}
@@ -708,6 +722,14 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
                 )}
               </div>
             </div>
+
+            {/* Symbol mapping note — shown when free text was auto-resolved to a ticker */}
+            {symbolMappingNote && (
+              <p className="text-[11px] text-brand-400 flex items-center gap-1.5">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-brand-400" />
+                {symbolMappingNote}
+              </p>
+            )}
 
             {/* Analyse button */}
             <button
