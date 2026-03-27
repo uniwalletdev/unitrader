@@ -15,7 +15,7 @@ import {
   Shield,
   ToggleLeft,
   ToggleRight,
-  TrendingUp,
+  Clipboard,
 } from "lucide-react";
 import { exchangeApi, type ConnectedExchange } from "@/lib/api";
 import NeverHoldBanner from "@/components/layout/NeverHoldBanner";
@@ -27,13 +27,13 @@ const EXCHANGES = [
     tagline: "Stocks & ETFs",
     description:
       "Trade US equities and ETFs commission-free. Supports paper trading for risk-free practice.",
-    color: "brand",
     signupUrl: "https://app.alpaca.markets/signup",
     docsUrl: "https://app.alpaca.markets/paper/dashboard/overview",
     keyLabel: "API Key ID",
     keyPlaceholder: "PK...",
     secretLabel: "Secret Key",
     secretPlaceholder: "Your Alpaca secret key",
+    secretMultiline: false,
   },
   {
     id: "binance",
@@ -41,13 +41,13 @@ const EXCHANGES = [
     tagline: "Crypto",
     description:
       "Access the world's largest crypto exchange. Trade BTC, ETH, and hundreds of altcoins.",
-    color: "yellow",
     signupUrl: "https://accounts.binance.com/register",
     docsUrl: "https://www.binance.com/en/my/settings/api-management",
     keyLabel: "API Key",
     keyPlaceholder: "Your Binance API key",
     secretLabel: "Secret Key",
     secretPlaceholder: "Your Binance secret key",
+    secretMultiline: false,
   },
   {
     id: "oanda",
@@ -55,13 +55,13 @@ const EXCHANGES = [
     tagline: "Forex",
     description:
       "Trade major, minor and exotic forex pairs. Practice accounts available for all users.",
-    color: "blue",
     signupUrl: "https://www.oanda.com/apply/",
     docsUrl: "https://www.oanda.com/account/",
     keyLabel: "API Token",
     keyPlaceholder: "Your OANDA API token",
     secretLabel: "Account ID",
     secretPlaceholder: "e.g. 001-001-12345-001",
+    secretMultiline: false,
   },
   {
     id: "coinbase",
@@ -69,15 +69,38 @@ const EXCHANGES = [
     tagline: "Crypto",
     description:
       "Trade Bitcoin, Ethereum and hundreds of crypto assets on one of the world's most trusted exchanges.",
-    color: "blue",
-    signupUrl: "https://www.coinbase.com/signup",
-    docsUrl: "https://www.coinbase.com/settings/api",
-    keyLabel: "API Key",
-    keyPlaceholder: "Your Coinbase API key",
-    secretLabel: "API Secret",
-    secretPlaceholder: "Your Coinbase API secret",
+    signupUrl: "https://portal.cdp.coinbase.com/",
+    docsUrl: "https://portal.cdp.coinbase.com/",
+    keyLabel: "API Key Name",
+    keyPlaceholder: "organizations/.../apiKeys/...",
+    secretLabel: "Private Key (PEM)",
+    secretPlaceholder: "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----",
+    secretMultiline: true,
   },
 ] as const;
+
+// ─── Coinbase smart-paste helpers ─────────────────────────────────────────────
+
+type CbPasteStatus =
+  | { kind: "idle" }
+  | { kind: "json_full"; name: string; privateKey: string }
+  | { kind: "pem_only" }
+  | { kind: "key_only" };
+
+function parseCbPaste(raw: string): CbPasteStatus {
+  const trimmed = raw.trim();
+  if (!trimmed) return { kind: "idle" };
+  try {
+    const obj = JSON.parse(trimmed);
+    if (obj && typeof obj.name === "string" && typeof obj.privateKey === "string") {
+      return { kind: "json_full", name: obj.name.trim(), privateKey: obj.privateKey.trim() };
+    }
+  } catch { /* not JSON */ }
+  if (trimmed.includes("-----BEGIN") && trimmed.includes("PRIVATE KEY-----")) {
+    return { kind: "pem_only" };
+  }
+  return { kind: "key_only" };
+}
 
 type ExchangeId = (typeof EXCHANGES)[number]["id"];
 
@@ -94,6 +117,9 @@ export default function ConnectExchangePage() {
   const [isPaper, setIsPaper] = useState(true);
   const [showKey, setShowKey] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
+  // Coinbase smart paste
+  const [cbPasteRaw, setCbPasteRaw] = useState("");
+  const [cbPasteStatus, setCbPasteStatus] = useState<CbPasteStatus>({ kind: "idle" });
 
   const [submitting, setSubmitting] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
@@ -133,6 +159,18 @@ export default function ConnectExchangePage() {
     setShowKey(false);
     setShowSecret(false);
     setMessage(null);
+    setCbPasteRaw("");
+    setCbPasteStatus({ kind: "idle" });
+  };
+
+  const handleCbPaste = (raw: string) => {
+    setCbPasteRaw(raw);
+    const status = parseCbPaste(raw);
+    setCbPasteStatus(status);
+    if (status.kind === "json_full") {
+      setFormKey(status.name);
+      setFormSecret(status.privateKey);
+    }
   };
 
   const handleExpand = (id: ExchangeId) => {
@@ -356,78 +394,181 @@ export default function ConnectExchangePage() {
                           </div>
                         )}
 
-                        <div className="space-y-3">
-                          {/* API Key */}
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-dark-400">
-                              {ex.keyLabel}
-                            </label>
-                            <div className="relative">
+                        {ex.id === "coinbase" ? (
+                          /* ── Coinbase smart-paste UI ── */
+                          <div className="space-y-3">
+                            <div>
+                              <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-dark-400">
+                                <Clipboard size={12} />
+                                Paste your Coinbase key here
+                              </label>
+                              <textarea
+                                rows={4}
+                                value={cbPasteRaw}
+                                onChange={(e) => handleCbPaste(e.target.value)}
+                                placeholder={`Paste the JSON from Coinbase CDP portal\nor paste just the Private Key PEM block`}
+                                className="input w-full resize-none font-mono text-[11px] leading-relaxed"
+                                autoComplete="off"
+                                spellCheck={false}
+                              />
+                              {cbPasteStatus.kind === "json_full" && (
+                                <p className="mt-1 text-[10px] text-brand-400">
+                                  ✓ Detected full CDP key — both fields filled automatically
+                                </p>
+                              )}
+                              {cbPasteStatus.kind === "pem_only" && (
+                                <p className="mt-1 text-[10px] text-yellow-400">
+                                  PEM detected — please also fill in the API Key Name below
+                                </p>
+                              )}
+                              {cbPasteStatus.kind === "key_only" && (
+                                <p className="mt-1 text-[10px] text-dark-500">
+                                  Plain text detected — fill both fields below manually
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="relative border-t border-dark-800/50 pt-3">
+                              <span className="absolute -top-2 left-3 bg-[#0d1117] px-1 text-[9px] uppercase tracking-widest text-dark-600">
+                                or fill in manually
+                              </span>
+                            </div>
+
+                            {/* API Key Name */}
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-dark-400">
+                                API Key Name
+                              </label>
                               <input
-                                type={showKey ? "text" : "password"}
+                                type="text"
                                 value={formKey}
                                 onChange={(e) => setFormKey(e.target.value)}
-                                placeholder={ex.keyPlaceholder}
-                                className="input pr-9 font-mono text-xs"
+                                placeholder="organizations/.../apiKeys/..."
+                                className="input font-mono text-xs"
                                 autoComplete="off"
                               />
-                              <button
-                                type="button"
-                                onClick={() => setShowKey((v) => !v)}
-                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-300"
-                              >
-                                {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                              </button>
                             </div>
-                          </div>
 
-                          {/* Secret Key */}
-                          <div>
-                            <label className="mb-1 block text-xs font-medium text-dark-400">
-                              {ex.secretLabel}
-                            </label>
-                            <div className="relative">
-                              <input
-                                type={showSecret ? "text" : "password"}
+                            {/* Private Key */}
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-dark-400">
+                                Private Key (PEM)
+                              </label>
+                              <textarea
+                                rows={4}
                                 value={formSecret}
                                 onChange={(e) => setFormSecret(e.target.value)}
-                                placeholder={ex.secretPlaceholder}
-                                className="input pr-9 font-mono text-xs"
+                                placeholder={"-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----"}
+                                className="input w-full resize-none font-mono text-[11px] leading-relaxed"
                                 autoComplete="off"
+                                spellCheck={false}
                               />
+                            </div>
+
+                            <div className="flex items-center justify-between rounded-xl border border-dark-800 px-3 py-2.5">
+                              <span className="text-xs text-dark-400">Trading Mode</span>
                               <button
                                 type="button"
-                                onClick={() => setShowSecret((v) => !v)}
-                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-300"
+                                onClick={() => setIsPaper((v) => !v)}
+                                className="flex items-center gap-2 text-xs font-medium"
                               >
-                                {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+                                {isPaper ? (
+                                  <>
+                                    <ToggleLeft size={20} className="text-brand-400" />
+                                    <span className="text-brand-400">Paper Trading</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <ToggleRight size={20} className="text-yellow-400" />
+                                    <span className="text-yellow-400">Live Trading</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+
+                            <details className="rounded-xl border border-dark-800 p-3 text-[10px] text-dark-500">
+                              <summary className="cursor-pointer text-dark-400 hover:text-white">
+                                How to get your Coinbase CDP key
+                              </summary>
+                              <ol className="mt-2 list-decimal space-y-1 pl-4">
+                                <li>Go to <a href="https://portal.cdp.coinbase.com/" target="_blank" rel="noopener noreferrer" className="text-brand-400 hover:underline">portal.cdp.coinbase.com</a></li>
+                                <li>Create an API key with <strong className="text-dark-300">Trade</strong> permission</li>
+                                <li>Copy the JSON shown — paste it directly above</li>
+                              </ol>
+                            </details>
+                          </div>
+                        ) : (
+                          /* ── Standard exchange form ── */
+                          <div className="space-y-3">
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-dark-400">
+                                {ex.keyLabel}
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type={showKey ? "text" : "password"}
+                                  value={formKey}
+                                  onChange={(e) => setFormKey(e.target.value)}
+                                  placeholder={ex.keyPlaceholder}
+                                  className="input pr-9 font-mono text-xs"
+                                  autoComplete="off"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowKey((v) => !v)}
+                                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-300"
+                                >
+                                  {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-dark-400">
+                                {ex.secretLabel}
+                              </label>
+                              <div className="relative">
+                                <input
+                                  type={showSecret ? "text" : "password"}
+                                  value={formSecret}
+                                  onChange={(e) => setFormSecret(e.target.value)}
+                                  placeholder={ex.secretPlaceholder}
+                                  className="input pr-9 font-mono text-xs"
+                                  autoComplete="off"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowSecret((v) => !v)}
+                                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-300"
+                                >
+                                  {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between rounded-xl border border-dark-800 px-3 py-2.5">
+                              <span className="text-xs text-dark-400">Trading Mode</span>
+                              <button
+                                type="button"
+                                onClick={() => setIsPaper((v) => !v)}
+                                className="flex items-center gap-2 text-xs font-medium"
+                              >
+                                {isPaper ? (
+                                  <>
+                                    <ToggleLeft size={20} className="text-brand-400" />
+                                    <span className="text-brand-400">Paper Trading</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <ToggleRight size={20} className="text-yellow-400" />
+                                    <span className="text-yellow-400">Live Trading</span>
+                                  </>
+                                )}
                               </button>
                             </div>
                           </div>
+                        )}
 
-                          <div className="flex items-center justify-between rounded-xl border border-dark-800 px-3 py-2.5">
-                            <span className="text-xs text-dark-400">Trading Mode</span>
-                            <button
-                              type="button"
-                              onClick={() => setIsPaper((v) => !v)}
-                              className="flex items-center gap-2 text-xs font-medium"
-                            >
-                              {isPaper ? (
-                                <>
-                                  <ToggleLeft size={20} className="text-brand-400" />
-                                  <span className="text-brand-400">Paper Trading</span>
-                                </>
-                              ) : (
-                                <>
-                                  <ToggleRight size={20} className="text-yellow-400" />
-                                  <span className="text-yellow-400">Live Trading</span>
-                                </>
-                              )}
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Docs link */}
                         <div className="mt-4 flex items-center gap-1 text-[10px] text-dark-500">
                           Don&apos;t have an account?
                           <a
@@ -453,7 +594,6 @@ export default function ConnectExchangePage() {
                           {submitting ? "Validating..." : "Connect & Verify"}
                         </button>
 
-                        {/* Security notice */}
                         <div className="mt-3 flex items-start gap-2 text-[10px] text-dark-600">
                           <Shield size={12} className="mt-0.5 shrink-0" />
                           Your keys are encrypted with AES-256 and never displayed again after saving.
