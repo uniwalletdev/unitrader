@@ -579,11 +579,15 @@ class CoinbaseClient(BaseExchangeClient):
         Legacy/HMAC keys (plain string secret) → CB-ACCESS-* headers.
         """
         if self._is_pem(self.api_secret):
-            return self._headers_jwt()
+            return self._headers_jwt(method, path)
         return self._headers_hmac(method, path, body)
 
-    def _headers_jwt(self) -> dict:
-        """Generate JWT Bearer auth for Coinbase CDP (ECDSA PEM private key)."""
+    def _headers_jwt(self, method: str, path: str) -> dict:
+        """Generate JWT Bearer auth for Coinbase CDP (ECDSA PEM private key).
+
+        Coinbase CDP requires a 'uri' claim in the format 'METHOD host/path'.
+        Without it every request returns 401 even with a valid key pair.
+        """
         import secrets as _secrets
 
         from jose import jwt as jose_jwt
@@ -591,13 +595,18 @@ class CoinbaseClient(BaseExchangeClient):
 
         now = int(time.time())
         nonce = _secrets.token_hex(16)
-        private_key = load_pem_private_key(self.api_secret.encode(), password=None)
+
+        # Normalise PEM — the secret may arrive with literal \n from JSON transport
+        pem = self.api_secret.replace("\\n", "\n").strip()
+        private_key = load_pem_private_key(pem.encode(), password=None)
 
         payload = {
             "sub": self.api_key,
             "iss": "cdp",
             "nbf": now,
             "exp": now + 120,
+            # Coinbase CDP REQUIRES this claim — omitting it causes 401
+            "uri": f"{method.upper()} api.coinbase.com{path}",
         }
         token = jose_jwt.encode(
             payload,
@@ -832,16 +841,19 @@ async def validate_oanda_keys(api_key: str, account_id: str) -> bool:
 
 
 async def validate_coinbase_keys(api_key: str, api_secret: str) -> bool:
-    """Verify Coinbase Advanced Trade credentials by listing accounts."""
+    """Verify Coinbase Advanced Trade credentials by listing accounts.
+
+    Raises httpx.HTTPStatusError on 4xx/5xx so callers can inspect the status
+    code and surface a precise error message (e.g. 401 → bad key/signature).
+    """
     client = CoinbaseClient(api_key, api_secret)
     try:
         resp = await client._http.get(
             "/api/v3/brokerage/accounts",
             headers=client._headers("GET", "/api/v3/brokerage/accounts"),
         )
-        return resp.status_code == 200
-    except Exception:
-        return False
+        resp.raise_for_status()   # raises HTTPStatusError on 401/403/etc.
+        return True
     finally:
         await client.aclose()
 
