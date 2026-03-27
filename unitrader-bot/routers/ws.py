@@ -152,19 +152,84 @@ async def _validate_token(token: str) -> str:
 # Price Fetching
 # ─────────────────────────────────────────────
 
+def _classify_symbol(symbol: str) -> str:
+    """Classify a symbol to determine which price source to use.
+
+    Returns one of: 'alpaca_crypto', 'alpaca_stock', 'coinbase', 'binance'
+    """
+    s = symbol.upper()
+    # Alpaca crypto format: BTC/USD
+    if "/" in s:
+        return "alpaca_crypto"
+    # Coinbase format: BTC-USD, ETH-USD, SOL-USD etc.
+    if "-" in s:
+        return "coinbase"
+    # Binance format: BTCUSDT, ETHUSDT, SOLUSDT etc.
+    if s.endswith("USDT") or s.endswith("BUSD"):
+        return "binance"
+    # Default: Alpaca stock
+    return "alpaca_stock"
+
+
+async def _fetch_coinbase_price(symbol: str) -> Dict[str, Any]:
+    """Fetch latest price from Coinbase public spot price API (no auth required)."""
+    url = f"https://api.coinbase.com/v2/prices/{symbol.upper()}/spot"
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        data = resp.json().get("data", {})
+    price = float(data.get("amount", 0))
+    return {
+        "symbol": symbol.upper(),
+        "price": price,
+        "bid": price,
+        "ask": price,
+        "bid_size": 0,
+        "ask_size": 0,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+async def _fetch_binance_price(symbol: str) -> Dict[str, Any]:
+    """Fetch latest price from Binance public ticker API (no auth required)."""
+    url = "https://api.binance.com/api/v3/ticker/price"
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.get(url, params={"symbol": symbol.upper()})
+        resp.raise_for_status()
+        data = resp.json()
+    price = float(data.get("price", 0))
+    return {
+        "symbol": symbol.upper(),
+        "price": price,
+        "bid": price,
+        "ask": price,
+        "bid_size": 0,
+        "ask_size": 0,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 async def _fetch_latest_quote(symbol: str) -> Dict[str, Any]:
     """
-    Fetch latest quote from Alpaca data REST API via httpx.
+    Fetch latest quote, routing to the correct data source based on symbol format:
 
-    Routes to the crypto endpoint for symbols containing '/' (e.g. BTC/USD)
-    and the stocks endpoint for plain equity tickers (e.g. AAPL).
+    - BTC/USD  → Alpaca crypto endpoint (slash format)
+    - BTC-USD  → Coinbase public spot price API (no auth, dash format)
+    - BTCUSDT  → Binance public ticker API (no auth, USDT suffix)
+    - AAPL     → Alpaca stocks endpoint
 
     Returns:
         Dict with symbol, price, bid, ask, bid_size, ask_size, timestamp
-
-    Raises:
-        Exception: If fetch fails or credentials are missing
     """
+    source = _classify_symbol(symbol)
+
+    if source == "coinbase":
+        return await _fetch_coinbase_price(symbol)
+
+    if source == "binance":
+        return await _fetch_binance_price(symbol)
+
+    # Alpaca (crypto or stock)
     api_key = settings.alpaca_api_key or os.getenv("APCA_API_KEY_ID", "")
     api_secret = settings.alpaca_api_secret or os.getenv("APCA_API_SECRET_KEY", "")
 
@@ -176,28 +241,23 @@ async def _fetch_latest_quote(symbol: str) -> Dict[str, Any]:
         "APCA-API-SECRET-KEY": api_secret,
     }
 
-    is_crypto = "/" in symbol
-
-    if is_crypto:
-        # Crypto endpoint — symbol is a query param, e.g. BTC/USD
+    if source == "alpaca_crypto":
         url = "https://data.alpaca.markets/v1beta3/crypto/us/latest/quotes"
         async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
             resp = await client.get(url, params={"symbols": symbol.upper()})
             resp.raise_for_status()
             payload = resp.json()
-
         quotes = payload.get("quotes", {}) or {}
         q = quotes.get(symbol.upper(), {}) or {}
         bid = float(q.get("bp", 0) or 0)
         ask = float(q.get("ap", 0) or 0)
     else:
-        # Stocks endpoint — symbol in URL path
+        # Alpaca stocks endpoint
         url = f"https://data.alpaca.markets/v2/stocks/{symbol.upper()}/quotes/latest"
         async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
             resp = await client.get(url)
             resp.raise_for_status()
             payload = resp.json()
-
         q = payload.get("quote", {}) or {}
         bid = float(q.get("bp", 0) or 0)
         ask = float(q.get("ap", 0) or 0)
