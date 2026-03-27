@@ -6,7 +6,7 @@ import {
   TrendingUp, TrendingDown, MessageSquare, BarChart3, LineChart, Settings,
   LogOut, RefreshCw, X, Send, ChevronRight, ChevronDown, AlertTriangle,
   Zap, Shield, Activity, Clock, Crosshair, Brain, Plug,
-  ThumbsUp, ThumbsDown, Sparkles, ArrowUpRight, Bot,
+  ThumbsUp, ThumbsDown, Sparkles, ArrowUpRight, Bot, BookOpen,
 } from "lucide-react";
 import { tradingApi, chatApi, authApi, billingApi, exchangeApi, api } from "@/lib/api";
 import ExchangeConnections from "@/components/ExchangeConnections";
