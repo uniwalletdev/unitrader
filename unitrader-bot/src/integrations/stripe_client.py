@@ -120,7 +120,7 @@ def create_checkout_session(
         metadata={"user_id": user_id},
         subscription_data={
             "metadata": {"user_id": user_id},
-            "trial_period_days": 7,  # 7-day free trial
+            "trial_period_days": 14,  # 14-day free trial (product standard)
         },
         allow_promotion_codes=True,
     )
@@ -242,7 +242,17 @@ def parse_subscription_event(event: dict) -> dict:
     period_end = None
     user_id = None
 
-    if event_type.startswith("customer.subscription"):
+    if event_type == "checkout.session.completed":
+        # Checkout session contains customer + subscription IDs.
+        # We'll treat this as a best-effort early sync; authoritative state
+        # will arrive via customer.subscription.* and invoice.* events.
+        subscription_id = obj.get("subscription")
+        customer_id = obj.get("customer")
+        user_id = obj.get("metadata", {}).get("user_id")
+        status = "trialing"  # most checkouts start as trialing if trial configured
+        period_end = None
+
+    elif event_type.startswith("customer.subscription"):
         subscription_id = obj.get("id")
         status = obj.get("status")
         period_end = obj.get("current_period_end")

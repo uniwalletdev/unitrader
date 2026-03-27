@@ -268,6 +268,9 @@ export default function ApexOnboardingChat() {
     }
 
     if (detectedClass === "semi_institutional" && value === "api") {
+      // #region agent log
+      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d9061'},body:JSON.stringify({sessionId:'5d9061',runId:'pre-fix',hypothesisId:'H2',location:'frontend/components/onboarding/ApexOnboardingChat.tsx:handleQuickReply',message:'Routing semi_institutional user to settings api path',data:{route:'/settings/api?setup=onboarding',detectedClass,value},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       router.push("/settings/api?setup=onboarding");
       return;
     }

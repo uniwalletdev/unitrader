@@ -1042,6 +1042,12 @@ function SettingsPanel({ user, onExchangeConnected }: { user: User | null; onExc
     }).catch(() => {});
   }, []);
 
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d9061'},body:JSON.stringify({sessionId:'5d9061',runId:'pre-fix',hypothesisId:'H1',location:'frontend/pages/app.tsx:SettingsPanel',message:'Settings panel rendered with billing card state',data:{hasUser:!!user,hasEmail:!!user?.email,billingCtaVisible:false,billingCardLabel:'All Features Unlocked'},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+  }, [user]);
+
   const saveRiskSettings = async () => {
     setRiskSaving(true);
     try {

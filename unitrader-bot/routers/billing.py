@@ -178,6 +178,7 @@ async def open_portal(current_user=Depends(get_current_user)):
 # ─────────────────────────────────────────────
 
 _HANDLED_EVENTS = {
+    "checkout.session.completed",
     "customer.subscription.created",
     "customer.subscription.updated",
     "customer.subscription.deleted",
