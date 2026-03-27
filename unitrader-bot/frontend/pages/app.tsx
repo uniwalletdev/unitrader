@@ -5,8 +5,8 @@ import { useRouter } from "next/router";
 import {
   TrendingUp, TrendingDown, MessageSquare, BarChart3, LineChart, Settings,
   LogOut, RefreshCw, X, Send, ChevronRight, ChevronDown, AlertTriangle,
-  Zap, Shield, Activity, Clock, Crosshair, BookOpen, Brain, Plug,
-  ThumbsUp, ThumbsDown, Sparkles, ArrowUpRight,
+  Zap, Shield, Activity, Clock, Crosshair, Brain, Plug,
+  ThumbsUp, ThumbsDown, Sparkles, ArrowUpRight, Bot,
 } from "lucide-react";
 import { tradingApi, chatApi, authApi, billingApi, exchangeApi, api } from "@/lib/api";
 import ExchangeConnections from "@/components/ExchangeConnections";
@@ -15,7 +15,6 @@ import TrustLadderDetail from "@/components/settings/TrustLadderDetail";
 import TradePanel from "@/components/TradePanel";
 import WhatIfSimulator from "@/components/onboarding/WhatIfSimulator";
 import PositionsPanel from "@/components/PositionsPanel";
-import ContentPanel from "@/components/ContentPanel";
 import LearningPanel from "@/components/LearningPanel";
 import SecuritySettings from "@/components/SecuritySettings";
 import TrialChoiceModal from "@/components/TrialChoiceModal";
@@ -45,13 +44,12 @@ interface User { id: string; email: string; ai_name: string; subscription_tier: 
 
 const NAV = [
   { id: "dashboard", icon: BarChart3, label: "Dashboard" },
-  { id: "trade", icon: Crosshair, label: "Trade" },
+  { id: "trade", icon: Bot, label: "AI Trader" },
   { id: "chat", icon: MessageSquare, label: "Chat" },
   { id: "positions", icon: TrendingUp, label: "Positions" },
   { id: "history", icon: Activity, label: "History" },
   { id: "performance", icon: LineChart, label: "Performance" },
   { id: "connect-exchange", icon: Plug, label: "Exchanges" },
-  { id: "content", icon: BookOpen, label: "Content" },
   { id: "learning", icon: Brain, label: "Learning" },
   { id: "settings", icon: Settings, label: "Settings" },
 ];
@@ -1042,11 +1040,6 @@ function SettingsPanel({ user, onExchangeConnected }: { user: User | null; onExc
     }).catch(() => {});
   }, []);
 
-  useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d9061'},body:JSON.stringify({sessionId:'5d9061',runId:'pre-fix',hypothesisId:'H1',location:'frontend/pages/app.tsx:SettingsPanel',message:'Settings panel rendered with billing card state',data:{hasUser:!!user,hasEmail:!!user?.email,billingCtaVisible:false,billingCardLabel:'All Features Unlocked'},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-  }, [user]);
 
   const saveRiskSettings = async () => {
     setRiskSaving(true);
@@ -1428,7 +1421,6 @@ export default function AppPage() {
             {activeTab === "positions" && <PositionsPanel onNavigate={setActiveTab} />}
             {activeTab === "history" && <History />}
             {activeTab === "performance" && <Performance />}
-            {activeTab === "content" && <ContentPanel />}
             {activeTab === "learning" && <LearningPanel user={user} />}
             {activeTab === "settings" && (
               <SettingsPanel

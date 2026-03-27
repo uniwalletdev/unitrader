@@ -13,7 +13,7 @@ export default function MobileNav({
 }) {
   const tabs = useMemo(
     () => [
-      { id: "trade" as const, label: "Trade", Icon: Crosshair },
+      { id: "trade" as const, label: "AI Trader", Icon: Crosshair },
       { id: "positions" as const, label: "Positions", Icon: BarChart3 },
       { id: "chat" as const, label: "Chat", Icon: Activity },
       { id: "performance" as const, label: "Performance", Icon: LineChart },
