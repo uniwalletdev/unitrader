@@ -3,12 +3,13 @@ import { useRouter } from "next/router";
 import {
   Loader2, TrendingUp, TrendingDown, Minus,
   AlertCircle, ChevronRight, Link2, Zap, Bot,
-  ChevronDown, ChevronUp, RefreshCw, Activity,
+  ChevronDown, ChevronUp,
 } from "lucide-react";
 import { api, tradingApi, exchangeApi, authApi } from "@/lib/api";
 import CircuitBreakerAlert from "./trade/CircuitBreakerAlert";
 import ExplanationToggle from "./trade/ExplanationToggle";
 import TradeConfirmModal from "./trade/TradeConfirmModal";
+import AIActivityStream from "./trade/AIActivityStream";
 import { useLivePrice } from "@/hooks/useLivePrice";
 import { formatPrice } from "@/utils/formatPrice";
 import WhatIfSimulator from "./onboarding/WhatIfSimulator";
@@ -127,9 +128,6 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   const [maxDailyLoss, setMaxDailyLoss]     = useState(10);
   const [settingsLoading, setSettingsLoading] = useState(true);
 
-  // Recent AI decisions (from trade history)
-  const [recentTrades, setRecentTrades]     = useState<any[]>([]);
-  const [tradesLoading, setTradesLoading]   = useState(true);
 
   // On-demand analysis (collapsed by default — user doesn't need this)
   const [showOnDemand, setShowOnDemand]     = useState(false);
@@ -148,16 +146,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
 
   const watchlist = AI_WATCHLIST[selectedExchange] ?? [];
 
-  // Build a lookup of last AI decision per symbol from trade history
-  const lastDecisionBySymbol = useMemo(() => {
-    const map: Record<string, { side: string; confidence?: number; created_at?: string }> = {};
-    for (const t of recentTrades) {
-      if (t.symbol && !map[t.symbol]) {
-        map[t.symbol] = { side: t.side, confidence: t.claude_confidence, created_at: t.created_at };
-      }
-    }
-    return map;
-  }, [recentTrades]);
+  const lastDecisionBySymbol: Record<string, { side: string; confidence?: number }> = {};
 
   // ── Load exchanges ──
   useEffect(() => {
@@ -195,19 +184,6 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
     return () => { mounted = false; };
   }, []);
 
-  // ── Load recent AI decisions ──
-  const loadRecentTrades = () => {
-    setTradesLoading(true);
-    api.get("/api/trading/history", { params: { limit: 20 } })
-      .then((res) => {
-        const trades = res.data?.data?.trades || res.data?.trades || [];
-        setRecentTrades(trades);
-      })
-      .catch(() => {})
-      .finally(() => setTradesLoading(false));
-  };
-
-  useEffect(() => { loadRecentTrades(); }, []);
 
   // ── Toast auto-dismiss ──
   useEffect(() => {
@@ -349,6 +325,9 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         )}
       </div>
 
+      {/* ── AI Live Feed ── */}
+      <AIActivityStream />
+
       {/* ── Live Watchlist ── */}
       <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
         <div className="flex items-center justify-between mb-4">
@@ -370,86 +349,6 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         </div>
       </div>
 
-      {/* ── Recent AI Decisions ── */}
-      <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Activity size={14} className="text-dark-500" />
-            <p className="text-sm font-semibold text-white">Recent AI Decisions</p>
-          </div>
-          <button
-            onClick={loadRecentTrades}
-            disabled={tradesLoading}
-            className="flex items-center gap-1.5 rounded-lg border border-dark-800 px-2.5 py-1.5 text-[11px] text-dark-400 hover:text-white transition-colors"
-          >
-            <RefreshCw size={11} className={tradesLoading ? "animate-spin" : ""} />
-            Refresh
-          </button>
-        </div>
-
-        {tradesLoading ? (
-          <div className="flex items-center justify-center py-8 text-xs text-dark-500">
-            <Loader2 size={13} className="mr-2 animate-spin" /> Loading decisions...
-          </div>
-        ) : recentTrades.length === 0 ? (
-          <div className="rounded-xl border border-dark-800 bg-dark-900/30 p-6 text-center">
-            <p className="text-sm font-semibold text-white">No decisions yet</p>
-            <p className="mt-1 text-xs text-dark-500">
-              Your AI scans markets every 5 minutes. First decisions will appear here shortly.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {recentTrades.slice(0, 10).map((t: any, i: number) => {
-              const isBuy  = (t.side || "").toUpperCase() === "BUY";
-              const isSell = (t.side || "").toUpperCase() === "SELL";
-              const timeStr = t.created_at
-                ? new Date(t.created_at).toLocaleString([], {
-                    month: "short", day: "numeric",
-                    hour: "2-digit", minute: "2-digit",
-                  })
-                : "";
-              const name = BRAND[t.symbol?.toUpperCase()] ?? t.symbol;
-
-              return (
-                <div key={t.id || i} className="flex items-center gap-3 rounded-xl border border-dark-800 bg-dark-900/40 px-4 py-3">
-                  <div className={`h-2 w-2 shrink-0 rounded-full ${isBuy ? "bg-brand-400" : isSell ? "bg-red-400" : "bg-yellow-500"}`} />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-semibold text-xs text-white">{name}</span>
-                      <span className={`text-xs font-bold ${isBuy ? "text-brand-400" : isSell ? "text-red-400" : "text-yellow-400"}`}>
-                        {isBuy ? "↑ BUY" : isSell ? "↓ SELL" : "— WAIT"}
-                      </span>
-                      {t.claude_confidence != null && (
-                        <span className="text-[11px] text-dark-500">{t.claude_confidence}% confidence</span>
-                      )}
-                    </div>
-                    {t.entry_price && (
-                      <p className="mt-0.5 font-mono text-[11px] text-dark-500">
-                        Entry {formatPrice(t.entry_price, t.symbol)}
-                        {t.stop_loss  && <> · SL {formatPrice(t.stop_loss,  t.symbol)}</>}
-                        {t.take_profit && <> · TP {formatPrice(t.take_profit, t.symbol)}</>}
-                      </p>
-                    )}
-                  </div>
-                  {timeStr && (
-                    <span className="shrink-0 text-[11px] text-dark-600 tabular-nums">{timeStr}</span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {recentTrades.length > 0 && (
-          <button
-            onClick={() => onNavigate?.("history")}
-            className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border border-dark-800 py-2.5 text-xs text-dark-400 hover:text-white transition-colors"
-          >
-            View full history <ChevronRight size={12} />
-          </button>
-        )}
-      </div>
 
       {/* ── On-demand Analysis (collapsed — advanced users only) ── */}
       <div className="rounded-2xl border border-dark-800 bg-[#0d1117]">

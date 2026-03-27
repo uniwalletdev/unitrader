@@ -27,9 +27,6 @@ api.interceptors.response.use(
       url.includes("/clerk-sync") ||
       url.includes("/clerk-setup") ||
       url.includes("/api/auth/me");  // "me" is called during silent token check
-    // #region agent log
-    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d9061'},body:JSON.stringify({sessionId:'5d9061',runId:'pre-fix',hypothesisId:'H3',location:'frontend/lib/api.ts:response-interceptor',message:'API response error intercepted',data:{url,status:err.response?.status ?? null,isAuthEndpoint,hasLocalToken:typeof window!=='undefined'?!!localStorage.getItem('access_token'):null},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     if (err.response?.status === 401 && typeof window !== "undefined" && !isAuthEndpoint) {
       localStorage.removeItem("access_token");
       window.location.href = "/login";
