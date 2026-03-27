@@ -12,6 +12,9 @@ Endpoints:
     POST /api/trading/exchange-keys       — Save encrypted exchange API keys
     GET  /api/trading/exchange-keys       — List connected exchanges
     DELETE /api/trading/exchange-keys/{exchange} — Remove exchange keys
+    GET  /api/trading/market-top          — Dynamic AI-ranked top picks (hourly cache)
+    GET  /api/trading/symbol-search       — Fuzzy symbol + company name search
+    GET  /api/trading/ai-picks            — AI analysis of dynamic symbol candidates
 """
 
 import asyncio
@@ -374,16 +377,135 @@ async def get_account_balances(
 
 
 # ─────────────────────────────────────────────
-# GET /api/trading/ai-picks — Top opportunities without executing
+# GET /api/trading/market-top — Dynamic AI-ranked top picks (hourly cache)
 # ─────────────────────────────────────────────
 
-# Symbols the AI monitors per exchange (mirrors the frontend watchlist)
-_WATCHLIST: dict[str, list[str]] = {
-    "alpaca":  ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY", "VOO"],
-    "binance": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
-    "oanda":   ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD"],
-}
+# Server-side cache: {exchange: {"data": [...], "at": datetime}}
+_market_top_cache: dict[str, dict] = {}
+_MARKET_TOP_TTL_MINUTES = 60
 
+
+@router.get("/market-top")
+async def get_market_top(
+    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    limit: int = Query(default=5, ge=1, le=10),
+    refresh: bool = Query(default=False),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the day's top AI-ranked opportunities from a large symbol universe.
+
+    Unlike /ai-picks which analyses a fixed list, this endpoint:
+    1. Scans 40-80 symbols per exchange using fast momentum pre-scoring
+    2. Selects the top 15 candidates by price change % and volume
+    3. Runs full Claude AI analysis on those candidates only
+    4. Returns the top `limit` symbols by AI confidence
+
+    Results are cached for 60 minutes. Pass ?refresh=true to force update.
+    """
+    from datetime import datetime, timezone
+    from src.agents.core.trading_agent import TradingAgent
+    from src.agents.shared_memory import SharedContext, SharedMemory
+    from src.watchlists import score_universe, SYMBOL_LABELS
+
+    ex = exchange.lower()
+
+    # Return cached result if still fresh
+    cached = _market_top_cache.get(ex)
+    if not refresh and cached:
+        age_minutes = (datetime.now(timezone.utc) - cached["at"]).total_seconds() / 60
+        if age_minutes < _MARKET_TOP_TTL_MINUTES:
+            return {"status": "success", "data": cached["data"][:limit], "cached": True, "age_minutes": round(age_minutes)}
+
+    try:
+        # Step 1: fast momentum pre-filter — no Claude, just market data
+        candidates = await score_universe(ex, top_n=15)
+
+        # Step 2: AI analysis of candidates only
+        ctx = await SharedMemory.load(current_user.id, db)
+        if ctx is None:
+            ctx = SharedContext.default(current_user.id)
+        ctx.exchange = ex
+
+        agent = TradingAgent(user_id=current_user.id)
+        semaphore = asyncio.Semaphore(5)
+
+        async def _analyse_one(sym: str) -> dict | None:
+            async with semaphore:
+                try:
+                    result = await agent.analyze(symbol=sym, exchange=ex, context=ctx)
+                    if result is None:
+                        return None
+                    entry = result.market_data.get("price", 0) if result.market_data else 0
+                    price_change = result.market_data.get("price_change_pct", 0) if result.market_data else 0
+                    sl_pct = result.suggested_stop_loss_pct or 2.0
+                    tp_pct = result.suggested_take_profit_pct or 4.0
+                    return {
+                        "symbol": sym,
+                        "label": SYMBOL_LABELS.get(sym, sym),
+                        "decision": result.signal.upper() if result.signal else "WAIT",
+                        "confidence": result.confidence,
+                        "reasoning": result.explanation_expert or "",
+                        "entry_price": round(entry, 4) if entry else None,
+                        "price_change_pct": round(float(price_change), 2) if price_change else 0,
+                        "stop_loss": round(entry * (1 - sl_pct / 100), 4) if entry else None,
+                        "take_profit": round(entry * (1 + tp_pct / 100), 4) if entry else None,
+                        "market_condition": (result.market_data or {}).get("trend", ""),
+                        "key_factors": result.key_factors or [],
+                    }
+                except Exception as exc:
+                    logger.debug("market-top: analysis failed for %s: %s", sym, exc)
+                    return None
+
+        raw = await asyncio.gather(*[_analyse_one(s) for s in candidates])
+        results = [r for r in raw if r is not None]
+
+        # Sort: actionable signals first, then by confidence
+        buys_sells = sorted([r for r in results if r["decision"] != "WAIT"], key=lambda r: r["confidence"], reverse=True)
+        waits = sorted([r for r in results if r["decision"] == "WAIT"], key=lambda r: r["confidence"], reverse=True)
+        ordered = (buys_sells + waits)[:10]
+
+        # Cache full result
+        _market_top_cache[ex] = {"data": ordered, "at": datetime.now(timezone.utc)}
+
+        return {"status": "success", "data": ordered[:limit], "cached": False}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("market-top error for user %s: %s", current_user.id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ─────────────────────────────────────────────
+# GET /api/trading/symbol-search — Fuzzy ticker + company name search
+# ─────────────────────────────────────────────
+
+@router.get("/symbol-search")
+async def search_symbols(
+    q: str = Query(min_length=1, max_length=50),
+    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    limit: int = Query(default=8, ge=1, le=20),
+    current_user=Depends(get_current_user),
+):
+    """Search symbols by ticker or company name.
+
+    Supports partial matches on both ticker (AAPL) and company name (Apple).
+    Returns results from the AI scanning universe for the given exchange.
+
+    Examples:
+        ?q=apple&exchange=alpaca  → [{symbol: AAPL, label: Apple Inc, ...}]
+        ?q=bitcoin&exchange=binance → [{symbol: BTCUSDT, label: Bitcoin, ...}]
+        ?q=euro&exchange=oanda   → [{symbol: EUR_USD, label: Euro / US Dollar, ...}]
+    """
+    from src.watchlists import symbol_search
+    results = symbol_search(q, exchange=exchange.lower(), limit=limit)
+    return {"status": "success", "data": results}
+
+
+# ─────────────────────────────────────────────
+# GET /api/trading/ai-picks — AI analysis of top dynamic candidates
+# ─────────────────────────────────────────────
 
 @router.get("/ai-picks")
 async def get_ai_picks(
@@ -392,27 +514,26 @@ async def get_ai_picks(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Analyse the AI watchlist and return the top picks without executing.
+    """Analyse dynamic top candidates and return picks without executing.
 
-    The AI scores every symbol in the watchlist, then returns the highest-
-    confidence opportunities so the user can choose which one to trade.
-    Results are sorted by confidence descending.
+    Uses score_universe() to pre-filter the scanning universe down to 15
+    candidates, then runs full AI analysis and returns the highest-confidence
+    results sorted by confidence descending.
     """
     from src.agents.core.trading_agent import TradingAgent
     from src.agents.shared_memory import SharedContext, SharedMemory
+    from src.watchlists import score_universe, SYMBOL_LABELS
 
     try:
-        # Build user context for the analysis
         ctx = await SharedMemory.load(current_user.id, db)
         if ctx is None:
             ctx = SharedContext.default(current_user.id)
         ctx.exchange = exchange.lower()
 
-        symbols = _WATCHLIST.get(exchange.lower(), _WATCHLIST["alpaca"])
+        # Dynamic candidates instead of fixed watchlist
+        symbols = await score_universe(exchange.lower(), top_n=15)
 
         agent = TradingAgent(user_id=current_user.id)
-
-        # Analyse each symbol concurrently (max 5 at once to avoid rate limits)
         semaphore = asyncio.Semaphore(5)
 
         async def _analyse_one(sym: str) -> dict | None:
@@ -426,6 +547,7 @@ async def get_ai_picks(
                     tp_pct = result.suggested_take_profit_pct or 4.0
                     return {
                         "symbol": sym,
+                        "label": SYMBOL_LABELS.get(sym, sym),
                         "decision": result.signal.upper() if result.signal else "WAIT",
                         "confidence": result.confidence,
                         "reasoning": result.explanation_expert or "",
@@ -441,8 +563,6 @@ async def get_ai_picks(
 
         raw = await asyncio.gather(*[_analyse_one(s) for s in symbols])
         picks = [p for p in raw if p and p["decision"] != "WAIT"]
-
-        # Sort by confidence desc; fill with WAITs if fewer than limit
         picks.sort(key=lambda p: p["confidence"], reverse=True)
         if len(picks) < limit:
             waits = [p for p in raw if p and p["decision"] == "WAIT"]

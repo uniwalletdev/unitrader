@@ -372,20 +372,15 @@ async def _trading_loop() -> None:
                                 )
 
                     elif trade_mode == "picks":
-                        # AI Picks mode: analyse watchlist, notify user of top opportunities
+                        # AI Picks mode: use dynamic universe pre-scoring, notify user of top opportunities
                         from routers.telegram_webhooks import get_telegram_bot_service
                         from routers.whatsapp_webhooks import get_whatsapp_bot_service
                         from src.agents.shared_memory import SharedMemory
+                        from src.watchlists import score_universe
                         from sqlalchemy import select as _select
 
-                        _WATCHLIST: dict[str, list[str]] = {
-                            "alpaca":  ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY"],
-                            "binance": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
-                            "oanda":   ["EUR_USD", "GBP_USD", "USD_JPY"],
-                        }
-
                         for exchange in connected_exchanges:
-                            symbols = _WATCHLIST.get(exchange, [])[:5]
+                            symbols = await score_universe(exchange, top_n=10)
                             if not symbols:
                                 continue
 

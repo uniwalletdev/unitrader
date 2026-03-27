@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useRouter } from "next/router";
 import {
   Loader2, TrendingUp, TrendingDown, Minus,
@@ -41,22 +41,27 @@ type TrustLadder = {
   daysAtStage: number; paperTradesCount: number; maxAmountGbp?: number;
 };
 
-// The symbols the AI monitors automatically, per exchange
-const AI_WATCHLIST: Record<string, string[]> = {
-  alpaca:  ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY", "VOO", "BTC/USD"],
-  binance: ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
-  oanda:   ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD"],
-};
+// ─── Types for dynamic market data ───────────────────────────────────────────
 
-const BRAND: Record<string, string> = {
-  AAPL: "Apple", MSFT: "Microsoft", NVDA: "NVIDIA", TSLA: "Tesla",
-  AMZN: "Amazon", GOOGL: "Alphabet", META: "Meta", SPY: "S&P 500",
-  VOO: "Vanguard S&P 500", "BTC/USD": "Bitcoin",
-  BTCUSDT: "Bitcoin", ETHUSDT: "Ethereum", SOLUSDT: "Solana",
-  BNBUSDT: "BNB", XRPUSDT: "XRP",
-  EUR_USD: "EUR/USD", GBP_USD: "GBP/USD", USD_JPY: "USD/JPY",
-  AUD_USD: "AUD/USD", USD_CAD: "USD/CAD",
-};
+interface MarketTopItem {
+  symbol: string;
+  label: string;
+  decision: string;
+  confidence: number;
+  reasoning: string;
+  entry_price: number | null;
+  price_change_pct: number;
+  stop_loss: number | null;
+  take_profit: number | null;
+  market_condition: string;
+  key_factors: string[];
+}
+
+interface SymbolSearchResult {
+  symbol: string;
+  label: string;
+  exchange: string;
+}
 
 function normaliseSymbol(sym: string, exchange: string): string {
   const s = sym.trim().toUpperCase().replace(/\s/g, "");
@@ -68,13 +73,15 @@ function normaliseSymbol(sym: string, exchange: string): string {
 
 // ─── Live price tile ──────────────────────────────────────────────────────────
 
-function WatchlistTile({ symbol, exchange, lastDecision }: {
+function WatchlistTile({ symbol, label, exchange, lastDecision, priceChangePct }: {
   symbol: string;
+  label: string;
   exchange: string;
   lastDecision?: { side: string; confidence?: number; created_at?: string };
+  priceChangePct?: number;
 }) {
   const live = useLivePrice(symbol);
-  const name = BRAND[symbol] ?? symbol;
+  const name = label || symbol;
 
   const decisionColor =
     lastDecision?.side?.toUpperCase() === "BUY"  ? "text-brand-400" :
@@ -85,11 +92,22 @@ function WatchlistTile({ symbol, exchange, lastDecision }: {
     lastDecision?.side?.toUpperCase() === "SELL" ? "SELL" :
     lastDecision ? "WAIT" : null;
 
+  const changeColor =
+    priceChangePct !== undefined && priceChangePct > 0 ? "text-brand-400" :
+    priceChangePct !== undefined && priceChangePct < 0 ? "text-red-400" : "text-dark-500";
+
   return (
     <div className="flex items-center justify-between rounded-xl border border-dark-800 bg-dark-900/40 px-4 py-3 gap-3">
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <p className="text-xs font-semibold text-white truncate">{name}</p>
-        <p className="font-mono text-[11px] text-dark-500">{symbol}</p>
+        <div className="flex items-center gap-2">
+          <p className="font-mono text-[11px] text-dark-500">{symbol}</p>
+          {priceChangePct !== undefined && (
+            <span className={`text-[10px] font-semibold tabular-nums ${changeColor}`}>
+              {priceChangePct >= 0 ? "+" : ""}{priceChangePct.toFixed(2)}%
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="text-right shrink-0">
@@ -149,13 +167,23 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   const [showLiveFeed, setShowLiveFeed]     = useState(false);
   const [showWatchlist, setShowWatchlist]   = useState(true);
 
+  // Dynamic market-top: AI-ranked top picks fetched from the backend
+  const [marketTop, setMarketTop]           = useState<MarketTopItem[]>([]);
+  const [marketTopLoading, setMarketTopLoading] = useState(false);
+  const [marketTopAge, setMarketTopAge]     = useState<number | null>(null);
+
+  // Symbol search autocomplete state
+  const [searchQuery, setSearchQuery]       = useState("");
+  const [searchResults, setSearchResults]   = useState<SymbolSearchResult[]>([]);
+  const [searchLoading, setSearchLoading]   = useState(false);
+  const [searchOpen, setSearchOpen]         = useState(false);
+  const searchRef                           = useRef<HTMLDivElement>(null);
+
   const isPaper = useMemo(() => {
     if (!trust) return traderClass === "complete_novice" || traderClass === "curious_saver";
     if (traderClass === "complete_novice" || traderClass === "curious_saver") return trust.stage <= 2;
     return false;
   }, [trust, traderClass]);
-
-  const watchlist = AI_WATCHLIST[selectedExchange] ?? [];
 
   // Build last-decision lookup from history for watchlist badges
   const lastDecisionBySymbol = useMemo(() => {
@@ -167,6 +195,49 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
     }
     return map;
   }, [recentTrades]);
+
+  // ── Fetch dynamic market top ──
+  const fetchMarketTop = useCallback(async (exchange: string, forceRefresh = false) => {
+    if (!exchange) return;
+    setMarketTopLoading(true);
+    try {
+      const res = await api.get("/api/trading/market-top", {
+        params: { exchange, limit: 5, refresh: forceRefresh },
+      });
+      setMarketTop(res.data?.data || []);
+      setMarketTopAge(res.data?.age_minutes ?? null);
+    } catch {
+      // Keep previous results on error
+    } finally {
+      setMarketTopLoading(false);
+    }
+  }, []);
+
+  // ── Debounced symbol search ──
+  const searchDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleSearchChange = useCallback((q: string) => {
+    setSearchQuery(q);
+    if (!q.trim()) {
+      setSearchResults([]);
+      setSearchOpen(false);
+      return;
+    }
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    searchDebounce.current = setTimeout(async () => {
+      setSearchLoading(true);
+      try {
+        const res = await api.get("/api/trading/symbol-search", {
+          params: { q, exchange: selectedExchange, limit: 8 },
+        });
+        setSearchResults(res.data?.data || []);
+        setSearchOpen(true);
+      } catch {
+        setSearchResults([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 300);
+  }, [selectedExchange]);
 
   // Save trade mode to backend
   const saveTradeMode = async (mode: "auto" | "picks") => {
@@ -191,6 +262,22 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
       })
       .catch(() => {})
       .finally(() => setLoading(false));
+  }, []);
+
+  // ── Fetch market top when selected exchange changes ──
+  useEffect(() => {
+    if (selectedExchange) fetchMarketTop(selectedExchange);
+  }, [selectedExchange, fetchMarketTop]);
+
+  // ── Close search dropdown on outside click ──
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
   }, []);
 
   // ── Load settings + trust ──
@@ -282,7 +369,8 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
     return res.data?.data ?? res.data;
   };
 
-  const suggestions = AI_WATCHLIST[selectedExchange] ?? [];
+  // Top market picks used as quick-select chips in on-demand panel
+  const suggestions = marketTop.slice(0, 8);
 
   // ── Loading ──
   if (loading) {
@@ -342,7 +430,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
                 </span>
                 <p className="text-sm font-bold text-white">AI Trader Active</p>
               </div>
-              <p className="text-xs text-dark-400 mt-0.5">Scanning {watchlist.length} assets · Every 5 minutes</p>
+              <p className="text-xs text-dark-400 mt-0.5">Scanning 40–80 assets · Best picks shown · Every 5 minutes</p>
             </div>
           </div>
           <span className={`rounded-lg border px-3 py-1 text-[11px] font-semibold ${
@@ -439,7 +527,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
           traderClass={traderClass}
         />
       ) : (
-        /* ── Autopilot mode: live watchlist ── */
+        /* ── Autopilot mode: dynamic AI top picks ── */
         <div className="rounded-2xl border border-dark-800 bg-[#0d1117]">
           <button
             type="button"
@@ -447,23 +535,49 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
             className="flex w-full items-center justify-between px-5 py-4 text-left"
           >
             <div>
-              <p className="text-sm font-semibold text-white">What your AI is watching</p>
-              <p className="text-xs text-dark-500 mt-0.5">Live prices · AI decisions from last cycle</p>
+              <p className="text-sm font-semibold text-white">Today&apos;s AI Top Picks</p>
+              <p className="text-xs text-dark-500 mt-0.5">
+                {marketTopAge !== null
+                  ? `Best of 40–80 assets · Refreshed ${marketTopAge}m ago`
+                  : "Best of 40–80 assets · Refreshing now…"}
+              </p>
             </div>
-            {showWatchlist ? <ChevronUp size={15} className="text-dark-500" /> : <ChevronDown size={15} className="text-dark-500" />}
+            <div className="flex items-center gap-2">
+              {marketTopLoading && <Loader2 size={13} className="animate-spin text-dark-500" />}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); fetchMarketTop(selectedExchange, true); }}
+                className="rounded-lg border border-dark-700 px-2 py-1 text-[10px] font-semibold text-dark-500 hover:text-dark-300 hover:border-dark-600 transition-all"
+                title="Force refresh picks"
+              >
+                Refresh
+              </button>
+              {showWatchlist ? <ChevronUp size={15} className="text-dark-500" /> : <ChevronDown size={15} className="text-dark-500" />}
+            </div>
           </button>
           {showWatchlist && (
             <div className="border-t border-dark-800 p-5">
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                {watchlist.map((sym) => (
-                  <WatchlistTile
-                    key={sym}
-                    symbol={sym}
-                    exchange={selectedExchange}
-                    lastDecision={lastDecisionBySymbol[sym]}
-                  />
-                ))}
-              </div>
+              {marketTopLoading && marketTop.length === 0 ? (
+                <div className="flex items-center gap-2 text-sm text-dark-500 py-4 justify-center">
+                  <Loader2 size={14} className="animate-spin" />
+                  AI is scanning 40–80 assets…
+                </div>
+              ) : marketTop.length === 0 ? (
+                <p className="text-xs text-dark-500 text-center py-4">No picks yet — tap Refresh to scan now.</p>
+              ) : (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {marketTop.map((item) => (
+                    <WatchlistTile
+                      key={item.symbol}
+                      symbol={item.symbol}
+                      label={item.label}
+                      exchange={selectedExchange}
+                      priceChangePct={item.price_change_pct}
+                      lastDecision={lastDecisionBySymbol[item.symbol] ?? (item.decision !== "WAIT" ? { side: item.decision } : undefined)}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
           {!showWatchlist && (
@@ -471,7 +585,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
               Collapsed to keep your screen focused. Tap to expand.
             </div>
           )}
-          </div>
+        </div>
       )}
 
 
@@ -517,33 +631,82 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
               </div>
             )}
 
-            {/* Symbol quick-select */}
+            {/* Symbol quick-select — AI top picks as chips */}
             <div>
-              <p className="section-label mb-2">Select asset</p>
+              <p className="section-label mb-2">
+                AI top picks today
+                {marketTopLoading && <Loader2 size={11} className="inline ml-1 animate-spin text-dark-600" />}
+              </p>
               <div className="flex flex-wrap gap-1.5">
-                {suggestions.slice(0, 8).map((s) => (
+                {suggestions.map((item) => (
                   <button
-                    key={s}
-                    onClick={() => setOdSymbol(s)}
+                    key={item.symbol}
+                    onClick={() => { setOdSymbol(item.symbol); setSearchQuery(""); setSearchOpen(false); }}
                     disabled={odAnalyzing}
                     className={`rounded-lg border px-2.5 py-1.5 text-xs font-mono transition-all ${
-                      odSymbol === s
+                      odSymbol === item.symbol
                         ? "border-brand-500/40 bg-brand-500/10 text-brand-400"
                         : "border-dark-700 text-dark-500 hover:text-dark-300 hover:border-dark-600"
                     }`}
+                    title={item.label}
                   >
-                    {BRAND[s] ?? s}
+                    {item.symbol}
+                    {item.decision !== "WAIT" && (
+                      <span className={`ml-1 text-[9px] font-bold ${item.decision === "BUY" ? "text-brand-400" : "text-red-400"}`}>
+                        {item.decision}
+                      </span>
+                    )}
                   </button>
                 ))}
+                {suggestions.length === 0 && !marketTopLoading && (
+                  <span className="text-[11px] text-dark-600">Loading picks…</span>
+                )}
               </div>
-              <input
-                value={odSymbol}
-                onChange={(e) => setOdSymbol(e.target.value.toUpperCase())}
-                onKeyDown={(e) => e.key === "Enter" && !odAnalyzing && handleOnDemandAnalyze()}
-                placeholder={selectedExchange === "alpaca" ? "or type e.g. AAPL" : selectedExchange === "binance" ? "e.g. BTCUSDT" : "e.g. EUR_USD"}
-                className="input font-mono text-sm mt-2"
-                disabled={odAnalyzing}
-              />
+
+              {/* Search with autocomplete */}
+              <div className="relative mt-2" ref={searchRef}>
+                <div className="relative">
+                  <input
+                    value={searchQuery || odSymbol}
+                    onChange={(e) => {
+                      const v = e.target.value.toUpperCase();
+                      setOdSymbol(v);
+                      handleSearchChange(v);
+                    }}
+                    onFocus={() => { if (searchResults.length > 0) setSearchOpen(true); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !odAnalyzing) { setSearchOpen(false); handleOnDemandAnalyze(); }
+                      if (e.key === "Escape") setSearchOpen(false);
+                    }}
+                    placeholder={selectedExchange === "alpaca" ? "Search e.g. Apple, AAPL, Tesla…" : selectedExchange === "binance" ? "Search e.g. Bitcoin, ETHUSDT…" : "Search e.g. Euro, EUR_USD…"}
+                    className="input font-mono text-sm pr-8"
+                    disabled={odAnalyzing}
+                    autoComplete="off"
+                  />
+                  {searchLoading && (
+                    <Loader2 size={13} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-dark-500" />
+                  )}
+                </div>
+                {searchOpen && searchResults.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full z-20 mt-1 rounded-xl border border-dark-800 bg-dark-950 shadow-2xl overflow-hidden">
+                    {searchResults.map((r) => (
+                      <button
+                        key={r.symbol}
+                        type="button"
+                        className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-dark-900 transition-colors"
+                        onMouseDown={() => {
+                          setOdSymbol(r.symbol);
+                          setSearchQuery("");
+                          setSearchOpen(false);
+                        }}
+                      >
+                        <span className="font-mono text-xs font-bold text-white w-24 shrink-0">{r.symbol}</span>
+                        <span className="text-xs text-dark-400 truncate">{r.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Analyse button */}
