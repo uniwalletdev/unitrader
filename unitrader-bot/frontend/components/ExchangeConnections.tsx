@@ -212,7 +212,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
   }
 
   return (
-    <div className="space-y-4">
+    <div className="mobile-safe space-y-4">
       <div className="flex items-center gap-2">
         <Link2 size={16} className="text-brand-400" />
         <h2 className="text-sm font-semibold text-dark-200">Exchange Connections</h2>
@@ -305,7 +305,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
 
             {/* Expansion form */}
             {expanded && !active && (
-              <div className="border-t border-dark-800 p-4">
+              <div className="border-t border-dark-800 p-3 sm:p-4">
                 {exchange.id === "coinbase" ? (
                   <>
                     {/* Smart paste box */}

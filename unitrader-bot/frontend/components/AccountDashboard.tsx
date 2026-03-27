@@ -345,7 +345,7 @@ export default function AccountDashboard() {
   const selectedPnlPositive = selectedAccount.pnl >= 0;
 
   return (
-    <div className="min-h-[820px] w-full rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-2xl shadow-black/30">
+    <div className="w-full rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-2xl shadow-black/30">
       <div className="border-b border-slate-800 bg-gradient-to-r from-slate-900 to-slate-950 p-4 sm:p-6">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <SummaryCard
@@ -539,13 +539,13 @@ export default function AccountDashboard() {
             </div>
           </div>
 
-          <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-900/40 p-4 sm:p-5">
+          <div className="mt-5 rounded-2xl border border-slate-800 bg-slate-900/40 p-3 sm:p-5">
             <h3 className="mb-4 text-sm font-semibold uppercase tracking-[0.16em] text-slate-400">
               Trade History
             </h3>
 
-            <div className="overflow-x-auto">
-              <table className="min-w-full border-separate border-spacing-y-2 text-sm">
+            <div className="table-container overflow-x-auto">
+              <table className="min-w-[860px] border-separate border-spacing-y-2 text-sm md:min-w-full">
                 <thead>
                   <tr className="text-left text-xs uppercase tracking-[0.14em] text-slate-500">
                     <th className="px-3 py-2">Asset</th>

@@ -29,6 +29,7 @@
     font-family: 'DM Sans', system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
   }
 
   ::selection { background: #0adb6a33; color: #0adb6a; }
@@ -116,6 +117,14 @@
 
   /* Mobile-friendly table scrolling */
   @media (max-width: 768px) {
+    .mobile-safe {
+      @apply max-w-full overflow-x-hidden;
+    }
+
+    .mobile-card {
+      @apply rounded-xl p-3;
+    }
+
     .table-container {
       @apply overflow-x-auto -mx-3 px-3;
     }

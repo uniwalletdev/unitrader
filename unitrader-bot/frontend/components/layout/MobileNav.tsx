@@ -1,15 +1,15 @@
 import { useMemo } from "react";
 import { Activity, BarChart3, Crosshair, LineChart, Settings } from "lucide-react";
-import { isNative } from "@/hooks/useCapacitor";
-
 type TabId = "trade" | "positions" | "chat" | "performance" | "settings";
 
 export default function MobileNav({
   active,
   onChange,
+  enabled = true,
 }: {
   active: TabId;
   onChange: (id: TabId) => void;
+  enabled?: boolean;
 }) {
   const tabs = useMemo(
     () => [
@@ -22,7 +22,7 @@ export default function MobileNav({
     [],
   );
 
-  if (!isNative) return null;
+  if (!enabled) return null;
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-dark-800/60 bg-[#0a0d14]/95 backdrop-blur-lg">

@@ -145,6 +145,9 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   const [odError, setOdError]               = useState("");
   const [confirmOpen, setConfirmOpen]       = useState(false);
   const [toast, setToast]                   = useState<string | null>(null);
+  const [isMobile, setIsMobile]             = useState(false);
+  const [showLiveFeed, setShowLiveFeed]     = useState(false);
+  const [showWatchlist, setShowWatchlist]   = useState(true);
 
   const isPaper = useMemo(() => {
     if (!trust) return traderClass === "complete_novice" || traderClass === "curious_saver";
@@ -233,6 +236,18 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
     const t = window.setTimeout(() => setToast(null), 3000);
     return () => window.clearTimeout(t);
   }, [toast]);
+
+  useEffect(() => {
+    const onResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      setShowLiveFeed(!mobile);
+      setShowWatchlist(true);
+    };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   // ── On-demand analysis ──
   const handleOnDemandAnalyze = async () => {
@@ -400,7 +415,21 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
       </div>
 
       {/* ── AI Live Feed ── */}
-      <AIActivityStream />
+      {isMobile ? (
+        <div className="rounded-2xl border border-dark-800 bg-[#0d1117]">
+          <button
+            type="button"
+            onClick={() => setShowLiveFeed((v) => !v)}
+            className="flex w-full items-center justify-between px-4 py-3 text-left"
+          >
+            <span className="text-sm font-semibold text-white">AI Live Feed</span>
+            {showLiveFeed ? <ChevronUp size={15} className="text-dark-500" /> : <ChevronDown size={15} className="text-dark-500" />}
+          </button>
+          {showLiveFeed && <div className="border-t border-dark-800 p-3"><AIActivityStream /></div>}
+        </div>
+      ) : (
+        <AIActivityStream />
+      )}
 
       {/* ── AI Picks mode: recommendation cards ── */}
       {tradeMode === "picks" ? (
@@ -411,25 +440,38 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         />
       ) : (
         /* ── Autopilot mode: live watchlist ── */
-        <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
-          <div className="flex items-center justify-between mb-4">
+        <div className="rounded-2xl border border-dark-800 bg-[#0d1117]">
+          <button
+            type="button"
+            onClick={() => setShowWatchlist((v) => !v)}
+            className="flex w-full items-center justify-between px-5 py-4 text-left"
+          >
             <div>
               <p className="text-sm font-semibold text-white">What your AI is watching</p>
               <p className="text-xs text-dark-500 mt-0.5">Live prices · AI decisions from last cycle</p>
             </div>
+            {showWatchlist ? <ChevronUp size={15} className="text-dark-500" /> : <ChevronDown size={15} className="text-dark-500" />}
+          </button>
+          {showWatchlist && (
+            <div className="border-t border-dark-800 p-5">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {watchlist.map((sym) => (
+                  <WatchlistTile
+                    key={sym}
+                    symbol={sym}
+                    exchange={selectedExchange}
+                    lastDecision={lastDecisionBySymbol[sym]}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+          {!showWatchlist && (
+            <div className="px-5 pb-4 text-[11px] text-dark-600">
+              Collapsed to keep your screen focused. Tap to expand.
+            </div>
+          )}
           </div>
-
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-            {watchlist.map((sym) => (
-              <WatchlistTile
-                key={sym}
-                symbol={sym}
-                exchange={selectedExchange}
-                lastDecision={lastDecisionBySymbol[sym]}
-              />
-            ))}
-          </div>
-        </div>
       )}
 
 

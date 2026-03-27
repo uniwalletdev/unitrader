@@ -5,6 +5,7 @@ import { useRouter } from "next/router";
 import {
   TrendingUp, TrendingDown, MessageSquare, BarChart3, LineChart, Settings,
   LogOut, RefreshCw, X, Send, ChevronRight, ChevronDown, AlertTriangle,
+  ChevronUp,
   Zap, Shield, Activity, Clock, Crosshair, Brain, Plug,
   ThumbsUp, ThumbsDown, Sparkles, ArrowUpRight, Bot, BookOpen,
 } from "lucide-react";
@@ -1056,12 +1057,21 @@ function SettingsPanel({ user, onExchangeConnected }: { user: User | null; onExc
   } | null>(null);
   const [billingLoading, setBillingLoading] = useState(true);
   const [upgrading, setUpgrading] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
     billingApi.status()
       .then((res) => setBillingStatus(res.data?.data ?? res.data))
       .catch(() => {})
       .finally(() => setBillingLoading(false));
+  }, []);
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
   }, []);
 
   const handleUpgrade = async () => {
@@ -1147,17 +1157,34 @@ function SettingsPanel({ user, onExchangeConnected }: { user: User | null; onExc
         </div>
       </div>
 
-      <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
-        <TrustLadderDetail />
-      </div>
+      {isMobile && (
+        <div className="rounded-2xl border border-dark-800 bg-[#0d1117]">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="flex w-full items-center justify-between px-5 py-4 text-left"
+          >
+            <span className="text-sm font-semibold text-white">Advanced settings</span>
+            {showAdvanced ? <ChevronUp size={15} className="text-dark-500" /> : <ChevronDown size={15} className="text-dark-500" />}
+          </button>
+        </div>
+      )}
 
-      <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
-        <ExchangeConnections onConnected={onExchangeConnected} />
-      </div>
+      {(!isMobile || showAdvanced) && (
+        <>
+          <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
+            <TrustLadderDetail />
+          </div>
 
-      <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
-        <SecuritySettings />
-      </div>
+          <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
+            <ExchangeConnections onConnected={onExchangeConnected} />
+          </div>
+
+          <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
+            <SecuritySettings />
+          </div>
+        </>
+      )}
 
       {/* Risk Settings */}
       <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
@@ -1240,12 +1267,14 @@ export default function AppPage() {
   const [syncRetry, setSyncRetry] = useState(0);
   const [showTrialModal, setShowTrialModal] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [isMobileView, setIsMobileView] = useState(false);
 
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { signOut } = useClerk();
   const router = useRouter();
   const nativeTabs = new Set(["trade", "positions", "chat", "performance", "settings"]);
+  const mobilePrimaryTabs = new Set(["trade", "positions", "chat", "performance", "settings"]);
 
   // Ensure native always lands on a tab supported by MobileNav
   useEffect(() => {
@@ -1259,7 +1288,10 @@ export default function AppPage() {
     const checkMobile = () => {
       const isMobile = window.innerWidth < 768; // md breakpoint
       setIsMobileView(isMobile);
-      if (!isMobile) setIsMobileSidebarOpen(false);
+      if (!isMobile) {
+        setIsMobileSidebarOpen(false);
+        setMobileMoreOpen(false);
+      }
     };
 
     checkMobile();
@@ -1362,6 +1394,13 @@ export default function AppPage() {
     if (mustShowModal) setShowTrialModal(true);
   }, [mustShowModal]);
 
+  // Keep mobile web focused on single-view primary tabs.
+  useEffect(() => {
+    if (!isMobileView || isNative) return;
+    if (!mobilePrimaryTabs.has(activeTab)) setActiveTab("trade");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMobileView, isNative, activeTab]);
+
   const logout = async () => {
     localStorage.removeItem("access_token");
     clearTrialCache();
@@ -1424,8 +1463,8 @@ export default function AppPage() {
       </Head>
 
       <div className="flex h-screen overflow-hidden bg-dark-950">
-        {/* Mobile Sidebar Overlay */}
-        {isMobileView && isMobileSidebarOpen && (
+        {/* Mobile Sidebar Overlay (desktop web app only) */}
+        {!isNative && !isMobileView && isMobileSidebarOpen && (
           <button
             className="fixed inset-0 z-30 bg-black/60 backdrop-blur-sm transition-opacity"
             onClick={() => setIsMobileSidebarOpen(false)}
@@ -1449,8 +1488,8 @@ export default function AppPage() {
           />
         </div>
 
-        {/* Mobile Sidebar (overlay) - disabled on native (MobileNav instead) */}
-        {!isNative && isMobileView && (
+        {/* Mobile Sidebar (overlay) - desktop web app only */}
+        {!isNative && !isMobileView && (
           <Sidebar
             active={activeTab}
             onChange={(id) => {
@@ -1468,26 +1507,80 @@ export default function AppPage() {
         )}
 
         <div className="flex flex-1 flex-col overflow-hidden">
-          {/* Mobile Header (web only) */}
-          <div className={isNative ? "hidden" : "md:hidden flex items-center justify-between border-b border-dark-800/60 bg-[#0a0d14] px-4 py-3"}>
-            <button
-              onClick={() => setIsMobileSidebarOpen(true)}
-              className="rounded-xl p-2 text-dark-400 hover:bg-dark-800/50 hover:text-white transition-colors"
-              aria-label="Open menu"
-            >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
-            </button>
-            <span className="text-sm font-semibold text-white tracking-tight">
-              {NAV.find(n => n.id === activeTab)?.label || "Unitrader"}
-            </span>
-            <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-500/10">
-              <TrendingUp size={14} className="text-brand-400" />
+          {/* Compact top bar for mobile single-view */}
+          {(isNative || isMobileView) && (
+            <div className="relative border-b border-dark-800/60 bg-[#0a0d14] px-4 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-semibold text-white tracking-tight">
+                  {NAV.find((n) => n.id === activeTab)?.label || "Unitrader"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setMobileMoreOpen((v) => !v)}
+                  className="rounded-lg border border-dark-800 px-2.5 py-1 text-[11px] text-dark-300 hover:border-dark-700 hover:text-white"
+                >
+                  More
+                </button>
+              </div>
+              {mobileMoreOpen && (
+                <div className="absolute right-4 top-12 z-20 min-w-[190px] rounded-xl border border-dark-800 bg-dark-950 p-2 shadow-2xl">
+                  {[
+                    { id: "dashboard", label: "Dashboard" },
+                    { id: "history", label: "History" },
+                    { id: "learning", label: "Learning" },
+                    { id: "connect-exchange", label: "Connect Exchange" },
+                  ].map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setMobileMoreOpen(false);
+                        if (item.id === "connect-exchange") {
+                          router.push("/connect-exchange");
+                          return;
+                        }
+                        setActiveTab(item.id);
+                      }}
+                      className="block w-full rounded-lg px-3 py-2 text-left text-xs text-dark-300 hover:bg-dark-900 hover:text-white"
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                  <div className="my-1 h-px bg-dark-800" />
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="block w-full rounded-lg px-3 py-2 text-left text-xs text-red-400 hover:bg-red-500/10"
+                  >
+                    Log out
+                  </button>
+                </div>
+              )}
             </div>
-          </div>
+          )}
 
-          <main className={isNative ? "flex-1 overflow-y-auto px-4 py-5 pb-20" : "flex-1 overflow-y-auto px-4 md:px-8 py-5 md:py-7"}>
+          {/* Desktop web header */}
+          {!isNative && !isMobileView && (
+            <div className="md:hidden flex items-center justify-between border-b border-dark-800/60 bg-[#0a0d14] px-4 py-3">
+              <button
+                onClick={() => setIsMobileSidebarOpen(true)}
+                className="rounded-xl p-2 text-dark-400 hover:bg-dark-800/50 hover:text-white transition-colors"
+                aria-label="Open menu"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                </svg>
+              </button>
+              <span className="text-sm font-semibold text-white tracking-tight">
+                {NAV.find(n => n.id === activeTab)?.label || "Unitrader"}
+              </span>
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-500/10">
+                <TrendingUp size={14} className="text-brand-400" />
+              </div>
+            </div>
+          )}
+
+          <main className={(isNative || isMobileView) ? "mobile-safe flex-1 overflow-y-auto px-3 py-4 pb-24" : "flex-1 overflow-y-auto px-4 md:px-8 py-5 md:py-7"}>
             {activeTab === "dashboard" && <AccountDashboard />}
             {activeTab === "trade" && <TradePanel onNavigate={setActiveTab} />}
             {activeTab === "chat" && (
@@ -1507,10 +1600,11 @@ export default function AppPage() {
             )}
           </main>
 
-          {isNative && (
+          {(isNative || isMobileView) && (
             <MobileNav
               active={(nativeTabs.has(activeTab) ? activeTab : "trade") as any}
               onChange={(id) => setActiveTab(id)}
+              enabled={isNative || isMobileView}
             />
           )}
         </div>

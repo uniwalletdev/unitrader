@@ -22,6 +22,7 @@ export default function PositionsPanel({ onNavigate }: { onNavigate?: (tab: stri
   const [loading, setLoading] = useState(true);
   const [closing, setClosing] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -41,6 +42,13 @@ export default function PositionsPanel({ onNavigate }: { onNavigate?: (tab: stri
     const interval = setInterval(load, 30_000);
     return () => clearInterval(interval);
   }, [load]);
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768);
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   const handleClose = async (trade: Trade) => {
     if (!confirm(`Close ${trade.symbol} ${trade.side} position at market price?`)) return;
@@ -99,9 +107,60 @@ export default function PositionsPanel({ onNavigate }: { onNavigate?: (tab: stri
             <Crosshair size={14} /> Start Trading
           </button>
         </div>
+      ) : isMobile ? (
+        <div className="space-y-2.5">
+          {positions.map((t) => (
+            <div key={t.id} className="rounded-xl border border-dark-800 bg-[#0d1117] p-3">
+              <div className="mb-2 flex items-start justify-between gap-2">
+                <div>
+                  <p className="font-mono text-sm font-semibold text-white">{t.symbol}</p>
+                  <p className={`text-xs font-semibold ${t.side === "BUY" ? "text-brand-400" : "text-red-400"}`}>
+                    {t.side}
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleClose(t)}
+                  disabled={closing === t.id}
+                  className="flex items-center gap-1.5 rounded-lg border border-red-500/20 px-2 py-1.5 text-[11px] text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
+                >
+                  {closing === t.id ? <Loader2 size={11} className="animate-spin" /> : <XCircle size={11} />}
+                  Close
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="rounded-lg border border-dark-800 bg-dark-900/40 p-2">
+                  <p className="text-dark-500">Qty</p>
+                  <p className="font-mono text-dark-200">{t.quantity}</p>
+                </div>
+                <div className="rounded-lg border border-dark-800 bg-dark-900/40 p-2">
+                  <p className="text-dark-500">Confidence</p>
+                  <p className="text-dark-200">{t.claude_confidence?.toFixed(0) ?? "—"}%</p>
+                </div>
+                <div className="rounded-lg border border-dark-800 bg-dark-900/40 p-2">
+                  <p className="text-dark-500">Entry</p>
+                  <p className="font-mono text-white">${t.entry_price?.toFixed(2)}</p>
+                </div>
+                <div className="rounded-lg border border-dark-800 bg-dark-900/40 p-2">
+                  <p className="text-dark-500">Opened</p>
+                  <p className="text-dark-300">
+                    {new Date(t.created_at).toLocaleDateString([], { month: "short", day: "numeric" })}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-red-500/20 bg-red-500/5 p-2">
+                  <p className="text-dark-500">Stop Loss</p>
+                  <p className="font-mono text-red-400">${t.stop_loss?.toFixed(2)}</p>
+                </div>
+                <div className="rounded-lg border border-brand-500/20 bg-brand-500/5 p-2">
+                  <p className="text-dark-500">Take Profit</p>
+                  <p className="font-mono text-brand-400">${t.take_profit?.toFixed(2)}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
-        <div className="overflow-x-auto rounded-2xl border border-dark-800 bg-[#0d1117]">
-          <table className="w-full text-xs">
+        <div className="table-container overflow-x-auto rounded-2xl border border-dark-800 bg-[#0d1117]">
+          <table className="min-w-[860px] w-full text-xs md:min-w-full">
             <thead>
               <tr className="border-b border-dark-800 text-left">
                 {["Symbol", "Side", "Qty", "Entry", "Stop Loss", "Take Profit", "Conf.", "Opened", ""].map((h) => (
