@@ -1326,6 +1326,16 @@ export default function AppPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded, isSignedIn, syncRetry]);
 
+  // ── Stripe checkout (used by ?checkout=1 redirect from landing page) ────────
+  const handleUpgradeFromQuery = async () => {
+    try {
+      const res = await billingApi.checkout();
+      if (res.data?.url) window.location.href = res.data.url;
+    } catch (err) {
+      console.error("Stripe checkout failed:", err);
+    }
+  };
+
   // ── Handle Stripe success redirect (?upgraded=true) ───────────────────────
   useEffect(() => {
     if (!authChecked) return;
@@ -1340,7 +1350,12 @@ export default function AppPage() {
       setShowTrialModal(true);
       router.replace("/app", undefined, { shallow: true });
     }
-  }, [authChecked, router.query.upgraded, router.query.modal, refetchTrial, router]);
+    // User chose "Go Pro now" on the landing page — send straight to Stripe Checkout
+    if (router.query.checkout === "1") {
+      router.replace("/app", undefined, { shallow: true });
+      setTimeout(() => handleUpgradeFromQuery(), 300);
+    }
+  }, [authChecked, router.query.upgraded, router.query.modal, router.query.checkout, refetchTrial, router]);
 
   // ── Force modal when trial expired + no choice made ──────────────────────
   useEffect(() => {

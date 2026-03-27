@@ -389,6 +389,20 @@ export default function LandingPage() {
                 <p className="mt-3 text-center text-[11px] text-dark-500">
                   No credit card required · Cancel anytime
                 </p>
+                <div className="relative flex items-center gap-2 py-1">
+                  <div className="flex-1 border-t border-dark-800" />
+                  <span className="text-[11px] text-dark-700">or</span>
+                  <div className="flex-1 border-t border-dark-800" />
+                </div>
+                <Link
+                  href="/register?checkout=1"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-brand-500/30 py-3 text-sm font-medium text-brand-300 transition hover:border-brand-400 hover:text-brand-200"
+                >
+                  Go Pro now — $9.99/mo
+                </Link>
+                <p className="mt-2 text-center text-[11px] text-dark-600">
+                  Skip the trial · Billed monthly · Cancel anytime
+                </p>
               </div>
             </div>
 
