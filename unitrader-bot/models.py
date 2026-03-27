@@ -235,6 +235,7 @@ class Trade(Base):
     market_condition: Mapped[str | None] = mapped_column(
         String(20), nullable=True  # uptrend | downtrend | consolidating
     )
+    reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)  # Claude's reasoning text
 
     # ── Relationships ──────────────────────────────────────────────────────
     user: Mapped["User"] = relationship("User", back_populates="trades")

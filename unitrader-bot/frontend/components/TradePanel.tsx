@@ -10,6 +10,7 @@ import CircuitBreakerAlert from "./trade/CircuitBreakerAlert";
 import ExplanationToggle from "./trade/ExplanationToggle";
 import TradeConfirmModal from "./trade/TradeConfirmModal";
 import AIActivityStream from "./trade/AIActivityStream";
+import AIPicksPanel from "./trade/AIPicksPanel";
 import { useLivePrice } from "@/hooks/useLivePrice";
 import { formatPrice } from "@/utils/formatPrice";
 import WhatIfSimulator from "./onboarding/WhatIfSimulator";
@@ -128,6 +129,13 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   const [maxDailyLoss, setMaxDailyLoss]     = useState(10);
   const [settingsLoading, setSettingsLoading] = useState(true);
 
+  // Trade mode: "auto" = full autopilot, "picks" = AI recommends, user decides
+  const [tradeMode, setTradeMode]           = useState<"auto" | "picks">("auto");
+  const [modeSaving, setModeSaving]         = useState(false);
+
+  // Recent trades for wiring watchlist decision badges
+  const [recentTrades, setRecentTrades]     = useState<any[]>([]);
+
 
   // On-demand analysis (collapsed by default — user doesn't need this)
   const [showOnDemand, setShowOnDemand]     = useState(false);
@@ -146,7 +154,29 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
 
   const watchlist = AI_WATCHLIST[selectedExchange] ?? [];
 
-  const lastDecisionBySymbol: Record<string, { side: string; confidence?: number }> = {};
+  // Build last-decision lookup from history for watchlist badges
+  const lastDecisionBySymbol = useMemo(() => {
+    const map: Record<string, { side: string; confidence?: number; created_at?: string }> = {};
+    for (const t of recentTrades) {
+      if (t.symbol && !map[t.symbol]) {
+        map[t.symbol] = { side: t.side, confidence: t.claude_confidence, created_at: t.created_at };
+      }
+    }
+    return map;
+  }, [recentTrades]);
+
+  // Save trade mode to backend
+  const saveTradeMode = async (mode: "auto" | "picks") => {
+    setModeSaving(true);
+    try {
+      await api.patch("/api/auth/settings", { trade_mode: mode });
+      setTradeMode(mode);
+    } catch {
+      // revert on failure — user still sees the old mode
+    } finally {
+      setModeSaving(false);
+    }
+  };
 
   // ── Load exchanges ──
   useEffect(() => {
@@ -173,6 +203,8 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         setTradingPaused(sRes.data.trading_paused || false);
         setMaxDailyLoss(sRes.data.max_daily_loss || 10);
         setTraderClass(sRes.data.trader_class || "complete_novice");
+        const rawMode = sRes.data.trade_mode || "auto";
+        setTradeMode(rawMode === "picks" ? "picks" : "auto");
         setTrust(tRes.data?.data ?? tRes.data);
       } catch {
         if (!mounted) return;
@@ -184,6 +216,16 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
     return () => { mounted = false; };
   }, []);
 
+
+  // ── Load recent trade history to wire watchlist decision badges ──
+  useEffect(() => {
+    api.get("/api/trading/history", { params: { limit: 30 } })
+      .then((res) => {
+        const trades = res.data?.data?.trades || res.data?.trades || [];
+        setRecentTrades(trades);
+      })
+      .catch(() => {});
+  }, []);
 
   // ── Toast auto-dismiss ──
   useEffect(() => {
@@ -270,7 +312,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         <CircuitBreakerAlert tradingPaused={tradingPaused} dailyLossPct={0} maxDailyLossPct={maxDailyLoss} />
       )}
 
-      {/* ── Hero: Autopilot Status ── */}
+      {/* ── Hero: Autopilot Status + Mode Toggle ── */}
       <div className="rounded-2xl border border-brand-500/25 bg-brand-500/[0.04] p-5">
         <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
@@ -283,29 +325,61 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
                   <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand-400 opacity-50" />
                   <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-brand-400" />
                 </span>
-                <p className="text-sm font-bold text-white">Autopilot Active</p>
+                <p className="text-sm font-bold text-white">AI Trader Active</p>
               </div>
               <p className="text-xs text-dark-400 mt-0.5">Scanning {watchlist.length} assets · Every 5 minutes</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <span className={`rounded-lg border px-3 py-1 text-[11px] font-semibold ${
-              isPaper
-                ? "border-amber-500/30 bg-amber-500/[0.06] text-amber-300"
-                : "border-brand-500/30 bg-brand-500/[0.06] text-brand-300"
-            }`}>
-              {isPaper ? "Paper Mode" : "Live Mode"}
-            </span>
-          </div>
+          <span className={`rounded-lg border px-3 py-1 text-[11px] font-semibold ${
+            isPaper
+              ? "border-amber-500/30 bg-amber-500/[0.06] text-amber-300"
+              : "border-brand-500/30 bg-brand-500/[0.06] text-brand-300"
+          }`}>
+            {isPaper ? "Paper Mode" : "Live Mode"}
+          </span>
         </div>
 
-        <p className="mt-4 text-xs text-dark-400 leading-relaxed">
-          Your AI is working in the background 24/7 — analysing markets, spotting opportunities,
-          and executing trades automatically. <strong className="text-dark-200">You don't need to do anything.</strong> Just
-          watch the decisions below as your AI trades for you.
-        </p>
+        {/* Mode toggle */}
+        <div className="mt-4">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-dark-600">
+            Trading mode
+          </p>
+          <div className="flex rounded-xl border border-dark-800 bg-dark-950 p-1 gap-1">
+            <button
+              type="button"
+              disabled={modeSaving}
+              onClick={() => saveTradeMode("auto")}
+              className={`flex-1 rounded-lg py-2 text-xs font-semibold transition-all ${
+                tradeMode === "auto"
+                  ? "bg-brand-500/15 border border-brand-500/30 text-brand-300"
+                  : "text-dark-500 hover:text-dark-300"
+              }`}
+            >
+              Full Autopilot
+              <span className="ml-1.5 hidden sm:inline text-[11px] font-normal opacity-70">AI decides & trades</span>
+            </button>
+            <button
+              type="button"
+              disabled={modeSaving}
+              onClick={() => saveTradeMode("picks")}
+              className={`flex-1 rounded-lg py-2 text-xs font-semibold transition-all ${
+                tradeMode === "picks"
+                  ? "bg-brand-500/15 border border-brand-500/30 text-brand-300"
+                  : "text-dark-500 hover:text-dark-300"
+              }`}
+            >
+              AI Picks
+              <span className="ml-1.5 hidden sm:inline text-[11px] font-normal opacity-70">You choose which to trade</span>
+            </button>
+          </div>
+          <p className="mt-2 text-[11px] text-dark-500 leading-relaxed">
+            {tradeMode === "auto"
+              ? "Your AI runs fully autonomously — analysing markets, spotting opportunities, and executing trades for you automatically."
+              : "Your AI analyses the market and presents the best picks. You decide which one to trade with one tap."}
+          </p>
+        </div>
 
-        {/* Exchange tabs */}
+        {/* Exchange tabs (multiple exchanges) */}
         {exchanges.length > 1 && (
           <div className="mt-4 flex gap-2 flex-wrap">
             {exchanges.map((ex) => (
@@ -328,26 +402,35 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
       {/* ── AI Live Feed ── */}
       <AIActivityStream />
 
-      {/* ── Live Watchlist ── */}
-      <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <p className="text-sm font-semibold text-white">What your AI is watching</p>
-            <p className="text-xs text-dark-500 mt-0.5">Live prices · AI decisions from last cycle</p>
+      {/* ── AI Picks mode: recommendation cards ── */}
+      {tradeMode === "picks" ? (
+        <AIPicksPanel
+          exchange={selectedExchange}
+          isPaper={isPaper}
+          traderClass={traderClass}
+        />
+      ) : (
+        /* ── Autopilot mode: live watchlist ── */
+        <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <p className="text-sm font-semibold text-white">What your AI is watching</p>
+              <p className="text-xs text-dark-500 mt-0.5">Live prices · AI decisions from last cycle</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {watchlist.map((sym) => (
+              <WatchlistTile
+                key={sym}
+                symbol={sym}
+                exchange={selectedExchange}
+                lastDecision={lastDecisionBySymbol[sym]}
+              />
+            ))}
           </div>
         </div>
-
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          {watchlist.map((sym) => (
-            <WatchlistTile
-              key={sym}
-              symbol={sym}
-              exchange={selectedExchange}
-              lastDecision={lastDecisionBySymbol[sym]}
-            />
-          ))}
-        </div>
-      </div>
+      )}
 
 
       {/* ── On-demand Analysis (collapsed — advanced users only) ── */}

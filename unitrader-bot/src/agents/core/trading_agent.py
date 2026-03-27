@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import AsyncSessionLocal
-from models import AuditLog, ExchangeAPIKey, Trade, User, UserSettings
+from models import AuditLog, ExchangeAPIKey, Trade, User, UserExternalAccount, UserSettings
 from security import decrypt_api_key
 from src.agents.shared_memory import SharedContext
 from src.integrations.exchange_client import get_exchange_client
@@ -1159,6 +1159,7 @@ Provide your detailed technical analysis with the specified JSON format."""
                     status="open",
                     claude_confidence=float(decision["confidence"]),
                     market_condition=decision.get("market_condition", "unknown"),
+                    reasoning=decision.get("reasoning", ""),
                     execution_time=round(execution_ms, 2),
                 )
                 db.add(trade)
@@ -1345,6 +1346,19 @@ Provide your detailed technical analysis with the specified JSON format."""
 
         # ── Step 5: Execute ───────────────────────────────────────────────
         result = await self.execute_trade(decision, symbol, exchange_name, ai_name)
+
+        # ── Step 5b: Notify connected messaging platforms ─────────────────
+        if result.get("status") == "executed":
+            asyncio.create_task(self._notify_trade_executed(
+                user_id=self.user_id,
+                symbol=symbol,
+                side=decision["decision"],
+                entry_price=decision["entry_price"],
+                stop_loss=decision["stop_loss"],
+                take_profit=decision["take_profit"],
+                confidence=decision.get("confidence", 0),
+                reasoning=decision.get("reasoning", ""),
+            ))
 
         # ── Step 6: Log outcome to learning hub ──────────────────────────
         outcome = "success" if result.get("status") == "executed" else "failure"
@@ -1686,11 +1700,82 @@ Provide your detailed technical analysis with the specified JSON format."""
     async def _send_telegram_alert(
         self, user_id: str, message: str, db: AsyncSession
     ) -> None:
-        """Send Telegram alert to user about position close."""
+        """Send a plain-text Telegram alert to the user (e.g. position close notification)."""
         try:
-            from src.integrations.telegram_bot import send_user_message
+            from routers.telegram_webhooks import get_telegram_bot_service
+            from sqlalchemy import select as _select
 
-            await send_user_message(user_id, message, db)
+            bot = get_telegram_bot_service()
+            if not bot:
+                return
+
+            ext = (await db.execute(
+                _select(UserExternalAccount).where(
+                    UserExternalAccount.user_id == user_id,
+                    UserExternalAccount.platform == "telegram",
+                    UserExternalAccount.is_linked == True,  # noqa: E712
+                )
+            )).scalar_one_or_none()
+
+            if ext:
+                await bot.app.bot.send_message(
+                    chat_id=ext.external_id,
+                    text=message,
+                )
         except Exception as exc:
-            logger.debug(f"Failed to send Telegram alert: {exc}")
+            logger.debug("Failed to send Telegram alert: %s", exc)
+
+    async def _notify_trade_executed(
+        self,
+        user_id: str,
+        symbol: str,
+        side: str,
+        entry_price: float,
+        stop_loss: float,
+        take_profit: float,
+        confidence: float,
+        reasoning: str,
+    ) -> None:
+        """Push trade execution alerts to all connected messaging platforms."""
+        try:
+            from routers.telegram_webhooks import get_telegram_bot_service
+            from routers.whatsapp_webhooks import get_whatsapp_bot_service
+            from sqlalchemy import select as _select
+
+            async with AsyncSessionLocal() as db:
+                ext_rows = (await db.execute(
+                    _select(UserExternalAccount).where(
+                        UserExternalAccount.user_id == user_id,
+                        UserExternalAccount.is_linked == True,  # noqa: E712
+                    )
+                )).scalars().all()
+
+            tg_bot = get_telegram_bot_service()
+            wa_bot = get_whatsapp_bot_service()
+
+            for ext in ext_rows:
+                if ext.platform == "telegram" and tg_bot:
+                    await tg_bot.send_trade_alert(
+                        telegram_user_id=ext.external_id,
+                        symbol=symbol,
+                        side=side,
+                        entry_price=entry_price,
+                        stop_loss=stop_loss,
+                        take_profit=take_profit,
+                        confidence=int(confidence),
+                        reasoning=reasoning[:300] if reasoning else "",
+                    )
+                elif ext.platform == "whatsapp" and wa_bot:
+                    await wa_bot.send_trade_alert(
+                        whatsapp_number=ext.external_id,
+                        symbol=symbol,
+                        side=side,
+                        entry_price=entry_price,
+                        stop_loss=stop_loss,
+                        take_profit=take_profit,
+                        confidence=int(confidence),
+                        reasoning=reasoning[:300] if reasoning else "",
+                    )
+        except Exception as exc:
+            logger.debug("Failed to send trade notifications: %s", exc)
 

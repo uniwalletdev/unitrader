@@ -336,21 +336,123 @@ async def _trading_loop() -> None:
                     if not approved:
                         continue
 
-                    async with AsyncSessionLocal() as db:
-                        # TODO: Update background trading loop to use new orchestrator.route()
-                        # with action="backtest" or iterate over approved assets with "trade_analyze"
-                        # orchestrator = get_orchestrator()
-                        # result = await orchestrator.route(
-                        #     user_id=user.id,
-                        #     action="trade_analyze",
-                        #     payload={"symbols": approved, "exchanges": list(connected_exchanges)},
-                        #     db=db,
-                        # )
-                        await db.commit()
-                        logger.info(
-                            "Trading loop: user=%s (disabled pending orchestrator migration)",
-                            user.id,
-                        )
+                    trade_mode = (user_settings.trade_mode or "auto") if user_settings else "auto"
+                    trading_paused = (user_settings.trading_paused or False) if user_settings else False
+
+                    if trading_paused:
+                        logger.debug("Trading loop: user=%s trading paused — skipping", user.id)
+                        continue
+
+                    from src.agents.core.trading_agent import TradingAgent
+                    from src.agents.shared_memory import SharedContext, SharedMemory
+
+                    agent = TradingAgent(user_id=user.id)
+
+                    if trade_mode in ("auto", "guided"):
+                        # Full autopilot: analyse + execute for each approved symbol
+                        for exchange in connected_exchanges:
+                            exchange_symbols = [s for s in approved if s]
+                            if not exchange_symbols:
+                                continue
+                            # Only run one symbol per exchange per cycle (avoid over-trading)
+                            symbol = exchange_symbols[0]
+                            try:
+                                result = await agent.run_cycle(
+                                    symbol=symbol,
+                                    exchange_name=exchange,
+                                )
+                                logger.info(
+                                    "Trading loop: user=%s exchange=%s symbol=%s status=%s",
+                                    user.id, exchange, symbol, result.get("status"),
+                                )
+                            except Exception as exc:
+                                logger.error(
+                                    "Trading loop: run_cycle failed user=%s symbol=%s: %s",
+                                    user.id, symbol, exc,
+                                )
+
+                    elif trade_mode == "picks":
+                        # AI Picks mode: analyse watchlist, notify user of top opportunities
+                        from routers.telegram_webhooks import get_telegram_bot_service
+                        from routers.whatsapp_webhooks import get_whatsapp_bot_service
+                        from src.agents.shared_memory import SharedMemory
+                        from sqlalchemy import select as _select
+
+                        _WATCHLIST: dict[str, list[str]] = {
+                            "alpaca":  ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY"],
+                            "binance": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
+                            "oanda":   ["EUR_USD", "GBP_USD", "USD_JPY"],
+                        }
+
+                        for exchange in connected_exchanges:
+                            symbols = _WATCHLIST.get(exchange, [])[:5]
+                            if not symbols:
+                                continue
+
+                            async with AsyncSessionLocal() as _db:
+                                ctx = await SharedMemory.load(user.id, _db)
+                            if ctx is None:
+                                ctx = SharedContext.default(user.id)
+                            ctx.exchange = exchange
+
+                            picks = []
+                            for sym in symbols:
+                                try:
+                                    result = await agent.analyze(symbol=sym, exchange=exchange, context=ctx)
+                                    if result and result.signal in ("buy", "sell"):
+                                        picks.append({
+                                            "symbol": sym,
+                                            "signal": result.signal.upper(),
+                                            "confidence": result.confidence,
+                                            "reasoning": (result.explanation_expert or "")[:200],
+                                        })
+                                except Exception:
+                                    pass
+
+                            picks.sort(key=lambda p: p["confidence"], reverse=True)
+                            top = picks[:3]
+
+                            if not top:
+                                continue
+
+                            # Build notification message
+                            lines = [f"🔍 Your AI found {len(top)} opportunity{'s' if len(top) > 1 else ''}:"]
+                            for i, p in enumerate(top, 1):
+                                em = "📈" if p["signal"] == "BUY" else "📉"
+                                lines.append(f"{i}) {em} {p['signal']} {p['symbol']} — {p['confidence']:.0f}% confidence")
+                            lines.append("\nOpen the app to review and trade.")
+                            msg = "\n".join(lines)
+
+                            # Send to connected platforms
+                            async with AsyncSessionLocal() as _db:
+                                from models import UserExternalAccount
+                                ext_rows = (await _db.execute(
+                                    _select(UserExternalAccount).where(
+                                        UserExternalAccount.user_id == user.id,
+                                        UserExternalAccount.is_linked == True,  # noqa: E712
+                                    )
+                                )).scalars().all()
+
+                            tg_bot = get_telegram_bot_service()
+                            wa_bot = get_whatsapp_bot_service()
+
+                            for ext in ext_rows:
+                                try:
+                                    if ext.platform == "telegram" and tg_bot and tg_bot.app:
+                                        await tg_bot.app.bot.send_message(
+                                            chat_id=ext.external_id, text=msg
+                                        )
+                                    elif ext.platform == "whatsapp" and wa_bot:
+                                        await wa_bot.send_message(ext.external_id, msg)
+                                except Exception as _exc:
+                                    logger.debug("picks notify failed for %s: %s", ext.platform, _exc)
+
+                            logger.info(
+                                "Trading loop (picks): user=%s exchange=%s found %d picks",
+                                user.id, exchange, len(top),
+                            )
+                    else:
+                        logger.debug("Trading loop: user=%s trade_mode=%s — no action", user.id, trade_mode)
 
                 except Exception as exc:
                     logger.error("Trading loop error for user %s: %s", user.id, exc)

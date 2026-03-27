@@ -342,6 +342,91 @@ async def get_account_balances(
 
 
 # ─────────────────────────────────────────────
+# GET /api/trading/ai-picks — Top opportunities without executing
+# ─────────────────────────────────────────────
+
+# Symbols the AI monitors per exchange (mirrors the frontend watchlist)
+_WATCHLIST: dict[str, list[str]] = {
+    "alpaca":  ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY", "VOO"],
+    "binance": ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"],
+    "oanda":   ["EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD"],
+}
+
+
+@router.get("/ai-picks")
+async def get_ai_picks(
+    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    limit: int = Query(default=3, ge=1, le=10),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Analyse the AI watchlist and return the top picks without executing.
+
+    The AI scores every symbol in the watchlist, then returns the highest-
+    confidence opportunities so the user can choose which one to trade.
+    Results are sorted by confidence descending.
+    """
+    from src.agents.core.trading_agent import TradingAgent
+    from src.agents.shared_memory import SharedContext, SharedMemory
+
+    try:
+        # Build user context for the analysis
+        ctx = await SharedMemory.load(current_user.id, db)
+        if ctx is None:
+            ctx = SharedContext.default(current_user.id)
+        ctx.exchange = exchange.lower()
+
+        symbols = _WATCHLIST.get(exchange.lower(), _WATCHLIST["alpaca"])
+
+        agent = TradingAgent(user_id=current_user.id)
+
+        # Analyse each symbol concurrently (max 5 at once to avoid rate limits)
+        semaphore = asyncio.Semaphore(5)
+
+        async def _analyse_one(sym: str) -> dict | None:
+            async with semaphore:
+                try:
+                    result = await agent.analyze(symbol=sym, exchange=exchange.lower(), context=ctx)
+                    if result is None:
+                        return None
+                    entry = result.market_data.get("price", 0) if result.market_data else 0
+                    sl_pct = result.suggested_stop_loss_pct or 2.0
+                    tp_pct = result.suggested_take_profit_pct or 4.0
+                    return {
+                        "symbol": sym,
+                        "decision": result.signal.upper() if result.signal else "WAIT",
+                        "confidence": result.confidence,
+                        "reasoning": result.explanation_expert or "",
+                        "entry_price": round(entry, 4) if entry else None,
+                        "stop_loss": round(entry * (1 - sl_pct / 100), 4) if entry else None,
+                        "take_profit": round(entry * (1 + tp_pct / 100), 4) if entry else None,
+                        "market_condition": (result.market_data or {}).get("trend", ""),
+                        "key_factors": result.key_factors or [],
+                    }
+                except Exception as exc:
+                    logger.debug("ai-picks: analysis failed for %s: %s", sym, exc)
+                    return None
+
+        raw = await asyncio.gather(*[_analyse_one(s) for s in symbols])
+        picks = [p for p in raw if p and p["decision"] != "WAIT"]
+
+        # Sort by confidence desc; fill with WAITs if fewer than limit
+        picks.sort(key=lambda p: p["confidence"], reverse=True)
+        if len(picks) < limit:
+            waits = [p for p in raw if p and p["decision"] == "WAIT"]
+            waits.sort(key=lambda p: p["confidence"], reverse=True)
+            picks += waits[: limit - len(picks)]
+
+        return {"status": "success", "data": picks[:limit]}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("ai-picks error for user %s: %s", current_user.id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ─────────────────────────────────────────────
 # POST /api/trading/execute
 # ─────────────────────────────────────────────
 
