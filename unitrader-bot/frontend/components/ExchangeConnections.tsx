@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import {
   Link2, Unlink, ChevronDown, ChevronUp, Eye, EyeOff,
-  CheckCircle, AlertCircle, Loader2, ExternalLink,
+  CheckCircle, AlertCircle, Loader2, ExternalLink, Clipboard,
 } from "lucide-react";
 import { exchangeApi } from "@/lib/api";
 
@@ -64,10 +64,48 @@ const EXCHANGES: ExchangeDef[] = [
     docsUrl: "https://portal.cdp.coinbase.com/",
     fields: [
       { key: "api_key", label: "API Key Name", placeholder: "organizations/.../apiKeys/..." },
-      { key: "api_secret", label: "Private Key (PEM)", placeholder: "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----", multiline: true },
+      {
+        key: "api_secret",
+        label: "Private Key (PEM)",
+        placeholder: "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----",
+        multiline: true,
+      },
     ],
   },
 ];
+
+// ─── Coinbase smart-paste helpers ─────────────────────────────────────────────
+
+type CoinbasePasteStatus =
+  | { kind: "idle" }
+  | { kind: "json_full"; name: string; privateKey: string }
+  | { kind: "pem_only" }
+  | { kind: "key_only" };
+
+function parseCoinbasePaste(raw: string): CoinbasePasteStatus {
+  const trimmed = raw.trim();
+  if (!trimmed) return { kind: "idle" };
+
+  // CDP JSON blob: {"name":"organizations/…","privateKey":"-----BEGIN…"}
+  try {
+    const obj = JSON.parse(trimmed);
+    if (obj && typeof obj.name === "string" && typeof obj.privateKey === "string") {
+      return { kind: "json_full", name: obj.name.trim(), privateKey: obj.privateKey.trim() };
+    }
+  } catch {
+    // not JSON — fall through
+  }
+
+  // Bare PEM block
+  if (trimmed.includes("-----BEGIN") && trimmed.includes("PRIVATE KEY-----")) {
+    return { kind: "pem_only" };
+  }
+
+  // Anything else — treat as an API key name or legacy key string
+  return { kind: "key_only" };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
 
 export default function ExchangeConnections({ onConnected }: { onConnected?: () => void } = {}) {
   const [connected, setConnected] = useState<ConnectedExchange[]>([]);
@@ -78,6 +116,27 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
   const [submitting, setSubmitting] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  // Coinbase smart-paste
+  const [cbPasteRaw, setCbPasteRaw] = useState("");
+  const [cbPasteStatus, setCbPasteStatus] = useState<CoinbasePasteStatus>({ kind: "idle" });
+
+  const handleCoinbaseSmartPaste = (raw: string) => {
+    setCbPasteRaw(raw);
+    const status = parseCoinbasePaste(raw);
+    setCbPasteStatus(status);
+
+    if (status.kind === "json_full") {
+      setFormValues((v) => ({
+        ...v,
+        coinbase_api_key: status.name,
+        coinbase_api_secret: status.privateKey,
+      }));
+    } else if (status.kind === "pem_only") {
+      setFormValues((v) => ({ ...v, coinbase_api_secret: raw.trim() }));
+    } else if (status.kind === "key_only") {
+      setFormValues((v) => ({ ...v, coinbase_api_key: raw.trim() }));
+    }
+  };
 
   const loadConnected = async () => {
     try {
@@ -114,9 +173,12 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
         text: `${exchangeId.charAt(0).toUpperCase() + exchangeId.slice(1)} connected! Balance: $${balance?.toLocaleString() ?? "—"}`,
       });
       setFormValues((v) => ({ ...v, [`${exchangeId}_api_key`]: "", [`${exchangeId}_api_secret`]: "" }));
+      if (exchangeId === "coinbase") {
+        setCbPasteRaw("");
+        setCbPasteStatus({ kind: "idle" });
+      }
       setExpandedId(null);
       await loadConnected();
-      // Notify parent (e.g. dashboard) that an exchange was connected
       onConnected?.();
     } catch (err: any) {
       const detail = err.response?.data?.detail || "Connection failed. Check your keys and try again.";
@@ -245,87 +307,170 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
             {expanded && !active && (
               <div className="border-t border-dark-800 p-4">
                 {exchange.id === "coinbase" ? (
-                  <div className="mb-3 rounded-lg border border-dark-800 bg-dark-900/40 p-3 text-[11px] text-dark-400">
-                    <div className="mb-2 flex items-center gap-1 text-[10px] text-dark-500">
-                      Create Coinbase CDP API keys at
+                  <>
+                    {/* Smart paste box */}
+                    <div className="mb-4">
+                      <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-dark-300">
+                        <Clipboard size={12} className="text-brand-400" />
+                        Paste your Coinbase key here
+                      </div>
+                      <p className="mb-2 text-[10px] text-dark-500">
+                        Paste the full JSON from{" "}
+                        <a
+                          href={exchange.docsUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-brand-400 hover:underline"
+                        >
+                          portal.cdp.coinbase.com <ExternalLink size={8} className="inline" />
+                        </a>
+                        {" "}or paste a PEM block or key string — we sort it out automatically.
+                      </p>
+                      <textarea
+                        rows={5}
+                        value={cbPasteRaw}
+                        onChange={(e) => handleCoinbaseSmartPaste(e.target.value)}
+                        placeholder={`Paste JSON e.g.\n{\n  "name": "organizations/.../apiKeys/...",\n  "privateKey": "-----BEGIN EC PRIVATE KEY-----\\n..."\n}`}
+                        className="input w-full font-mono text-[11px] resize-none"
+                        autoComplete="off"
+                      />
+                      {cbPasteStatus.kind === "json_full" && (
+                        <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-brand-400">
+                          <CheckCircle size={11} />
+                          Both fields filled automatically — click Connect &amp; Verify below.
+                        </div>
+                      )}
+                      {cbPasteStatus.kind === "pem_only" && (
+                        <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-amber-400">
+                          <AlertCircle size={11} />
+                          Private Key detected — please also enter the API Key Name below.
+                        </div>
+                      )}
+                      {cbPasteStatus.kind === "key_only" && (
+                        <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-amber-400">
+                          <AlertCircle size={11} />
+                          Key string detected — please also paste your Private Key (PEM) in the field below.
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Divider */}
+                    <div className="relative mb-4 flex items-center gap-2">
+                      <div className="flex-1 border-t border-dark-800" />
+                      <span className="text-[10px] text-dark-700">or fill in manually</span>
+                      <div className="flex-1 border-t border-dark-800" />
+                    </div>
+
+                    {/* Individual fields */}
+                    <div className="space-y-3">
+                      {exchange.fields.map((field) => {
+                        const fieldId = `${exchange.id}_${field.key}`;
+                        return (
+                          <div key={field.key}>
+                            <label className="mb-1 block text-xs text-dark-400">{field.label}</label>
+                            {field.multiline ? (
+                              <textarea
+                                rows={5}
+                                value={formValues[fieldId] || ""}
+                                onChange={(e) =>
+                                  setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
+                                }
+                                placeholder={field.placeholder}
+                                className="input w-full font-mono text-xs resize-none"
+                                autoComplete="off"
+                              />
+                            ) : (
+                              <input
+                                type="text"
+                                value={formValues[fieldId] || ""}
+                                onChange={(e) =>
+                                  setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
+                                }
+                                placeholder={field.placeholder}
+                                className="input w-full font-mono text-xs"
+                                autoComplete="off"
+                              />
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Collapsible how-to guide */}
+                    <details className="mt-3">
+                      <summary className="cursor-pointer text-[10px] text-dark-600 hover:text-dark-400">
+                        How to get your Coinbase CDP keys
+                      </summary>
+                      <ol className="mt-2 list-decimal space-y-1 pl-4 text-[10px] text-dark-500">
+                        <li>Go to portal.cdp.coinbase.com → Projects → your project → API Keys</li>
+                        <li>Click Create API Key (name it "Unitrader"), enable trade permissions</li>
+                        <li>On the confirmation screen click the copy icon next to the JSON</li>
+                        <li>Paste the copied JSON into the box above — done</li>
+                      </ol>
+                    </details>
+                  </>
+                ) : (
+                  <>
+                    <div className="mb-3 flex items-center gap-1 text-[10px] text-dark-500">
+                      Get your API keys from
                       <a
                         href={exchange.docsUrl}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-0.5 text-brand-400 hover:underline"
                       >
-                        portal.cdp.coinbase.com <ExternalLink size={9} />
+                        {exchange.name} dashboard <ExternalLink size={9} />
                       </a>
                     </div>
-                    <ol className="list-decimal space-y-1 pl-4">
-                      <li>Go to Projects → your project → API Keys</li>
-                      <li>Click Create API Key (name it “Unitrader”)</li>
-                      <li>Enable trade permissions</li>
-                      <li>Copy API Key Name (looks like organizations/.../apiKeys/...)</li>
-                      <li>Copy the full Private Key block including BEGIN/END lines</li>
-                      <li>Paste both above</li>
-                    </ol>
-                  </div>
-                ) : (
-                  <div className="mb-3 flex items-center gap-1 text-[10px] text-dark-500">
-                    Get your API keys from
-                    <a
-                      href={exchange.docsUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-0.5 text-brand-400 hover:underline"
-                    >
-                      {exchange.name} dashboard <ExternalLink size={9} />
-                    </a>
-                  </div>
+                    <div className="space-y-3">
+                      {exchange.fields.map((field) => {
+                        const fieldId = `${exchange.id}_${field.key}`;
+                        const isSecret = field.key === "api_secret";
+                        return (
+                          <div key={field.key}>
+                            <label className="mb-1 block text-xs text-dark-400">{field.label}</label>
+                            <div className="relative">
+                              {field.multiline ? (
+                                <textarea
+                                  rows={6}
+                                  value={formValues[fieldId] || ""}
+                                  onChange={(e) =>
+                                    setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
+                                  }
+                                  placeholder={field.placeholder}
+                                  className="input w-full font-mono text-xs resize-none"
+                                  autoComplete="off"
+                                />
+                              ) : (
+                                <input
+                                  type={isSecret && !showSecrets[fieldId] ? "password" : "text"}
+                                  value={formValues[fieldId] || ""}
+                                  onChange={(e) =>
+                                    setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
+                                  }
+                                  placeholder={field.placeholder}
+                                  className="input w-full pr-9 font-mono text-xs"
+                                  autoComplete="off"
+                                />
+                              )}
+                              {isSecret && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setShowSecrets((s) => ({ ...s, [fieldId]: !s[fieldId] }))
+                                  }
+                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-300"
+                                >
+                                  {showSecrets[fieldId] ? <EyeOff size={14} /> : <Eye size={14} />}
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
                 )}
-                <div className="space-y-3">
-                  {exchange.fields.map((field) => {
-                    const fieldId = `${exchange.id}_${field.key}`;
-                    const isSecret = field.key === "api_secret";
-                    return (
-                      <div key={field.key}>
-                        <label className="mb-1 block text-xs text-dark-400">{field.label}</label>
-                        <div className="relative">
-                          {field.multiline ? (
-                            <textarea
-                              rows={6}
-                              value={formValues[fieldId] || ""}
-                              onChange={(e) =>
-                                setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
-                              }
-                              placeholder={field.placeholder}
-                              className="input w-full font-mono text-xs resize-none"
-                              autoComplete="off"
-                            />
-                          ) : (
-                            <input
-                              type={isSecret && !showSecrets[fieldId] ? "password" : "text"}
-                              value={formValues[fieldId] || ""}
-                              onChange={(e) =>
-                                setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
-                              }
-                              placeholder={field.placeholder}
-                              className="input w-full pr-9 font-mono text-xs"
-                              autoComplete="off"
-                            />
-                          )}
-                          {isSecret && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setShowSecrets((s) => ({ ...s, [fieldId]: !s[fieldId] }))
-                              }
-                              className="absolute right-2 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-300"
-                            >
-                              {showSecrets[fieldId] ? <EyeOff size={14} /> : <Eye size={14} />}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
                 <div className="mt-4 flex items-center gap-3">
                   <button
                     onClick={() => handleConnect(exchange.id)}
@@ -340,7 +485,12 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                     {submitting ? "Validating..." : "Connect & Verify"}
                   </button>
                   <button
-                    onClick={() => { setExpandedId(null); setMessage(null); }}
+                    onClick={() => {
+                      setExpandedId(null);
+                      setMessage(null);
+                      setCbPasteRaw("");
+                      setCbPasteStatus({ kind: "idle" });
+                    }}
                     className="text-xs text-dark-500 hover:text-dark-300"
                   >
                     Cancel

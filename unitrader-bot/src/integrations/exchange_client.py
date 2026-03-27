@@ -567,15 +567,30 @@ class CoinbaseClient(BaseExchangeClient):
             timeout=10.0,
         )
 
+    @staticmethod
+    def _is_pem(secret: str) -> bool:
+        """Return True if the secret looks like a PEM private key block."""
+        return secret.strip().startswith("-----BEGIN") and "PRIVATE KEY" in secret
+
     def _headers(self, method: str, path: str, body: str = "") -> dict:
-        """Generate JWT auth headers for Coinbase CDP Advanced Trade REST API."""
-        import secrets
+        """Auto-select auth strategy based on the api_secret format.
+
+        CDP keys (ECDSA PEM private key) → JWT Bearer (ES256).
+        Legacy/HMAC keys (plain string secret) → CB-ACCESS-* headers.
+        """
+        if self._is_pem(self.api_secret):
+            return self._headers_jwt()
+        return self._headers_hmac(method, path, body)
+
+    def _headers_jwt(self) -> dict:
+        """Generate JWT Bearer auth for Coinbase CDP (ECDSA PEM private key)."""
+        import secrets as _secrets
 
         from jose import jwt as jose_jwt
         from cryptography.hazmat.primitives.serialization import load_pem_private_key
 
         now = int(time.time())
-        nonce = secrets.token_hex(16)
+        nonce = _secrets.token_hex(16)
         private_key = load_pem_private_key(self.api_secret.encode(), password=None)
 
         payload = {
@@ -590,9 +605,22 @@ class CoinbaseClient(BaseExchangeClient):
             algorithm="ES256",
             headers={"kid": self.api_key, "nonce": nonce},
         )
-
         return {
             "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        }
+
+    def _headers_hmac(self, method: str, path: str, body: str = "") -> dict:
+        """Generate legacy HMAC-SHA256 CB-ACCESS-* headers for older Coinbase keys."""
+        timestamp = str(int(time.time()))
+        message = timestamp + method.upper() + path + body
+        sig = hmac.new(
+            self.api_secret.encode(), message.encode(), hashlib.sha256
+        ).hexdigest()
+        return {
+            "CB-ACCESS-KEY": self.api_key,
+            "CB-ACCESS-SIGN": sig,
+            "CB-ACCESS-TIMESTAMP": timestamp,
             "Content-Type": "application/json",
         }
 

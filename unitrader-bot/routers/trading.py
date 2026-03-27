@@ -126,9 +126,44 @@ async def _validate_exchange_keys(exchange: str, api_key: str, api_secret: str, 
             if not valid:
                 raise ValueError("OANDA rejected the credentials")
         elif exchange == "coinbase":
-            valid = await validate_coinbase_keys(api_key, api_secret)
+            try:
+                valid = await validate_coinbase_keys(api_key, api_secret)
+            except Exception as cb_exc:
+                err_str = str(cb_exc).lower()
+                is_pem = api_secret.strip().startswith("-----BEGIN") and "PRIVATE KEY" in api_secret
+                if "401" in err_str or "unauthorized" in err_str or "invalid" in err_str:
+                    if is_pem:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=(
+                                "Coinbase rejected the CDP key. "
+                                "Make sure the API Key Name matches the private key, "
+                                "and that trade permissions are enabled. "
+                                "Re-copy the JSON from portal.cdp.coinbase.com."
+                            ),
+                        )
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=(
+                                "Coinbase rejected these credentials. "
+                                "Legacy Coinbase API keys are no longer supported for Advanced Trade. "
+                                "Please create a new CDP key at portal.cdp.coinbase.com, "
+                                "copy the JSON and paste it in the Coinbase connection box."
+                            ),
+                        )
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Coinbase connection failed: {cb_exc}",
+                )
             if not valid:
-                raise ValueError("Coinbase rejected the credentials")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        "Coinbase did not accept these keys. "
+                        "Paste the full JSON from portal.cdp.coinbase.com into the connection box."
+                    ),
+                )
 
         client = get_exchange_client(exchange, api_key, api_secret, is_paper=is_paper)
         balance = await client.get_account_balance()
