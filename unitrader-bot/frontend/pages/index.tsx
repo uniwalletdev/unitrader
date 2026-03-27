@@ -20,14 +20,14 @@ const APEX_POINTS = [
   "AI analyses sentiment + technical indicators",
   "10 agents built on the same underlying AI",
   "Position monitor checks every 5 minutes",
-  "Start with £25",
+  "Start with your own budget",
   "Open to everyone",
 ];
 
 const STATS_DATA = [
   { value: "40+", desc: "Years institutions had AI trading before you could access it" },
   { value: "70%", desc: "Of all stock market volume is already algorithmic or AI-driven" },
-  { value: "£25", desc: "Minimum to start. Your money never leaves your exchange account" },
+  { value: "Any size", desc: "Start at your pace. Your money never leaves your exchange account" },
 ];
 
 const STEPS = [

@@ -548,7 +548,7 @@ function _LegacyDashboard({ user }: { user: User | null }) {
                   {[
                     ["Management fee", "2%/yr on balance", "£0"],
                     ["Performance fee", "20% of profits", "£0 — keep everything"],
-                    ["Minimum", "£1,000,000", "£25"],
+                    ["Minimum", "£1,000,000", "No fixed minimum"],
                     ["Availability", "Invitation only", "Open to everyone"],
                     ["AI technology", "Proprietary", "Claude — same class"],
                   ].map(([item, hf, apex]) => (
