@@ -886,7 +886,6 @@ class BlogPost(Base):
     slug: Mapped[str] = mapped_column(String(350), unique=True, nullable=False, index=True)
     topic: Mapped[str] = mapped_column(String(300), nullable=False)
     category: Mapped[str] = mapped_column(String(50), default="marketing", server_default="marketing", nullable=False)
-    related_concept: Mapped[str | None] = mapped_column(String(100), nullable=True)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     seo_keywords: Mapped[list | None] = mapped_column(JSON, nullable=True)
     estimated_read_time: Mapped[int] = mapped_column(Integer, default=5, nullable=False)

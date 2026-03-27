@@ -281,7 +281,6 @@ async def list_learning_articles(
                 "topic": p.topic,
                 "reading_time_minutes": p.estimated_read_time,
                 "word_count": p.word_count,
-                "related_concept": p.related_concept,
                 "published_at": p.published_at.isoformat() if p.published_at else None,
                 "created_at": p.created_at.isoformat() if p.created_at else None,
             }
@@ -318,7 +317,6 @@ async def get_learning_article(
         "content": p.content,
         "reading_time_minutes": p.estimated_read_time,
         "word_count": p.word_count,
-        "related_concept": p.related_concept,
         "published_at": p.published_at.isoformat() if p.published_at else None,
         "created_at": p.created_at.isoformat() if p.created_at else None,
     }
