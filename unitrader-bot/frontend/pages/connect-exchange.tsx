@@ -158,7 +158,6 @@ export default function ConnectExchangePage() {
     setIsPaper(true);
     setShowKey(false);
     setShowSecret(false);
-    setMessage(null);
     setCbPasteRaw("");
     setCbPasteStatus({ kind: "idle" });
   };
@@ -170,15 +169,21 @@ export default function ConnectExchangePage() {
     if (status.kind === "json_full") {
       setFormKey(status.name);
       setFormSecret(status.privateKey);
+    } else if (status.kind === "pem_only") {
+      setFormSecret(raw.trim());
+    } else if (status.kind === "key_only") {
+      setFormKey(raw.trim());
     }
   };
 
   const handleExpand = (id: ExchangeId) => {
     if (expandedId === id) {
       setExpandedId(null);
+      setMessage(null);
       resetForm();
     } else {
       setExpandedId(id);
+      setMessage(null);
       resetForm();
     }
   };
