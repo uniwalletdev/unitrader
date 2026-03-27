@@ -1051,11 +1051,26 @@ function SettingsPanel({ user, onExchangeConnected }: { user: User | null; onExc
     setRiskSaving(false);
   };
 
+  const [billingStatus, setBillingStatus] = useState<{
+    tier: string; status: string; trial_days_remaining?: number; cancel_at_period_end?: boolean;
+  } | null>(null);
+  const [billingLoading, setBillingLoading] = useState(true);
+  const [upgrading, setUpgrading] = useState(false);
+
+  useEffect(() => {
+    billingApi.status()
+      .then((res) => setBillingStatus(res.data?.data ?? res.data))
+      .catch(() => {})
+      .finally(() => setBillingLoading(false));
+  }, []);
+
   const handleUpgrade = async () => {
+    setUpgrading(true);
     try {
       const res = await billingApi.checkout();
       window.location.href = res.data.data.checkout_url;
     } catch { alert("Could not start checkout. Please try again."); }
+    setUpgrading(false);
   };
 
   const handlePortal = async () => {
@@ -1064,6 +1079,10 @@ function SettingsPanel({ user, onExchangeConnected }: { user: User | null; onExc
       window.location.href = res.data.data.portal_url;
     } catch { alert("Could not open billing portal."); }
   };
+
+  const isPro = billingStatus?.tier === "pro" || billingStatus?.status === "active" || billingStatus?.status === "trialing";
+  const isTrialing = billingStatus?.status === "trialing";
+  const trialDays = billingStatus?.trial_days_remaining;
 
   return (
     <div className="w-full space-y-5 animate-fade-in">
@@ -1079,8 +1098,52 @@ function SettingsPanel({ user, onExchangeConnected }: { user: User | null; onExc
           <div className="flex justify-between gap-2"><span>AI Name</span><span className="text-brand-400 font-medium">{user?.ai_name}</span></div>
           <div className="flex justify-between gap-2">
             <span>Plan</span>
-            <span className="font-semibold text-brand-400">Pro (Free)</span>
+            {billingLoading ? (
+              <span className="text-dark-600 text-xs">Loading…</span>
+            ) : (
+              <span className={`font-semibold ${isPro ? "text-brand-400" : "text-dark-400"}`}>
+                {isPro ? (isTrialing ? "Pro (Trial)" : "Pro") : "Free"}
+              </span>
+            )}
           </div>
+          {isTrialing && trialDays != null && (
+            <div className="flex justify-between gap-2">
+              <span>Trial</span>
+              <span className={`font-semibold ${trialDays <= 3 ? "text-amber-400" : "text-dark-200"}`}>
+                {trialDays} day{trialDays !== 1 ? "s" : ""} remaining
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Billing actions */}
+        <div className="mt-5 space-y-2">
+          {!isPro && (
+            <button
+              onClick={handleUpgrade}
+              disabled={upgrading}
+              className="btn-primary w-full py-2.5 text-sm disabled:opacity-60"
+            >
+              {upgrading ? (
+                <><RefreshCw size={13} className="animate-spin" /> Redirecting…</>
+              ) : (
+                <><Zap size={13} /> Upgrade to Pro — $9.99/mo</>
+              )}
+            </button>
+          )}
+          {isPro && (
+            <button
+              onClick={handlePortal}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-dark-700 bg-dark-900 py-2.5 text-sm font-medium text-dark-300 transition hover:border-dark-600 hover:text-white"
+            >
+              <Settings size={13} /> Manage billing
+            </button>
+          )}
+          {!isPro && (
+            <p className="text-center text-[11px] text-dark-600">
+              14-day free trial · No credit card required · Cancel anytime
+            </p>
+          )}
         </div>
       </div>
 
@@ -1281,8 +1344,7 @@ export default function AppPage() {
 
   // ── Force modal when trial expired + no choice made ──────────────────────
   useEffect(() => {
-    // Disabled: All users have free access now
-    // if (mustShowModal) setShowTrialModal(true);
+    if (mustShowModal) setShowTrialModal(true);
   }, [mustShowModal]);
 
   const logout = async () => {
@@ -1439,8 +1501,8 @@ export default function AppPage() {
         </div>
       </div>
 
-      {/* Trial choice modal — disabled for free access */}
-      {false && showTrialModal && trial && (
+      {/* Trial choice modal */}
+      {showTrialModal && trial && (
         <TrialChoiceModal
           aiName={trial?.aiName ?? "Unitrader"}
           daysRemaining={trial?.daysRemaining ?? 0}

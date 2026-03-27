@@ -306,25 +306,96 @@ export default function LandingPage() {
           </div>
         </section>
 
-        {/* ── PRICING (simple CTA, no price shown) ────────────────── */}
+        {/* ── PRICING ────────────────────────────────────────────── */}
         <section id="pricing" className="px-4 py-20 sm:px-6">
-          <div className="mx-auto max-w-xl text-center">
-            <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-brand-400">
-              Pricing
+          <div className="mx-auto max-w-4xl">
+            <div className="mb-12 text-center">
+              <p className="mb-3 text-sm font-semibold uppercase tracking-widest text-brand-400">
+                Pricing
+              </p>
+              <h2 className="mb-4 text-3xl font-bold text-white sm:text-4xl">
+                Simple, transparent pricing
+              </h2>
+              <p className="text-dark-400">
+                14-day free trial. No credit card required. You keep 100% of your profits.
+              </p>
+            </div>
+
+            <div className="mx-auto grid max-w-3xl gap-6 sm:grid-cols-2">
+              {/* Free plan */}
+              <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-8">
+                <div className="mb-6">
+                  <p className="text-sm font-semibold uppercase tracking-widest text-dark-500">Free</p>
+                  <div className="mt-2 flex items-end gap-1">
+                    <span className="text-4xl font-bold text-white">$0</span>
+                    <span className="mb-1 text-sm text-dark-500">/ month</span>
+                  </div>
+                  <p className="mt-2 text-sm text-dark-400">Get started, no commitment</p>
+                </div>
+                <ul className="mb-8 space-y-3 text-sm text-dark-300">
+                  {["1 exchange connection", "10 AI trades per month", "Paper trading", "Basic chat support", "Performance dashboard"].map((f) => (
+                    <li key={f} className="flex items-center gap-2.5">
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-dark-800 text-[10px] text-dark-500">✓</span>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  href="/register"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-dark-700 bg-dark-900 py-3 text-sm font-semibold text-dark-200 transition hover:border-dark-600 hover:text-white"
+                >
+                  Get started free
+                </Link>
+              </div>
+
+              {/* Pro plan */}
+              <div className="relative rounded-2xl border border-brand-500/40 bg-brand-500/[0.04] p-8">
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                  <span className="rounded-full border border-brand-500/40 bg-brand-500/20 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-brand-300">
+                    Most popular
+                  </span>
+                </div>
+                <div className="mb-6">
+                  <p className="text-sm font-semibold uppercase tracking-widest text-brand-400">Pro</p>
+                  <div className="mt-2 flex items-end gap-1">
+                    <span className="text-4xl font-bold text-white">$9.99</span>
+                    <span className="mb-1 text-sm text-dark-400">/ month</span>
+                  </div>
+                  <p className="mt-2 text-sm text-dark-400">14-day free trial included</p>
+                </div>
+                <ul className="mb-8 space-y-3 text-sm text-dark-200">
+                  {[
+                    "Unlimited exchange connections",
+                    "Unlimited AI trades",
+                    "Priority Claude AI",
+                    "Advanced analytics",
+                    "Email trade alerts",
+                    "Telegram & WhatsApp alerts",
+                    "Premium support",
+                  ].map((f) => (
+                    <li key={f} className="flex items-center gap-2.5">
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-brand-500/20 text-[10px] text-brand-400">✓</span>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  href="/register"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-brand-500 py-3 text-sm font-semibold text-black transition hover:bg-brand-400 active:scale-[0.98]"
+                >
+                  Start free trial
+                  <ArrowRight size={15} />
+                </Link>
+                <p className="mt-3 text-center text-[11px] text-dark-500">
+                  No credit card required · Cancel anytime
+                </p>
+              </div>
+            </div>
+
+            <p className="mt-8 text-center text-sm text-dark-500">
+              Already have an account?{" "}
+              <Link href="/login" className="text-brand-400 hover:underline">Sign in</Link>
             </p>
-            <h2 className="mb-4 text-3xl font-bold text-white sm:text-4xl">
-              Start for free. Upgrade when you&apos;re ready.
-            </h2>
-            <p className="mb-8 text-dark-400">
-              No credit card required. Paper trade with Unitrader first, then go live when you trust it.
-            </p>
-            <Link
-              href="/register"
-              className="inline-flex items-center gap-2 rounded-xl bg-brand-500 px-8 py-4 text-base font-semibold text-black transition hover:bg-brand-400 active:scale-[0.98]"
-            >
-              Start free
-              <ArrowRight size={18} />
-            </Link>
           </div>
         </section>
       </main>
