@@ -21,6 +21,7 @@ import {
   type BackendTrade,
   type PerformanceData,
 } from "../lib/api";
+import { devLogError } from "../lib/devLog";
 
 type Exchange = "Alpaca" | "Coinbase" | "Binance" | "Oanda";
 type Mode = "paper" | "live";
@@ -193,7 +194,7 @@ export default function AccountDashboard() {
         return prev;
       });
     } catch (err) {
-      console.error("Failed to fetch account data:", err);
+      devLogError("Failed to fetch account data", err);
       setError("Failed to load account data. Please check your connection.");
     } finally {
       setLoading(false);

@@ -8,11 +8,12 @@ Run with:  python -m uvicorn main:app --reload
 import asyncio
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 import sentry_sdk
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -47,6 +48,7 @@ from routers.whatsapp_webhooks import (
     set_whatsapp_bot_service,
     webhook_router as whatsapp_webhook_router,
 )
+from src.error_handling import configure_third_party_loggers, http_exception_handler
 from src.agents.orchestrator import get_orchestrator
 from src.agents.marketing.content_writer import generate_weekly_posts, generate_monthly_guide
 from backend.agents.content_agent import ContentAgent
@@ -62,6 +64,7 @@ logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
     format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
 )
+configure_third_party_loggers()
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
@@ -760,6 +763,11 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     )
 
 
+@app.exception_handler(HTTPException)
+async def unitrader_http_exception_handler(request: Request, exc: HTTPException):
+    return http_exception_handler(request, exc)
+
+
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):
     errors = [
@@ -774,11 +782,19 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
-    # Never leak internal details to the client
+    error_id = str(uuid.uuid4()) if settings.is_production else None
+    logger.exception(
+        "Unhandled exception on %s %s error_id=%s",
+        request.method,
+        request.url.path,
+        error_id or "n/a",
+    )
+    content: dict = {"status": "error", "error": "An internal server error occurred"}
+    if error_id:
+        content["error_id"] = error_id
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"status": "error", "error": "An internal server error occurred"},
+        content=content,
     )
 
 

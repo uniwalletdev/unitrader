@@ -10,6 +10,7 @@ import {
   ThumbsUp, ThumbsDown, Sparkles, ArrowUpRight, Bot, BookOpen,
 } from "lucide-react";
 import { tradingApi, chatApi, authApi, billingApi, exchangeApi, api } from "@/lib/api";
+import { devLogError } from "@/lib/devLog";
 import ExchangeConnections from "@/components/ExchangeConnections";
 import ExchangeConnectWizard from "@/components/settings/ExchangeConnectWizard";
 import TrustLadderDetail from "@/components/settings/TrustLadderDetail";
@@ -1343,7 +1344,7 @@ export default function AppPage() {
         localStorage.setItem("access_token", res.data.access_token);
         setUser(res.data.user);
       } catch (err) {
-        console.error("Clerk sync failed:", err);
+        devLogError("Clerk sync failed", err);
         // Don't redirect to /login if Clerk says we're signed in — that causes a loop.
         // Instead just let the user see the error state.
         setSyncError(true);
@@ -1364,7 +1365,7 @@ export default function AppPage() {
       const res = await billingApi.checkout();
       if (res.data?.url) window.location.href = res.data.url;
     } catch (err) {
-      console.error("Stripe checkout failed:", err);
+      devLogError("Stripe checkout failed", err);
     }
   };
 

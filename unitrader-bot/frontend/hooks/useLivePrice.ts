@@ -14,6 +14,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useAuth } from "@clerk/nextjs";
 
+import { devLogError, devWarn } from "@/lib/devLog";
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -71,7 +73,7 @@ export function useLivePrice(symbol: string | null): LivePrice {
     try {
       const token = await getToken();
       if (!token) {
-        console.warn("useLivePrice: No auth token available");
+        devWarn("useLivePrice: No auth token available");
         return;
       }
 
@@ -104,12 +106,12 @@ export function useLivePrice(symbol: string | null): LivePrice {
             lastUpdated: new Date(),
           });
         } catch (err) {
-          console.error("useLivePrice: Failed to parse message", err);
+          devLogError("useLivePrice: Failed to parse message", err);
         }
       };
 
       ws.onerror = (error) => {
-        console.error("useLivePrice: WebSocket error", error);
+        devLogError("useLivePrice: WebSocket error", error);
         if (!mountedRef.current) return;
         setPriceData((prev) => ({ ...prev, isConnected: false }));
       };
@@ -135,7 +137,7 @@ export function useLivePrice(symbol: string | null): LivePrice {
 
       wsRef.current = ws;
     } catch (err) {
-      console.error("useLivePrice: Connection error", err);
+      devLogError("useLivePrice: Connection error", err);
       if (!mountedRef.current) return;
       setPriceData((prev) => ({ ...prev, isConnected: false }));
 

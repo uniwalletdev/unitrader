@@ -51,7 +51,7 @@ async def database_health(db: AsyncSession = Depends(get_db)):
         db_status = ServiceStatus(status="healthy")
     except Exception as exc:
         logger.error("Database health check failed: %s", exc)
-        db_status = ServiceStatus(status="error", detail=str(exc)[:200])
+        db_status = ServiceStatus(status="error", detail="database_unreachable")
 
     overall = "healthy" if db_status.status == "healthy" else "degraded"
     return HealthResponse(
@@ -89,7 +89,7 @@ async def ai_health():
         ai_status = ServiceStatus(status="healthy")
     except Exception as exc:
         logger.error("Anthropic health check failed: %s", exc)
-        ai_status = ServiceStatus(status="error", detail=f"Anthropic error: {str(exc)[:80]}")
+        ai_status = ServiceStatus(status="error", detail="anthropic_unreachable")
 
     overall = "healthy" if ai_status.status == "healthy" else "degraded"
     return HealthResponse(
@@ -189,5 +189,5 @@ async def orchestrator_health(db: AsyncSession = Depends(get_db)):
         return {
             "status": "degraded",
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "error": str(exc)[:200],
+            "error": "orchestrator_check_failed",
         }

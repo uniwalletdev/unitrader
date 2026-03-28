@@ -165,9 +165,10 @@ async def _validate_exchange_keys(exchange: str, api_key: str, api_secret: str, 
                     detail=f"Coinbase returned HTTP {status_code}. Please try again or contact support.",
                 )
             except Exception as cb_exc:
+                logger.warning("Coinbase key validation failed: %s", cb_exc)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Coinbase connection error: {cb_exc}",
+                    detail="Coinbase connection failed. Check your API key and secret.",
                 )
 
         client = get_exchange_client(exchange, api_key, api_secret, is_paper=is_paper)
@@ -177,9 +178,10 @@ async def _validate_exchange_keys(exchange: str, api_key: str, api_secret: str, 
     except HTTPException:
         raise
     except Exception as exc:
+        logger.warning("Exchange balance check failed (%s): %s", exchange, exc)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Could not connect to {exchange}: {exc}",
+            detail=f"Could not connect to {exchange}. Verify your API credentials.",
         )
 
 
@@ -478,8 +480,11 @@ async def get_market_top(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("market-top error for user %s: %s", current_user.id, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.exception("market-top error for user %s", current_user.id)
+        raise HTTPException(
+            status_code=500,
+            detail="market_top_unavailable",
+        )
 
 
 # ─────────────────────────────────────────────
@@ -579,8 +584,11 @@ async def get_ai_picks(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("ai-picks error for user %s: %s", current_user.id, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.exception("ai-picks error for user %s", current_user.id)
+        raise HTTPException(
+            status_code=500,
+            detail="ai_picks_unavailable",
+        )
 
 
 # ─────────────────────────────────────────────
@@ -657,10 +665,10 @@ async def execute_trade(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Trade execute failed for user %s: %s", current_user.id, exc)
+        logger.exception("Trade execute failed for user %s", current_user.id)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(exc) or "Trade execution failed. Please try again.",
+            detail="trade_execution_failed",
         )
 
 

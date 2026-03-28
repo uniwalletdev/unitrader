@@ -23,6 +23,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { devLog, devLogError } from "@/lib/devLog";
 
 interface Message {
   id: string;
@@ -296,7 +297,7 @@ export default function ApexOnboardingChat() {
         const newClass = response.data.metadata.detected_class as TraderClass;
         if (newClass !== detectedClass) {
           setDetectedClass(newClass);
-          console.log(`💡 Detected trader class: ${newClass}`);
+          devLog(`💡 Detected trader class: ${newClass}`);
         }
       }
 
@@ -327,7 +328,7 @@ export default function ApexOnboardingChat() {
         setCurrentStage(nextStage);
       }
     } catch (error) {
-      console.error("Onboarding error:", error);
+      devLogError("Onboarding error", error);
       const errorMsg: Message = {
         id: `msg-${Date.now()}`,
         role: "assistant",

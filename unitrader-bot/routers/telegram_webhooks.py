@@ -69,8 +69,11 @@ async def telegram_webhook(request: Request):
         await svc.process_update(update)
         return {"status": "ok"}
     except Exception as exc:
-        logger.error("Error processing Telegram webhook: %s", exc)
-        raise HTTPException(status_code=400, detail=str(exc))
+        logger.exception("Error processing Telegram webhook")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or malformed Telegram update",
+        )
 
 
 # ─────────────────────────────────────────────
@@ -310,4 +313,8 @@ async def reset_webhook(body: ResetWebhookRequest):
         await svc.set_webhook(url)
         return {"status": "ok", "webhook_url": url}
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.exception("Telegram set_webhook failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to register Telegram webhook",
+        )

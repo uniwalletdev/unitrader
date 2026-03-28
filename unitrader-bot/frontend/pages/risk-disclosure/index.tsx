@@ -3,6 +3,7 @@ import { useRouter } from "next/router";
 import Head from "next/head";
 import { CheckCircle2, AlertCircle, Loader } from "lucide-react";
 import { authApi } from "@/lib/api";
+import { devLogError } from "@/lib/devLog";
 
 const DISCLOSURES = [
   "I understand that trading involves risk of loss, and I could lose some or all of my invested capital.",
@@ -34,8 +35,8 @@ export default function RiskDisclosurePage() {
       await authApi.acceptRiskDisclosure();
       // Redirect to trade page with welcome flag
       router.push("/trade?welcome=true");
-    } catch (err: any) {
-      console.error("Risk disclosure error:", err);
+    } catch (err: unknown) {
+      devLogError("Risk disclosure error", err);
       setError("Something went wrong — please try again");
       setLoading(false);
     }

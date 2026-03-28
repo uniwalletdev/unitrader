@@ -1,5 +1,7 @@
 import axios from "axios";
 
+import { devLogError } from "./devLog";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export const api = axios.create({
@@ -30,6 +32,13 @@ api.interceptors.response.use(
     if (err.response?.status === 401 && typeof window !== "undefined" && !isAuthEndpoint) {
       localStorage.removeItem("access_token");
       window.location.href = "/login";
+    }
+    if (err.response && err.response.status >= 500) {
+      devLogError("API 5xx", {
+        status: err.response.status,
+        url: err.config?.url,
+        data: err.response.data,
+      });
     }
     return Promise.reject(err);
   }

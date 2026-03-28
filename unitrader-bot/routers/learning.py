@@ -245,10 +245,10 @@ async def trigger_learning_cycle(
             "duration_s": summary.get("duration_s", 0),
         }
     except Exception as exc:
-        logger.error("Manual learning cycle failed: %s", exc)
+        logger.exception("Manual learning cycle failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Learning cycle failed: {exc}",
+            detail="learning_cycle_failed",
         )
 
 
