@@ -42,15 +42,9 @@ export default function SettingsPage() {
         setLoading(true);
         const response = await authApi.getSettings();
         const data = response.data;
-        // #region agent log
-        fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d9061'},body:JSON.stringify({sessionId:'5d9061',runId:'pre-fix',hypothesisId:'H4',location:'frontend/pages/settings.tsx:loadSettings-success',message:'Settings loaded',data:{keys:Object.keys(data||{}),hasMaxDailyLoss:data?.max_daily_loss!=null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         setSettings(data);
         setDailyLossPct(data.max_daily_loss || 10);
       } catch (err: any) {
-        // #region agent log
-        fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'5d9061'},body:JSON.stringify({sessionId:'5d9061',runId:'pre-fix',hypothesisId:'H3',location:'frontend/pages/settings.tsx:loadSettings-error',message:'Settings load failed',data:{code:err?.code??null,status:err?.response?.status??null,detail:err?.response?.data?.detail??null,message:err?.message??null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
         if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
           setError("Settings took too long to load. Please refresh the page.");
         } else {
