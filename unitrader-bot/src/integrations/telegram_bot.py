@@ -5,7 +5,7 @@ Handles the full lifecycle of bot updates via a webhook:
   - Account linking (web-initiated and bot-initiated via 6-digit OTP)
   - Portfolio, trade history, and performance queries (direct DB)
   - Trade execution and close (calls TradingAgent directly — no HTTP round-trip)
-  - AI chat via ConversationAgent
+  - AI chat via orchestrator (onboarding vs post-onboarding, same as web)
   - Outbound trade alerts pushed from the backend
 
 Commands:
@@ -16,7 +16,7 @@ Commands:
   /close BTCUSDT — Close a position
   /history     — Last 10 closed trades
   /performance — Win rate, profit stats
-  /chat <text> — Ask the AI anything
+  /chat <text> — Ask the AI (free-text when linked also works)
   /alerts      — Placeholder for price alerts
   /settings    — Deep-link to web settings
   /unlink      — Disconnect this Telegram account
@@ -176,7 +176,7 @@ class TelegramBotService:
                 "2. I'll generate a code for you\n"
                 f"3. Enter it at {frontend}/link-telegram\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n"
-                "Need help? Visit unitrader.com/help"
+                f"Need help? Visit {frontend.rstrip('/')}/help"
             )
 
         ms = int((time.perf_counter() - t0) * 1000)
@@ -644,10 +644,9 @@ class TelegramBotService:
         await update.message.chat.send_action(ChatAction.TYPING)
 
         try:
-            from src.agents.core.conversation_agent import ConversationAgent
-            agent    = ConversationAgent(user_id=user.id)
-            response = await agent.respond(question)
-            text     = response.get("response", "Sorry, I couldn't generate a response.")
+            from src.services.bot_orchestrator_chat import orchestrator_chat_reply
+
+            text = await orchestrator_chat_reply(str(user.id), question)
             status_str = "success"
         except Exception as exc:
             logger.error("cmd_chat error for user %s: %s", user.id, exc)
@@ -761,7 +760,9 @@ class TelegramBotService:
             "`/history` — last 10 closed trades\n"
             "`/performance` — win rate & stats\n\n"
             "💬 *AI*\n"
-            "`/chat <question>` — ask your AI anything\n\n"
+            "`/chat <question>` — ask your AI\n"
+            "_Linked accounts:_ plain messages also work; phrases like "
+            "\"show my portfolio\" use live data.\n\n"
             "🔧 *Settings & Alerts*\n"
             "`/settings` — manage trading settings\n"
             "`/alerts` — price alert setup\n\n"
@@ -776,7 +777,7 @@ class TelegramBotService:
             "`/trade SELL ETHUSDT 0.5`\n"
             "`/close BTCUSDT`\n"
             "`/chat Should I buy Bitcoin now?`\n\n"
-            "Help: unitrader.com/help"
+            f"Help: {settings.frontend_url.rstrip('/')}/help"
         )
         await self._reply(update, text, parse_mode="Markdown")
 
@@ -786,15 +787,58 @@ class TelegramBotService:
         tg_id = str(update.effective_user.id)
         user  = await self._get_linked_user(tg_id)
 
-        if user:
-            # Linked users: treat free-text as a chat message
-            ctx.args = update.message.text.split()
-            await self.cmd_chat(update, ctx)
-        else:
+        if not user:
             await self._reply(
                 update,
                 "👋 Use /start to link your Unitrader account and start trading.",
             )
+            return
+
+        raw = (update.message.text or "").strip()
+        t0  = time.perf_counter()
+
+        from src.services.bot_intent import classify_natural_intent
+        from src.services.bot_orchestrator_chat import orchestrator_chat_reply
+
+        intent = classify_natural_intent(raw)
+
+        if intent["route"] == "command":
+            ctx.args = intent.get("args", [])
+            c = intent["command"]
+            if c == "portfolio":
+                await self.cmd_portfolio(update, ctx)
+            elif c == "performance":
+                await self.cmd_performance(update, ctx)
+            elif c == "history":
+                await self.cmd_history(update, ctx)
+            elif c == "trade":
+                await self.cmd_trade(update, ctx)
+            elif c == "close":
+                await self.cmd_close(update, ctx)
+            return
+
+        await update.message.chat.send_action(ChatAction.TYPING)
+        try:
+            text = await orchestrator_chat_reply(str(user.id), intent["message"])
+            status_str = "success"
+        except Exception as exc:
+            logger.error("handle_message chat error for user %s: %s", user.id, exc)
+            text = "❌ Could not get an AI response right now. Try again in a moment."
+            status_str = "error"
+
+        ms = int((time.perf_counter() - t0) * 1000)
+        for chunk in _chunk(text):
+            await self._reply(update, chunk)
+        await self._log(
+            tg_id,
+            "message",
+            "free_text",
+            raw,
+            text,
+            status_str,
+            user_id=user.id,
+            response_time_ms=ms,
+        )
 
     # ── Outbound: trade alert ─────────────────────────────────────────────────
 

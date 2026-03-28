@@ -612,13 +612,10 @@ async def test_chat_returns_ai_response():
     svc  = _wa_service()
     user = _fake_user()
 
-    mock_agent = AsyncMock()
-    mock_agent.respond = AsyncMock(
-        return_value={"response": "BTC looks bullish based on current RSI."}
-    )
-
-    with patch("src.agents.core.conversation_agent.ConversationAgent",
-               return_value=mock_agent):
+    with patch(
+        "src.services.bot_orchestrator_chat.orchestrator_chat_reply",
+        new=AsyncMock(return_value="BTC looks bullish based on current RSI."),
+    ):
         text = await svc._cmd_chat(user, "Should I buy Bitcoin?")
 
     assert "rsi" in text.lower() or "bullish" in text.lower()
@@ -632,11 +629,11 @@ async def test_chat_response_truncated_at_1600():
     send_mock = AsyncMock()
 
     long_response = "A" * 2500
-    mock_agent    = AsyncMock()
-    mock_agent.respond = AsyncMock(return_value={"response": long_response})
 
-    with patch("src.agents.core.conversation_agent.ConversationAgent",
-               return_value=mock_agent), \
+    with patch(
+        "src.services.bot_orchestrator_chat.orchestrator_chat_reply",
+        new=AsyncMock(return_value=long_response),
+    ), \
          patch.object(svc, "send_message",     new=send_mock), \
          patch.object(svc, "_log",             new=AsyncMock()), \
          patch.object(svc, "_get_linked_user", new=AsyncMock(return_value=user)):
@@ -645,6 +642,45 @@ async def test_chat_response_truncated_at_1600():
     sent: str = send_mock.call_args[0][1]
     assert len(sent) <= 1600
     assert sent.endswith("...")
+
+
+@pytest.mark.asyncio
+async def test_linked_freetext_routes_to_orchestrator_not_unknown():
+    """Linked user: non-keyword message goes to orchestrator chat (not HELP)."""
+    svc       = _wa_service()
+    user      = _fake_user()
+    send_mock = AsyncMock()
+
+    with patch.object(svc, "_get_linked_user", new=AsyncMock(return_value=user)), \
+         patch.object(svc, "send_message", new=send_mock), \
+         patch.object(svc, "_log", new=AsyncMock()), \
+         patch(
+             "src.services.bot_orchestrator_chat.orchestrator_chat_reply",
+             new=AsyncMock(return_value="RSI measures momentum."),
+         ):
+        await svc.handle_incoming_message(_FROM, "What is RSI?")
+
+    sent: str = send_mock.call_args[0][1]
+    assert "rsi" in sent.lower()
+    assert "unknown command" not in sent.lower()
+
+
+@pytest.mark.asyncio
+async def test_linked_natural_portfolio_dispatches_cmd_portfolio():
+    """Linked user: phrase 'show my portfolio' hits _cmd_portfolio."""
+    svc       = _wa_service()
+    user      = _fake_user()
+    send_mock = AsyncMock()
+    pf_mock   = AsyncMock(return_value="📊 No open positions.")
+
+    with patch.object(svc, "_get_linked_user", new=AsyncMock(return_value=user)), \
+         patch.object(svc, "send_message", new=send_mock), \
+         patch.object(svc, "_log", new=AsyncMock()), \
+         patch.object(svc, "_cmd_portfolio", new=pf_mock):
+        await svc.handle_incoming_message(_FROM, "show my portfolio")
+
+    pf_mock.assert_called_once_with(user)
+    assert "open positions" in send_mock.call_args[0][1].lower()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

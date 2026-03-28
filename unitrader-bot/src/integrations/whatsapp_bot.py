@@ -16,11 +16,14 @@ Supported commands (case-insensitive):
   CLOSE BTCUSDT      — Close an open position
   HISTORY            — Last 5 closed trades
   PERFORMANCE        — Win-rate and profit stats
-  CHAT <question>    — Ask the AI anything
+  CHAT <question>    — Ask the AI (same as plain chat when linked)
   ALERTS             — Coming-soon placeholder
   SETTINGS           — Deep-link to web settings
   UNLINK             — Disconnect this WhatsApp number
   HELP               — Command reference
+
+When linked, plain text that is not a known keyword is treated as chat (web-parity
+onboarding vs trading). Phrases like "show my portfolio" route to real DB commands.
 """
 
 import asyncio
@@ -106,6 +109,7 @@ class WhatsAppBotService:
         parts   = (body or "").strip().split()
         command = (parts[0] if parts else "help").lower()
         args    = parts[1:]
+        log_command = command
 
         t0   = time.perf_counter()
         user = await self._get_linked_user(phone)
@@ -135,16 +139,45 @@ class WhatsAppBotService:
                 response = await self._cmd_unlink(user, phone)
             elif command == "help":
                 response = self._cmd_help()
+            elif user:
+                from src.services.bot_intent import classify_natural_intent
+                from src.services.bot_orchestrator_chat import orchestrator_chat_reply
+
+                full = (body or "").strip()
+                intent = classify_natural_intent(full)
+                if intent["route"] == "command":
+                    log_command = intent["command"]
+                    subargs = intent.get("args", [])
+                    c = intent["command"]
+                    if c == "portfolio":
+                        response = await self._cmd_portfolio(user)
+                    elif c == "trade":
+                        response = await self._cmd_trade(user, subargs)
+                    elif c == "close":
+                        response = await self._cmd_close(user, subargs)
+                    elif c == "history":
+                        response = await self._cmd_history(user)
+                    elif c == "performance":
+                        response = await self._cmd_performance(user)
+                    else:
+                        response = await orchestrator_chat_reply(str(user.id), full)
+                else:
+                    log_command = "chat"
+                    response = await orchestrator_chat_reply(
+                        str(user.id), intent["message"]
+                    )
             else:
                 response = (
-                    "Unknown command.\n\n"
-                    "Send HELP to see all available commands."
+                    "I don't recognise that command.\n\n"
+                    "Send START to link your account, or HELP for commands."
                 )
 
             status = "success"
 
         except Exception as exc:
-            logger.error("WhatsApp handler error [%s] from %s: %s", command, phone, exc)
+            logger.error(
+                "WhatsApp handler error [%s] from %s: %s", log_command, phone, exc
+            )
             response = "An error occurred. Please try again in a moment."
             status   = "error"
 
@@ -154,7 +187,7 @@ class WhatsAppBotService:
         await self._log(
             external_user_id=phone,
             message_type="command",
-            command=command,
+            command=log_command,
             user_message=body,
             bot_response=response,
             status=status,
@@ -172,6 +205,7 @@ class WhatsAppBotService:
                 "PORTFOLIO — open positions\n"
                 "TRADE BUY BTCUSDT 1.5 — execute trade\n"
                 "PERFORMANCE — your stats\n"
+                "Or ask in plain English (e.g. show my portfolio).\n"
                 "HELP — all commands"
             )
         return (
@@ -480,12 +514,14 @@ class WhatsAppBotService:
         if not user:
             return "Send START to link your account first."
         if not question.strip():
-            return "Usage: CHAT Should I buy Bitcoin now?"
+            return (
+                "Ask a question here or send: CHAT <your question>\n\n"
+                "When linked, you can also type naturally without CHAT."
+            )
 
-        from src.agents.core.conversation_agent import ConversationAgent
-        agent    = ConversationAgent(user_id=user.id)
-        response = await agent.respond(question)
-        return response.get("response", "Could not get an AI response right now.")
+        from src.services.bot_orchestrator_chat import orchestrator_chat_reply
+
+        return await orchestrator_chat_reply(str(user.id), question)
 
     async def _cmd_alerts(self, user: User | None) -> str:
         if not user:
@@ -538,6 +574,8 @@ class WhatsAppBotService:
             "HISTORY — last 5 closed trades\n"
             "PERFORMANCE — win rate & stats\n"
             "CHAT <question> — ask your AI\n\n"
+            "When your account is linked, you can type questions directly "
+            "(e.g. What is RSI?, show my open positions).\n\n"
             "SETTINGS — manage settings\n"
             "ALERTS — price alert setup\n\n"
             "LINK CODE — link to Unitrader\n"
@@ -548,7 +586,7 @@ class WhatsAppBotService:
             "TRADE BUY BTCUSDT 1.5\n"
             "CLOSE BTCUSDT\n"
             "CHAT Should I buy Bitcoin?\n\n"
-            "Help: unitrader.com/help"
+            f"Help: {settings.frontend_url.rstrip('/')}/help"
         )
 
     # ── Outbound: trade alert ─────────────────────────────────────────────────

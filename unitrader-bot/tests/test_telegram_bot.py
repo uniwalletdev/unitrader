@@ -500,22 +500,60 @@ async def test_chat_no_question():
 
 @pytest.mark.asyncio
 async def test_chat_with_question():
-    """/chat forwards the question to ConversationAgent and replies."""
+    """/chat forwards the question through the orchestrator and replies."""
     svc  = _bot_service()
     user = _fake_user()
     upd  = _update("/chat Should I buy Bitcoin?")
 
-    mock_agent = AsyncMock()
-    mock_agent.respond = AsyncMock(return_value={"response": "Based on current RSI levels, I suggest waiting."})
-
     with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)), \
-         patch("src.integrations.telegram_bot.AsyncSessionLocal"), \
          patch.object(svc, "_log", new=AsyncMock()), \
-         patch("src.agents.core.conversation_agent.ConversationAgent", return_value=mock_agent):
+         patch(
+             "src.services.bot_orchestrator_chat.orchestrator_chat_reply",
+             new=AsyncMock(return_value="Based on current RSI levels, I suggest waiting."),
+         ):
         await svc.cmd_chat(upd, _ctx(["Should", "I", "buy", "Bitcoin?"]))
 
     text = upd.message.reply_text.call_args[0][0]
     assert "rsi" in text.lower() or "waiting" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_handle_message_natural_portfolio_routes_to_cmd_portfolio():
+    """Free text 'show my portfolio' calls cmd_portfolio when linked."""
+    svc  = _bot_service()
+    user = _fake_user()
+    upd  = _update("show my portfolio")
+    mock_pf = AsyncMock()
+
+    ctx = _ctx()
+    with patch.object(svc, "_get_linked_user", new=AsyncMock(return_value=user)), \
+         patch.object(svc, "cmd_portfolio", new=mock_pf):
+        await svc.handle_message(upd, ctx)
+
+    mock_pf.assert_called_once()
+    assert mock_pf.call_args[0][0] is upd
+
+
+@pytest.mark.asyncio
+async def test_handle_message_freetext_calls_orchestrator():
+    """Free text that is not a structured intent uses orchestrator chat."""
+    svc        = _bot_service()
+    user       = _fake_user()
+    upd        = _update("What is RSI?")
+    mock_reply = AsyncMock()
+
+    with patch.object(svc, "_get_linked_user", new=AsyncMock(return_value=user)), \
+         patch.object(svc, "_log", new=AsyncMock()), \
+         patch.object(svc, "_reply", new=mock_reply), \
+         patch(
+             "src.services.bot_orchestrator_chat.orchestrator_chat_reply",
+             new=AsyncMock(return_value="RSI is a momentum oscillator."),
+         ):
+        await svc.handle_message(upd, _ctx())
+
+    mock_reply.assert_called()
+    last_text = mock_reply.call_args_list[-1][0][1]
+    assert "rsi" in last_text.lower()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
