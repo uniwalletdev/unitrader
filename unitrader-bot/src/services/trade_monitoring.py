@@ -429,6 +429,10 @@ async def _enforce_loss_limits_impl(user_id: str) -> dict:
             except Exception:
                 pass
 
+    balance = float(balance or 0.0)
+    # Fiat-only Coinbase (e.g. GBP cash, no USD) reports 0 — pct limits & logs must not divide by zero
+    balance_basis = max(balance, 1.0)
+
     async with AsyncSessionLocal() as db:
         async def _sum_losses(since: datetime) -> float:
             result = await db.execute(
@@ -460,9 +464,9 @@ async def _enforce_loss_limits_impl(user_id: str) -> dict:
         max_weekly_pct = limits["weekly_pct"]
         max_monthly_pct = limits["monthly_pct"]
 
-        max_daily = balance * (max_daily_pct / 100)
-        max_weekly = balance * (max_weekly_pct / 100)
-        max_monthly = balance * (max_monthly_pct / 100)
+        max_daily = balance_basis * (max_daily_pct / 100)
+        max_weekly = balance_basis * (max_weekly_pct / 100)
+        max_monthly = balance_basis * (max_monthly_pct / 100)
 
         action = "none"
 
@@ -471,19 +475,19 @@ async def _enforce_loss_limits_impl(user_id: str) -> dict:
             await _close_all_positions(db, user_id)
             logger.warning(
                 "Monthly loss limit hit for user %s (class=%s): %.2f%% lost — all positions closed",
-                user_id, trader_class, (monthly_loss / balance * 100)
+                user_id, trader_class, (monthly_loss / balance_basis * 100)
             )
         elif weekly_loss >= max_weekly:
             action = "reduce_weekly"
             logger.warning(
                 "Weekly loss limit hit for user %s (class=%s): %.2f%% lost — reducing sizes",
-                user_id, trader_class, (weekly_loss / balance * 100)
+                user_id, trader_class, (weekly_loss / balance_basis * 100)
             )
         elif daily_loss >= max_daily:
             action = "halt_daily"
             logger.warning(
                 "Daily loss limit hit for user %s (class=%s): %.2f%% lost — halting trades",
-                user_id, trader_class, (daily_loss / balance * 100)
+                user_id, trader_class, (daily_loss / balance_basis * 100)
             )
 
         await db.commit()
@@ -594,6 +598,8 @@ async def detect_anomalies(user_id: str) -> dict:
                         "action_taken": "no_action_taken",
                     }
 
+    balance = float(balance or 0.0)
+
     async with AsyncSessionLocal() as db:
         # Rapid loss: more than 3% of balance lost in the last hour
         result = await db.execute(
@@ -604,20 +610,21 @@ async def detect_anomalies(user_id: str) -> dict:
             )
         )
         hourly_loss = float(result.scalar() or 0)
-        rapid_loss_threshold = balance * 0.03
-
-        if hourly_loss >= rapid_loss_threshold:
-            await _close_all_positions(db, user_id)
-            await db.commit()
-            logger.warning(
-                "CIRCUIT BREAKER: rapid loss $%.2f in 1h for user %s — all positions closed",
-                hourly_loss, user_id,
-            )
-            return {
-                "anomaly_detected": True,
-                "type": "rapid_loss",
-                "action_taken": "all_positions_closed",
-            }
+        # balance==0 (e.g. fiat-only wallet) made threshold 0 so 0>=0 fired spurious circuit breaker
+        if balance > 0:
+            rapid_loss_threshold = balance * 0.03
+            if hourly_loss >= rapid_loss_threshold:
+                await _close_all_positions(db, user_id)
+                await db.commit()
+                logger.warning(
+                    "CIRCUIT BREAKER: rapid loss $%.2f in 1h for user %s — all positions closed",
+                    hourly_loss, user_id,
+                )
+                return {
+                    "anomaly_detected": True,
+                    "type": "rapid_loss",
+                    "action_taken": "all_positions_closed",
+                }
 
         # Unusual trading frequency: more than 20 trades in 1 hour
         count_result = await db.execute(
