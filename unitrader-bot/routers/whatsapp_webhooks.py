@@ -70,6 +70,23 @@ async def whatsapp_webhook(
 
     Signature validation is enforced in production; skipped in development.
     """
+    # #region agent log H-A/H-B/H-C — did Twilio actually reach our server?
+    import json as _json, os as _os
+    _log_path = "debug-026d4d.log"
+    def _dbg(msg, data, hyp):
+        import time as _t
+        entry = {"sessionId":"026d4d","hypothesisId":hyp,"location":"whatsapp_webhooks.py:webhook","message":msg,"data":data,"timestamp":int(_t.time()*1000)}
+        with open(_log_path, "a") as _f: _f.write(_json.dumps(entry)+"\n")
+    _dbg("webhook_hit", {
+        "svc_initialized": _whatsapp_bot_service is not None,
+        "is_production": settings.is_production,
+        "api_base_url": settings.api_base_url,
+        "has_twilio_sig": x_twilio_signature is not None,
+        "method": request.method,
+        "url": str(request.url),
+    }, "H-A,H-B,H-C")
+    # #endregion
+
     svc = _whatsapp_bot_service
     if not svc:
         # Bot not initialised — still return 200 to prevent Twilio retries
@@ -85,7 +102,15 @@ async def whatsapp_webhook(
             validator    = RequestValidator(settings.twilio_auth_token)
             webhook_url  = f"{settings.api_base_url}/webhooks/whatsapp"
             form_dict    = dict(form)
-            if not validator.validate(webhook_url, form_dict, x_twilio_signature or ""):
+            sig_valid    = validator.validate(webhook_url, form_dict, x_twilio_signature or "")
+            # #region agent log H-D/H-E — signature validation result
+            _dbg("sig_validation", {
+                "webhook_url_used": webhook_url,
+                "sig_valid": sig_valid,
+                "sig_header_present": x_twilio_signature is not None,
+            }, "H-D,H-E")
+            # #endregion
+            if not sig_valid:
                 logger.warning("Invalid Twilio signature on WhatsApp webhook")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -100,6 +125,10 @@ async def whatsapp_webhook(
 
     from_field   = form.get("From", "")
     message_body = form.get("Body", "").strip()
+
+    # #region agent log H-C — confirm message processing reached
+    _dbg("msg_received", {"from": from_field, "body_len": len(message_body)}, "H-C")
+    # #endregion
 
     if not from_field:
         return {"status": "ok"}   # empty update — ignore
