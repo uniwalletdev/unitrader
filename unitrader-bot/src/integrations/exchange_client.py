@@ -11,6 +11,7 @@ import hmac
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections import defaultdict
 from typing import Any
 from urllib.parse import urlencode
 
@@ -650,68 +651,106 @@ class CoinbaseClient(BaseExchangeClient):
         resp.raise_for_status()
         return resp.json()
 
+    async def _list_all_brokerage_accounts(self) -> list[dict]:
+        """Fetch every wallet; the list-accounts endpoint is cursor-paginated."""
+        all_rows: list[dict] = []
+        cursor: str | None = None
+        while True:
+            params: dict[str, str] = {"limit": "250"}
+            if cursor:
+                params["cursor"] = cursor
+            data = await _with_retry(self._get, "/api/v3/brokerage/accounts", params)
+            all_rows.extend(data.get("accounts", []))
+            if not data.get("has_next"):
+                break
+            cursor = data.get("cursor")
+            if not cursor:
+                break
+        return all_rows
+
+    @staticmethod
+    def _account_quantity(acct: dict) -> tuple[str, float]:
+        """Return (currency, quantity) using available + hold when Coinbase exposes hold."""
+        currency = (acct.get("currency") or "").strip().upper()
+        if not currency:
+            return "", 0.0
+        avail = acct.get("available_balance") or {}
+        qty = float(avail.get("value", 0) or 0)
+        hold = acct.get("hold")
+        if isinstance(hold, dict):
+            qty += float(hold.get("value", 0) or 0)
+        return currency, qty
+
     async def get_account_balance(self) -> float:
         """Return total portfolio value in USD across all Coinbase wallets.
 
-        Sums USD/USDC directly. For crypto holdings (BTC, ETH, SOL, etc.)
-        fetches the current spot price and multiplies by the held quantity so
-        the dashboard shows true portfolio value, not just the cash balance.
+        - Paginates list-accounts so no wallet is dropped.
+        - USD / USDC / USDT count at face value.
+        - Other fiat (GBP, EUR, …) converts via {CCY}-USD spot (same as Coinbase app cash).
+        - Crypto is valued via best_bid_ask or public spot fallback.
         """
-        data = await _with_retry(self._get, "/api/v3/brokerage/accounts")
-        accounts = data.get("accounts", [])
+        accounts = await self._list_all_brokerage_accounts()
 
-        # Fiat currencies that Coinbase holds as cash — never price via brokerage API
-        _FIAT = {"USD", "USDC", "USDT", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD", "SGD", "HKD"}
+        # ISO-style cash balances Coinbase uses; excludes crypto tickers.
+        _FIAT_ISO = frozenset(
+            "EUR GBP JPY AUD CAD CHF NZD SGD HKD MXN SEK NOK DKK PLN CZK HUF "
+            "RON BGN ISK TRY ZAR BRL ILS AED SAR CNY INR PHP IDR MYR THB KRW "
+            "TWD HRK RUB".split()
+        )
 
-        # Separate cash from crypto
-        total = 0.0
-        crypto_holdings: list[tuple[str, float]] = []  # (currency, amount)
-
+        by_ccy: dict[str, float] = defaultdict(float)
         for acct in accounts:
-            currency = acct.get("currency", "")
-            amount = float(acct.get("available_balance", {}).get("value", 0) or 0)
-            if amount <= 0:
+            currency, amount = self._account_quantity(acct)
+            if amount <= 0 or not currency:
                 continue
+            by_ccy[currency] += amount
+
+        total = 0.0
+        to_price: list[tuple[str, float]] = []  # (currency, amount) → USD
+
+        for currency, amount in by_ccy.items():
             if currency in ("USD", "USDC", "USDT"):
                 total += amount
-            elif currency in _FIAT:
-                # Non-USD fiat (e.g. GBP) — skip; not a tradeable crypto position
-                pass
-            elif currency:
-                crypto_holdings.append((currency, amount))
+            elif currency in _FIAT_ISO:
+                to_price.append((currency, amount))
+            else:
+                to_price.append((currency, amount))
 
-        # Convert crypto holdings to USD using Coinbase spot prices
-        if crypto_holdings:
-            async def _price_one(currency: str, amount: float) -> float:
-                try:
-                    url = f"/api/v3/brokerage/best_bid_ask"
-                    product_id = f"{currency}-USD"
-                    resp = await self._get(url, {"product_ids": product_id})
-                    books = resp.get("pricebooks", [])
-                    if books:
-                        asks = books[0].get("asks", [])
-                        bids = books[0].get("bids", [])
-                        ask_p = float(asks[0]["price"]) if asks else 0.0
-                        bid_p = float(bids[0]["price"]) if bids else 0.0
-                        price = (ask_p + bid_p) / 2 if ask_p and bid_p else (ask_p or bid_p)
-                        return amount * price
-                except Exception:
-                    pass
-                # Fallback: Coinbase public API (no auth)
-                try:
-                    import httpx as _httpx
-                    async with _httpx.AsyncClient(timeout=5.0) as c:
-                        r = await c.get(f"https://api.coinbase.com/v2/prices/{currency}-USD/spot")
-                        if r.status_code == 200:
-                            price = float(r.json().get("data", {}).get("amount", 0))
-                            return amount * price
-                except Exception:
-                    pass
+        async def _to_usd(currency: str, amount: float) -> float:
+            if amount <= 0:
                 return 0.0
+            product_id = f"{currency}-USD"
+            try:
+                resp = await self._get(
+                    "/api/v3/brokerage/best_bid_ask", {"product_ids": product_id}
+                )
+                books = resp.get("pricebooks", [])
+                if books:
+                    asks = books[0].get("asks", [])
+                    bids = books[0].get("bids", [])
+                    ask_p = float(asks[0]["price"]) if asks else 0.0
+                    bid_p = float(bids[0]["price"]) if bids else 0.0
+                    mid = (ask_p + bid_p) / 2 if ask_p and bid_p else (ask_p or bid_p)
+                    if mid > 0:
+                        return amount * mid
+            except Exception:
+                pass
+            try:
+                async with httpx.AsyncClient(timeout=5.0) as c:
+                    r = await c.get(
+                        f"https://api.coinbase.com/v2/prices/{product_id}/spot"
+                    )
+                    if r.status_code == 200:
+                        price = float(r.json().get("data", {}).get("amount", 0))
+                        if price > 0:
+                            return amount * price
+            except Exception:
+                pass
+            return 0.0
 
-            import asyncio as _asyncio
-            prices = await _asyncio.gather(*[_price_one(c, a) for c, a in crypto_holdings])
-            total += sum(prices)
+        if to_price:
+            priced = await asyncio.gather(*[_to_usd(c, a) for c, a in to_price])
+            total += sum(priced)
 
         return total
 
