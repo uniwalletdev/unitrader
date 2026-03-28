@@ -46,6 +46,7 @@ desktop.ini
 
 # Node
 node_modules/
+*.tsbuildinfo
 .next/
 .next
 out/
