@@ -2,7 +2,8 @@
 routers/whatsapp_webhooks.py — Twilio WhatsApp webhook + account-linking API.
 
 Endpoints:
-    POST /webhooks/whatsapp                    — Receive updates from Twilio
+    GET  /webhooks/whatsapp                    — Probe (200) — confirms traffic reaches the app
+    POST /webhooks/whatsapp                    — Receive updates from Twilio (also POST …/whatsapp/)
     POST /api/whatsapp/generate-code           — (Authenticated) Generate a 6-digit link code
     POST /api/whatsapp/complete-link           — (Authenticated) Complete a bot-initiated link
     GET  /api/whatsapp/link-status             — (Authenticated) Check link status
@@ -10,8 +11,13 @@ Endpoints:
 
 Twilio request validation:
   In production, every inbound webhook is verified using the X-Twilio-Signature
-  HMAC header.  Validation is skipped in development (ENVIRONMENT != production)
-  so you can test with curl / ngrok without needing a real signature.
+  HMAC header. The signed URL is taken from X-Forwarded-Proto / Host (Railway),
+  not API_BASE_URL, so the hostname Twilio calls must match what the edge forwards.
+
+Railway: if Twilio shows 404 with body "Application not found" and header
+  x-railway-fallback: true, the edge did not reach this process — check the
+  service has a public domain, deployment is healthy, and GET /webhooks/whatsapp
+  returns 200 from the same host you configured in Twilio.
 """
 
 import logging
@@ -32,6 +38,28 @@ from routers.auth import get_current_user
 logger = logging.getLogger(__name__)
 
 _PLATFORM = "whatsapp"
+
+
+def _twilio_webhook_request_url(request: Request) -> str:
+    """Rebuild the exact public URL Twilio POSTed to (required for signature validation).
+
+    Railway sets X-Forwarded-Proto and Host; if we use API_BASE_URL here and it is wrong
+    or out of date, validation fails with 403. The request headers are authoritative.
+    """
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "https")
+    proto = proto.split(",")[0].strip()
+    host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or ""
+    )
+    host = host.split(",")[0].strip()
+    if not host:
+        host = request.url.netloc
+    path = request.url.path
+    qs = request.url.query
+    base = f"{proto}://{host}{path}"
+    return f"{base}?{qs}" if qs else base
 
 # ─────────────────────────────────────────────
 # Bot singleton reference (set from main.py)
@@ -58,10 +86,21 @@ linking_router = APIRouter(prefix="/api/whatsapp", tags=["WhatsApp Linking"])
 
 
 # ─────────────────────────────────────────────
-# POST /webhooks/whatsapp
+# GET /webhooks/whatsapp — probe (browser / uptime); Twilio uses POST only for messages
+# ─────────────────────────────────────────────
+
+@webhook_router.get("/whatsapp", include_in_schema=False)
+async def whatsapp_webhook_probe():
+    """Lightweight 200 so operators can verify the route reaches the app (not Railway edge 404)."""
+    return {"status": "ok", "webhook": "whatsapp"}
+
+
+# ─────────────────────────────────────────────
+# POST /webhooks/whatsapp  (+ trailing slash so proxies do not 307 POST away)
 # ─────────────────────────────────────────────
 
 @webhook_router.post("/whatsapp", include_in_schema=False)
+@webhook_router.post("/whatsapp/", include_in_schema=False)
 async def whatsapp_webhook(
     request: Request,
     x_twilio_signature: str | None = Header(default=None, alias="X-Twilio-Signature"),
@@ -83,7 +122,7 @@ async def whatsapp_webhook(
         try:
             from twilio.request_validator import RequestValidator
             validator    = RequestValidator(settings.twilio_auth_token)
-            webhook_url  = f"{settings.api_base_url}/webhooks/whatsapp"
+            webhook_url  = _twilio_webhook_request_url(request)
             form_dict    = dict(form)
             sig_valid    = validator.validate(webhook_url, form_dict, x_twilio_signature or "")
             if not sig_valid:
