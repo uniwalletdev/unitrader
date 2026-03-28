@@ -43,9 +43,6 @@ _whatsapp_bot_service = None
 def set_whatsapp_bot_service(service) -> None:
     global _whatsapp_bot_service
     _whatsapp_bot_service = service
-    # #region agent log H-A — confirm bot service was set at startup
-    logger.info("[DBG-026d4d] WA-SVC-SET service=%s", service is not None)
-    # #endregion
 
 
 def get_whatsapp_bot_service():
@@ -73,22 +70,9 @@ async def whatsapp_webhook(
 
     Signature validation is enforced in production; skipped in development.
     """
-    # #region agent log H-A/H-B/H-C — did Twilio actually reach our FastAPI server?
-    logger.info(
-        "[DBG-026d4d] WA-WEBHOOK-HIT svc=%s is_prod=%s api_base=%s has_sig=%s url=%s",
-        _whatsapp_bot_service is not None,
-        settings.is_production,
-        settings.api_base_url,
-        x_twilio_signature is not None,
-        str(request.url),
-    )
-    # #endregion
-
     svc = _whatsapp_bot_service
     if not svc:
-        # #region agent log H-B — bot not initialised (missing Twilio env vars)
-        logger.info("[DBG-026d4d] WA-WEBHOOK-NO-SVC — bot service is None, returning 200")
-        # #endregion
+        # Bot not initialised — still return 200 to prevent Twilio retries
         return {"status": "ok"}
 
     # ── Parse Twilio form-data payload ────────────────────────────────────────
@@ -102,12 +86,6 @@ async def whatsapp_webhook(
             webhook_url  = f"{settings.api_base_url}/webhooks/whatsapp"
             form_dict    = dict(form)
             sig_valid    = validator.validate(webhook_url, form_dict, x_twilio_signature or "")
-            # #region agent log H-D/H-E — signature validation result
-            logger.info(
-                "[DBG-026d4d] WA-SIG-CHECK valid=%s url_used=%s sig_present=%s",
-                sig_valid, webhook_url, x_twilio_signature is not None,
-            )
-            # #endregion
             if not sig_valid:
                 logger.warning("Invalid Twilio signature on WhatsApp webhook")
                 raise HTTPException(
@@ -123,10 +101,6 @@ async def whatsapp_webhook(
 
     from_field   = form.get("From", "")
     message_body = form.get("Body", "").strip()
-
-    # #region agent log H-C — confirm message body parsed
-    logger.info("[DBG-026d4d] WA-MSG-PARSED from=%s body_len=%d", from_field, len(message_body))
-    # #endregion
 
     if not from_field:
         return {"status": "ok"}   # empty update — ignore

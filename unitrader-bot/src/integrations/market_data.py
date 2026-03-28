@@ -75,8 +75,8 @@ def classify_asset(symbol: str) -> str:
         logger.debug("Classified %s as crypto (base: %s)", symbol, base)
         return "crypto"
 
-    # Check if it's a known forex pair
-    normalized = clean.replace("_", "/")
+    # Check if it's a known forex pair (handle EUR/USD, EUR_USD, and EUR-USD formats)
+    normalized = clean.replace("_", "/").replace("-", "/")
     if normalized in FOREX_PAIRS:
         logger.debug("Classified %s as forex", symbol)
         return "forex"

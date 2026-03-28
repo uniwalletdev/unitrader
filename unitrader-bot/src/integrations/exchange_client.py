@@ -660,6 +660,9 @@ class CoinbaseClient(BaseExchangeClient):
         data = await _with_retry(self._get, "/api/v3/brokerage/accounts")
         accounts = data.get("accounts", [])
 
+        # Fiat currencies that Coinbase holds as cash — never price via brokerage API
+        _FIAT = {"USD", "USDC", "USDT", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD", "SGD", "HKD"}
+
         # Separate cash from crypto
         total = 0.0
         crypto_holdings: list[tuple[str, float]] = []  # (currency, amount)
@@ -671,7 +674,10 @@ class CoinbaseClient(BaseExchangeClient):
                 continue
             if currency in ("USD", "USDC", "USDT"):
                 total += amount
-            elif currency and currency not in ("", "USD"):
+            elif currency in _FIAT:
+                # Non-USD fiat (e.g. GBP) — skip; not a tradeable crypto position
+                pass
+            elif currency:
                 crypto_holdings.append((currency, amount))
 
         # Convert crypto holdings to USD using Coinbase spot prices
