@@ -329,8 +329,8 @@ async def _fetch_alpaca_crypto(symbol: str) -> dict:
             )
         raise
 
-    quotes = quote_resp.json().get("quotes", {}).get(symbol, {})
-    bars_data = bars_resp.json().get("bars", {}).get(symbol, [])
+    quotes = (quote_resp.json() or {}).get("quotes", {}).get(symbol, {})
+    bars_data = (bars_resp.json() or {}).get("bars", {}).get(symbol, [])
     ap = float(quotes.get("ap", 0) or 0)
     bp = float(quotes.get("bp", 0) or 0)
     price = (ap + bp) / 2 if (ap or bp) else 0.0
@@ -397,8 +397,8 @@ async def _fetch_alpaca_stock(symbol: str) -> dict:
             )
         raise
 
-    quote = quote_resp.json().get("quote", {})
-    bars = bars_resp.json().get("bars", [])
+    quote = (quote_resp.json() or {}).get("quote", {})
+    bars = (bars_resp.json() or {}).get("bars", [])
     price = (float(quote.get("ap", 0)) + float(quote.get("bp", 0))) / 2
 
     high_24h = low_24h = price
@@ -497,7 +497,7 @@ async def _fetch_alpaca_crypto_closes(symbol: str, limit: int) -> list[float]:
             params={"symbols": symbol, "timeframe": "5Min", "limit": limit},
         )
         resp.raise_for_status()
-    bars = resp.json().get("bars", {}).get(symbol, [])
+    bars = (resp.json() or {}).get("bars", {}).get(symbol, []) or []
     return [float(b["c"]) for b in bars]
 
 
@@ -514,7 +514,7 @@ async def _fetch_alpaca_stock_closes(symbol: str, limit: int) -> list[float]:
             params={"timeframe": "5Min", "limit": limit},
         )
         resp.raise_for_status()
-    return [float(b["c"]) for b in resp.json().get("bars", [])]
+    return [float(b["c"]) for b in (resp.json() or {}).get("bars", []) or []]
 
 
 async def _fetch_oanda_closes(symbol: str, limit: int) -> list[float]:

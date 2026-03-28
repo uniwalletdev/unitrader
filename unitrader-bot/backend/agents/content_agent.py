@@ -137,7 +137,6 @@ class ContentAgent:
                 slug=slug,
                 topic=topic,
                 category="learning",
-                related_concept=concept if topic == "concept_explanation" else None,
                 content=content,
                 seo_keywords=None,
                 estimated_read_time=read_mins,
@@ -157,6 +156,5 @@ class ContentAgent:
                 "category": post.category,
                 "reading_time_minutes": post.estimated_read_time,
                 "word_count": post.word_count,
-                "related_concept": post.related_concept,
                 "created_at": post.created_at.isoformat() if post.created_at else None,
             }

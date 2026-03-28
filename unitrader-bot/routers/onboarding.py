@@ -25,16 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/onboarding", tags=["Onboarding"])
 
 
-@router.get("/trust-ladder")
-async def get_trust_ladder(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Return trust ladder status for the current user.
-
-    Minimal shape for frontend:
-      { stage, paperEnabled, canAdvance, daysAtStage, paperTradesCount, maxAmountGbp }
-    """
+async def _trust_ladder_data(current_user: User, db: AsyncSession) -> dict:
     result = await db.execute(
         select(UserSettings).where(UserSettings.user_id == current_user.id)
     )
@@ -42,7 +33,6 @@ async def get_trust_ladder(
     stage = 1
     if s and getattr(s, "risk_disclosure_accepted", False):
         stage = 2
-    # Frontend can decide the rest; keep conservative defaults.
     max_amount = 25 if stage <= 2 else 500
     return {
         "stage": stage,
@@ -52,6 +42,24 @@ async def get_trust_ladder(
         "paperTradesCount": 0,
         "maxAmountGbp": max_amount,
     }
+
+
+@router.get("/trust-ladder")
+async def get_trust_ladder(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return trust ladder status for the current user."""
+    return await _trust_ladder_data(current_user, db)
+
+
+@router.get("/trust-ladder/status")
+async def get_trust_ladder_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Alias of /trust-ladder — some frontend versions call this path."""
+    return await _trust_ladder_data(current_user, db)
 
 
 # ─────────────────────────────────────────────

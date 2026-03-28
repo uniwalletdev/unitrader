@@ -663,14 +663,17 @@ class ConversationAgent:
                 })
 
         # Persist the user message so history is complete for future turns
-        async with AsyncSessionLocal() as _db:
-            user_om = OnboardingMessage(
-                user_id=self.user_id,
-                role="user",
-                content=user_message,
-            )
-            _db.add(user_om)
-            await _db.commit()
+        try:
+            async with AsyncSessionLocal() as _db:
+                user_om = OnboardingMessage(
+                    user_id=self.user_id,
+                    role="user",
+                    content=user_message,
+                )
+                _db.add(user_om)
+                await _db.commit()
+        except Exception as _save_err:
+            logger.warning("onboarding_chat: could not save user message: %s", _save_err)
 
         # Add the current user message to the Claude context
         messages.append({"role": "user", "content": user_message})
@@ -754,15 +757,25 @@ class ConversationAgent:
             elif block.type == "tool_use":
                 tool_calls.append(block)
 
-        # Save the assistant's message (role must match onboarding_messages_role_check)
-        async with AsyncSessionLocal() as _db:
-            om = OnboardingMessage(
-                user_id=self.user_id,
-                role="assistant",
-                content=assistant_message,
+        # Save the assistant's message — wrapped so a DB constraint mismatch never
+        # crashes the chat response.  Run `ALTER TABLE onboarding_messages DROP
+        # CONSTRAINT onboarding_messages_role_check; ALTER TABLE onboarding_messages
+        # ADD CONSTRAINT onboarding_messages_role_check CHECK (role IN ('user',
+        # 'assistant', 'system'));` in Supabase SQL editor if saves keep failing.
+        try:
+            async with AsyncSessionLocal() as _db:
+                om = OnboardingMessage(
+                    user_id=self.user_id,
+                    role="assistant",
+                    content=assistant_message,
+                )
+                _db.add(om)
+                await _db.commit()
+        except Exception as _save_err:
+            logger.warning(
+                "onboarding_chat: could not save assistant message (constraint?): %s",
+                _save_err,
             )
-            _db.add(om)
-            await _db.commit()
 
         # Handle tool calls
         profile_data = None
@@ -797,14 +810,17 @@ class ConversationAgent:
         db: AsyncSession | None = None,
     ) -> None:
         """Save an extracted profile field to onboarding_messages and shared_memory."""
-        async with AsyncSessionLocal() as _db:
-            om = OnboardingMessage(
-                user_id=self.user_id,
-                role="system",
-                content=f"extracted:{field}={value}",
-            )
-            _db.add(om)
-            await _db.commit()
+        try:
+            async with AsyncSessionLocal() as _db:
+                om = OnboardingMessage(
+                    user_id=self.user_id,
+                    role="system",
+                    content=f"extracted:{field}={value}",
+                )
+                _db.add(om)
+                await _db.commit()
+        except Exception as _save_err:
+            logger.warning("onboarding_chat: could not save extracted field: %s", _save_err)
 
         # Update shared_memory cache
         try:
