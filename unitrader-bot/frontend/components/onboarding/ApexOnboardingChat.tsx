@@ -22,7 +22,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, authApi } from "@/lib/api";
 import { devLog, devLogError } from "@/lib/devLog";
 
 interface Message {
@@ -313,8 +313,25 @@ export default function ApexOnboardingChat() {
       // Move to next stage
       const nextStage = currentStage + 1;
       if (nextStage >= maxStages) {
-        // Completion
-        setTimeout(() => {
+        // Wizard complete — persist to server so onboarding_complete is set
+        const allResponses = { ...userResponses, [`stage_${currentStage}`]: value };
+        const goal = allResponses["stage_0"] || undefined;
+        const risk = allResponses["stage_1"] || undefined;
+        const budget = Number(allResponses["stage_2"]) || undefined;
+        const exchange = allResponses["stage_3"] || undefined;
+
+        setTimeout(async () => {
+          try {
+            await authApi.completeWizard({
+              goal,
+              risk_level: risk,
+              budget,
+              exchange,
+              trader_class: detectedClass,
+            });
+          } catch {
+            // Non-fatal — server will still accept the route
+          }
           try {
             if (typeof window !== "undefined") {
               window.localStorage.setItem("unitrader_onboarding_chat_completed_v1", "true");
@@ -341,6 +358,19 @@ export default function ApexOnboardingChat() {
     }
   };
 
+  const [skipping, setSkipping] = useState(false);
+
+  const handleSkip = async () => {
+    if (skipping) return;
+    setSkipping(true);
+    try {
+      await authApi.skipOnboarding();
+      router.push("/trade");
+    } catch {
+      router.push("/trade");
+    }
+  };
+
   const quickReplies = getQuickReplies();
   const progressPercent = ((currentStage + 1) / maxStages) * 100;
 
@@ -350,9 +380,18 @@ export default function ApexOnboardingChat() {
       <div className="px-4 py-3 border-b border-slate-700 bg-slate-800/50">
         <div className="flex items-center justify-between mb-2">
           <h1 className="text-lg font-semibold">Welcome to Unitrader</h1>
-          <span className="text-xs text-slate-400">
-            {currentStage + 1} of {maxStages}
-          </span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleSkip}
+              disabled={skipping}
+              className="text-xs text-slate-500 hover:text-slate-300 transition-colors underline underline-offset-2"
+            >
+              {skipping ? "Skipping…" : "Skip — trade now"}
+            </button>
+            <span className="text-xs text-slate-400">
+              {currentStage + 1} of {maxStages}
+            </span>
+          </div>
         </div>
         <div className="w-full bg-slate-700 rounded-full h-1 overflow-hidden">
           <div

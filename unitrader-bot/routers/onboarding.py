@@ -4,6 +4,8 @@ routers/onboarding.py — Onboarding and user agreement endpoints.
 Endpoints:
     POST /api/onboarding/accept-risk-disclosure — Accept risk disclosure
     GET  /api/onboarding/trust-ladder          — Trust ladder status (frontend)
+    POST /api/onboarding/complete-wizard       — Mark onboarding complete after Apex wizard
+    POST /api/onboarding/skip                  — Skip onboarding using sensible defaults
 """
 
 import logging
@@ -144,3 +146,139 @@ async def accept_risk_disclosure(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to accept risk disclosure",
         )
+
+
+# ─────────────────────────────────────────────
+# POST /api/onboarding/complete-wizard
+# ─────────────────────────────────────────────
+
+class CompleteWizardRequest(BaseModel):
+    """Optional profile data gathered by Apex wizard."""
+    goal: str | None = None           # grow_savings / generate_income / learn_trading / crypto_focus
+    risk_level: str | None = None     # conservative / balanced / aggressive
+    budget: float | None = None       # GBP per trade
+    exchange: str | None = None       # alpaca / coinbase / oanda
+    trader_class: str | None = None   # detected class if available
+
+
+@router.post("/complete-wizard")
+async def complete_wizard(
+    body: CompleteWizardRequest,
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mark onboarding complete after the Apex wizard finishes.
+
+    Called by the frontend when the guided wizard reaches the last stage.
+    Persists any profile data collected and sets onboarding_complete = True,
+    which unlocks the full trading chat and trade page.
+    """
+    try:
+        result = await db.execute(
+            select(UserSettings).where(UserSettings.user_id == current_user.id)
+        )
+        settings = result.scalar_one_or_none()
+        if not settings:
+            settings = UserSettings(user_id=current_user.id)
+            db.add(settings)
+
+        settings.onboarding_complete = True
+        if body.goal:
+            settings.financial_goal = body.goal
+        if body.risk_level:
+            settings.risk_level_setting = body.risk_level
+        if body.budget is not None:
+            settings.max_trade_amount = body.budget
+        if body.trader_class:
+            settings.trader_class = body.trader_class
+
+        db.add(AuditLog(
+            user_id=current_user.id,
+            event_type="onboarding_complete",
+            event_details={
+                "source": "apex_wizard",
+                "goal": body.goal,
+                "risk_level": body.risk_level,
+                "budget": body.budget,
+                "exchange": body.exchange,
+                "trader_class": body.trader_class,
+            },
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("user-agent", "unknown"),
+        ))
+        await db.commit()
+
+        from src.agents.shared_memory import SharedMemory
+        SharedMemory.invalidate(current_user.id)
+
+        logger.info("Onboarding complete (wizard) for user %s", current_user.id)
+        return {"success": True, "onboarding_complete": True}
+
+    except Exception as exc:
+        await db.rollback()
+        logger.error("complete_wizard error for user %s: %s", current_user.id, exc)
+        raise HTTPException(status_code=500, detail="Failed to complete onboarding")
+
+
+# ─────────────────────────────────────────────
+# POST /api/onboarding/skip
+# ─────────────────────────────────────────────
+
+_SKIP_DEFAULTS = {
+    "financial_goal": "grow_savings",
+    "risk_level_setting": "balanced",
+    "max_trade_amount": 100.0,
+    "trader_class": "complete_novice",
+}
+
+
+@router.post("/skip")
+async def skip_onboarding(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Skip onboarding and apply sensible defaults so the user can trade immediately.
+
+    Marks onboarding_complete = True with conservative defaults.
+    The user can update any setting later from the settings page.
+    """
+    try:
+        result = await db.execute(
+            select(UserSettings).where(UserSettings.user_id == current_user.id)
+        )
+        settings = result.scalar_one_or_none()
+        if not settings:
+            settings = UserSettings(user_id=current_user.id)
+            db.add(settings)
+
+        # Only apply default if the field has not already been set
+        for field, default in _SKIP_DEFAULTS.items():
+            if not getattr(settings, field, None):
+                setattr(settings, field, default)
+
+        settings.onboarding_complete = True
+        db.add(AuditLog(
+            user_id=current_user.id,
+            event_type="onboarding_skipped",
+            event_details={"defaults_applied": _SKIP_DEFAULTS},
+            ip_address=request.client.host if request.client else "unknown",
+            user_agent=request.headers.get("user-agent", "unknown"),
+        ))
+        await db.commit()
+
+        from src.agents.shared_memory import SharedMemory
+        SharedMemory.invalidate(current_user.id)
+
+        logger.info("Onboarding skipped (defaults) for user %s", current_user.id)
+        return {
+            "success": True,
+            "onboarding_complete": True,
+            "message": "You're all set! Conservative defaults applied. Update them anytime in Settings.",
+        }
+
+    except Exception as exc:
+        await db.rollback()
+        logger.error("skip_onboarding error for user %s: %s", current_user.id, exc)
+        raise HTTPException(status_code=500, detail="Failed to skip onboarding")

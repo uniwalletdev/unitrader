@@ -607,6 +607,17 @@ async def execute_trade(
     a limit of 10 trades per calendar month.
     """
     try:
+        # ── Onboarding gate — skip only allowed if complete or explicitly skipped ──
+        settings_result = await db.execute(
+            select(UserSettings).where(UserSettings.user_id == current_user.id)
+        )
+        _user_settings = settings_result.scalar_one_or_none()
+        if _user_settings and not getattr(_user_settings, "onboarding_complete", True):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="onboarding_required",
+            )
+
         # ── Trade limit (free tier: 10/month) ─────────────────────────────────
         trade_check = await check_trade_limit(current_user, db)
         if not trade_check["allowed"]:

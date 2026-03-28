@@ -266,6 +266,10 @@ class UserSettingsResponse(BaseModel):
     push_token: str | None
     trader_class: str | None = None
     updated_at: datetime
+    # Onboarding state — used by /trade gate and dashboard chat routing
+    onboarding_complete: bool = False
+    financial_goal: str | None = None
+    risk_level_setting: str | None = None
     # Computed trade-size limits (from trader_class + trust ladder stage)
     min_trade_amount: float | None = None
     trade_limits: dict | None = None
@@ -290,3 +294,7 @@ class UpdateUserSettingsRequest(BaseModel):
     first_trade_done: bool | None = None
     push_token: str | None = None
     trader_class: str | None = None
+    # Onboarding fields
+    onboarding_complete: bool | None = None
+    financial_goal: str | None = None
+    risk_level_setting: str | None = None

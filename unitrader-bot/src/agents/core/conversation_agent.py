@@ -655,7 +655,7 @@ class ConversationAgent:
                 field, value = rest.split("=", 1)
                 extracted_fields[field] = value
             elif row.role in ("user", "ai", "assistant"):
-                # Claude API only accepts 'user' / 'assistant'; DB stores AI role as 'ai'
+                # DB CHECK allows user | assistant | system; accept legacy 'ai' rows if any
                 claude_role = "assistant" if row.role in ("ai", "assistant") else "user"
                 messages.append({
                     "role": claude_role,
@@ -754,12 +754,11 @@ class ConversationAgent:
             elif block.type == "tool_use":
                 tool_calls.append(block)
 
-        # Save the assistant's message to onboarding_messages
-        # DB check constraint uses 'ai' for assistant role
+        # Save the assistant's message (role must match onboarding_messages_role_check)
         async with AsyncSessionLocal() as _db:
             om = OnboardingMessage(
                 user_id=self.user_id,
-                role="ai",
+                role="assistant",
                 content=assistant_message,
             )
             _db.add(om)

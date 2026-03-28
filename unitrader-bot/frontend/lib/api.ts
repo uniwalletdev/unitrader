@@ -74,8 +74,19 @@ export const authApi = {
     approved_assets?: string[];
     first_trade_done?: boolean;
     push_token?: string;
+    onboarding_complete?: boolean;
+    financial_goal?: string;
+    risk_level_setting?: string;
   }>) => api.patch("/api/auth/settings", data),
   acceptRiskDisclosure: () => api.post("/api/onboarding/accept-risk-disclosure", {}),
+  completeWizard: (data?: {
+    goal?: string;
+    risk_level?: string;
+    budget?: number;
+    exchange?: string;
+    trader_class?: string;
+  }) => api.post("/api/onboarding/complete-wizard", data ?? {}),
+  skipOnboarding: () => api.post("/api/onboarding/skip", {}),
 };
 
 // ── Trading ──────────────────────────────────────────────────────────────────

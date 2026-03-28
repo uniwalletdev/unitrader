@@ -235,6 +235,17 @@ function TradePage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [positionsCount, setPositionsCount] = useState<number | null>(null);
 
+  // Show a one-time banner when user skipped onboarding via the escape hatch
+  const [skipBanner, setSkipBanner] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const skipped = sessionStorage.getItem("unitrader_onboarding_skipped");
+    if (skipped === "true") {
+      setSkipBanner(true);
+      sessionStorage.removeItem("unitrader_onboarding_skipped");
+    }
+  }, []);
+
   const isPaper = useMemo(() => {
     // novice/saver: paper mode until trust stage advances; else live
     if (!trust) return traderClass === "complete_novice" || traderClass === "curious_saver";
@@ -290,9 +301,32 @@ function TradePage() {
     return () => window.clearTimeout(t);
   }, [toast]);
 
-  // onboarding_complete gate: only render chat full screen
+  // onboarding_complete gate: only render Apex wizard full-screen
   if (!loading && settings?.onboarding_complete === false) {
-    return <ApexOnboardingChat />;
+    return (
+      <div className="relative">
+        <ApexOnboardingChat />
+        {/* "Skip onboarding" escape hatch for impatient traders */}
+        <div className="absolute bottom-4 right-4 z-50">
+          <button
+            className="rounded-lg border border-dark-700 bg-dark-900 px-3 py-1.5 text-xs text-dark-400 hover:text-white transition-colors"
+            onClick={async () => {
+              try {
+                await authApi.skipOnboarding();
+                if (typeof window !== "undefined") {
+                  sessionStorage.setItem("unitrader_onboarding_skipped", "true");
+                }
+                setSettings((prev) => ({ ...prev, onboarding_complete: true }));
+              } catch {
+                setSettings((prev) => ({ ...prev, onboarding_complete: true }));
+              }
+            }}
+          >
+            Skip setup — trade now
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const handleAnalyse = async () => {
@@ -316,7 +350,18 @@ function TradePage() {
   const handleConfirmedTrade = async () => {
     const sym = symbol.trim();
     if (!sym) throw new Error("Missing symbol");
-    const res = await tradingApi.execute(sym, exchange);
+    let res: Awaited<ReturnType<typeof tradingApi.execute>>;
+    try {
+      res = await tradingApi.execute(sym, exchange);
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      if (detail === "onboarding_required") {
+        // Server guard fired — clear local state and show wizard
+        setSettings((prev) => ({ ...prev, onboarding_complete: false }));
+        throw new Error("Please complete onboarding first");
+      }
+      throw e;
+    }
     const data = res.data?.data ?? res.data;
     setToast("Trade submitted");
     // Refresh positions count
@@ -384,6 +429,22 @@ function TradePage() {
               Open positions: {positionsCount}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Skip-onboarding info banner */}
+      {skipBanner && (
+        <div className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-yellow-500/20 bg-yellow-500/5 px-4 py-3 text-sm text-yellow-300">
+          <span>
+            You&apos;re trading with conservative defaults. Update your preferences anytime in{" "}
+            <a href="/settings" className="underline hover:text-yellow-100">Settings</a>.
+          </span>
+          <button
+            onClick={() => setSkipBanner(false)}
+            className="shrink-0 text-yellow-500 hover:text-yellow-200"
+          >
+            ✕
+          </button>
         </div>
       )}
 
