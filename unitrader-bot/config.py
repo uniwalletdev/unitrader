@@ -117,6 +117,14 @@ class Settings(BaseSettings):
     # ─────────────────────────────────────────────
     # Trading APIs
     # ─────────────────────────────────────────────
+    # Comma-separated list of exchanges available for user connections.
+    # Set ENABLED_EXCHANGES in Railway to add more when they're ready.
+    enabled_exchanges: str = "alpaca,coinbase"
+
+    @property
+    def enabled_exchange_list(self) -> list[str]:
+        return [e.strip().lower() for e in self.enabled_exchanges.split(",") if e.strip()]
+
     binance_api_key: str = ""
     binance_api_secret: str = ""
     binance_base_url: str = "https://api.binance.com"

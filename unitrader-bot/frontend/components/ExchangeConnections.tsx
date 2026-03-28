@@ -24,6 +24,7 @@ type ExchangeDef = {
   description: string;
   docsUrl: string;
   fields: ExchangeField[];
+  comingSoon?: boolean;
 };
 
 const EXCHANGES: ExchangeDef[] = [
@@ -35,26 +36,6 @@ const EXCHANGES: ExchangeDef[] = [
     fields: [
       { key: "api_key", label: "API Key ID", placeholder: "PK..." },
       { key: "api_secret", label: "Secret Key", placeholder: "Your Alpaca secret key" },
-    ],
-  },
-  {
-    id: "binance",
-    name: "Binance",
-    description: "Global crypto exchange — spot trading",
-    docsUrl: "https://www.binance.com/en/my/settings/api-management",
-    fields: [
-      { key: "api_key", label: "API Key", placeholder: "Your Binance API key" },
-      { key: "api_secret", label: "Secret Key", placeholder: "Your Binance secret key" },
-    ],
-  },
-  {
-    id: "oanda",
-    name: "OANDA",
-    description: "Forex & CFDs — practice & live accounts",
-    docsUrl: "https://www.oanda.com/account/",
-    fields: [
-      { key: "api_key", label: "API Token", placeholder: "Your OANDA API token" },
-      { key: "api_secret", label: "Account ID", placeholder: "Your OANDA account ID" },
     ],
   },
   {
@@ -70,6 +51,28 @@ const EXCHANGES: ExchangeDef[] = [
         placeholder: "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----",
         multiline: true,
       },
+    ],
+  },
+  {
+    id: "binance",
+    name: "Binance",
+    description: "Global crypto exchange — spot trading",
+    docsUrl: "https://www.binance.com/en/my/settings/api-management",
+    comingSoon: true,
+    fields: [
+      { key: "api_key", label: "API Key", placeholder: "Your Binance API key" },
+      { key: "api_secret", label: "Secret Key", placeholder: "Your Binance secret key" },
+    ],
+  },
+  {
+    id: "oanda",
+    name: "OANDA",
+    description: "Forex & CFDs — practice & live accounts",
+    docsUrl: "https://www.oanda.com/account/",
+    comingSoon: true,
+    fields: [
+      { key: "api_key", label: "API Token", placeholder: "Your OANDA API token" },
+      { key: "api_secret", label: "Account ID", placeholder: "Your OANDA account ID" },
     ],
   },
 ];
@@ -236,12 +239,13 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
         const active = isConnected(exchange.id);
         const connInfo = connected.find((c) => c.exchange === exchange.id);
         const expanded = expandedId === exchange.id;
+        const disabled = exchange.comingSoon && !active;
 
         return (
           <div
             key={exchange.id}
             className={`rounded-xl border bg-dark-950 transition ${
-              active ? "border-brand-500/30" : "border-dark-800"
+              active ? "border-brand-500/30" : disabled ? "border-dark-800 opacity-60" : "border-dark-800"
             }`}
           >
             {/* Header */}
@@ -254,11 +258,16 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-white">{exchange.name}</span>
+                    <span className={`text-sm font-medium ${disabled ? "text-dark-400" : "text-white"}`}>{exchange.name}</span>
                     {active && (
                       <span className="flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-[10px] font-medium text-brand-400">
                         <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
                         Connected
+                      </span>
+                    )}
+                    {disabled && (
+                      <span className="rounded-full border border-dark-700 bg-dark-900 px-2 py-0.5 text-[10px] font-medium text-dark-500">
+                        Coming Soon
                       </span>
                     )}
                   </div>
@@ -279,7 +288,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                     )}
                     Disconnect
                   </button>
-                ) : (
+                ) : disabled ? null : (
                   <button
                     onClick={() => {
                       setExpandedId(expanded ? null : exchange.id);
@@ -304,7 +313,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
             )}
 
             {/* Expansion form */}
-            {expanded && !active && (
+            {expanded && !active && !disabled && (
               <div className="border-t border-dark-800 p-3 sm:p-4">
                 {exchange.id === "coinbase" ? (
                   <>

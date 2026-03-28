@@ -115,6 +115,11 @@ async def _validate_exchange_keys(exchange: str, api_key: str, api_secret: str, 
 
     Raises HTTPException(400) on failure.
     """
+    if exchange not in settings.enabled_exchange_list:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{exchange.capitalize()} is not currently available. Coming soon.",
+        )
     try:
         if exchange == "alpaca":
             valid = await validate_alpaca_keys(api_key, api_secret, paper=is_paper)
