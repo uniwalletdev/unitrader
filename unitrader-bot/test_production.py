@@ -12,7 +12,7 @@ except ImportError:
     print("Install httpx: pip install httpx")
     sys.exit(1)
 
-BASE = os.environ.get("UNITRADER_PROD_URL", "https://unitrader-production.up.railway.app").rstrip("/")
+BASE = os.environ.get("UNITRADER_PROD_URL", "https://api.unitrader.ai").rstrip("/")
 TIMEOUT = 20.0
 TOKEN = None  # filled after login
 
@@ -172,7 +172,7 @@ if passed == total:
     print("ALL CHECKS PASS — ready for frontend deployment!")
     print()
     print("NEXT STEPS:")
-    print("  1. In Vercel: set NEXT_PUBLIC_API_URL=https://unitrader-production.up.railway.app")
+    print("  1. In Vercel: set NEXT_PUBLIC_API_URL=https://api.unitrader.ai")
     print("  2. Push frontend/ to GitHub and connect to Vercel")
     print("  3. Visit your Vercel URL, register, and test the full UI")
-    print("  4. Set up Stripe webhook: https://unitrader-production.up.railway.app/api/billing/webhook")
+    print("  4. Set up Stripe webhook: https://api.unitrader.ai/api/billing/webhook")

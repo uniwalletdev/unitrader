@@ -29,10 +29,10 @@ automatically on their behalf. Users keep all profits. Unitrader charges only th
 
 | Service | URL | Platform |
 |---|---|---|
-| Backend API | `unitrader-production.up.railway.app` | Railway |
+| Backend API | `https://api.unitrader.ai` | Railway (custom domain) |
 | Frontend | `unitraderai.vercel.app` | Vercel |
 | Database | Supabase PostgreSQL 17.6 | Supabase |
-| Custom domain (pending) | `unitrader.ai` | DNS not yet pointed |
+| Marketing / app domain (optional) | `unitrader.ai` | Point to Vercel / app as needed |
 
 ---
 
@@ -354,7 +354,7 @@ Trading agent decrypts in memory only when executing trades
 ### URGENT
 - [ ] API key rotation: keys were exposed in chat — rotate in each platform
 - [ ] Stripe webhook: configure at `dashboard.stripe.com` -> Developers -> Webhooks
-  - URL: `https://unitrader-production.up.railway.app/api/billing/webhook`
+  - URL: `https://api.unitrader.ai/api/billing/webhook`
   - Events: checkout.session.completed, customer.subscription.*, invoice.payment_*
 - [ ] Update ALPACA_BASE_URL in Railway to `https://paper-api.alpaca.markets` (no /v2)
 

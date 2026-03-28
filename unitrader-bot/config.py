@@ -143,8 +143,8 @@ class Settings(BaseSettings):
     # ─────────────────────────────────────────────
     telegram_bot_token:    str = ""
     telegram_bot_username: str = "unitrader_bot"  # e.g. unitraderAI_bot (no @)
-    # Public HTTPS URL used by both Telegram webhook and Twilio webhook.
-    # Production: https://api.unitrader.com
+    # Public HTTPS URL used for Telegram webhook registration and logs.
+    # Production (Railway): https://api.unitrader.ai  (set API_BASE_URL in Railway)
     # Development: use ngrok — ngrok http 8000 → copy the https URL
     api_base_url: str = "http://localhost:8000"
 
@@ -182,8 +182,11 @@ class Settings(BaseSettings):
     # ─────────────────────────────────────────────
     # CORS
     # ─────────────────────────────────────────────
-    # Production: set ALLOWED_ORIGINS to include frontend URL + https://unitrader-production.up.railway.app
-    allowed_origins: str = "http://localhost:3000,http://localhost:8080,https://unitrader-production.up.railway.app"
+    # Production: set ALLOWED_ORIGINS to your Vercel URL(s) + custom frontend domain if any.
+    allowed_origins: str = (
+        "http://localhost:3000,http://localhost:8080,"
+        "https://unitraderai.vercel.app,https://unitrader.ai"
+    )
 
     # ─────────────────────────────────────────────
     # Rate Limiting

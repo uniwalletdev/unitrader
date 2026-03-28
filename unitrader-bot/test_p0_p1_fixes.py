@@ -12,7 +12,7 @@ Tests:
 Run: python test_p0_p1_fixes.py
 
 Environment variables (optional):
-  UNITRADER_PROD_URL=https://unitrader-production.up.railway.app
+  UNITRADER_PROD_URL=https://api.unitrader.ai
   UNITRADER_TEST_EMAIL=your-test@example.com
   UNITRADER_TEST_PASSWORD=YourPassword123!
   ALPACA_API_KEY=your-alpaca-key (for Test 4 with real credentials)
@@ -30,8 +30,8 @@ except ImportError:
     sys.exit(1)
 
 BASE = os.environ.get(
-    "UNITRADER_PROD_URL", 
-    "https://unitrader-production.up.railway.app"
+    "UNITRADER_PROD_URL",
+    "https://api.unitrader.ai",
 ).rstrip("/")
 
 TEST_EMAIL = os.environ.get("UNITRADER_TEST_EMAIL", "your-test@example.com")

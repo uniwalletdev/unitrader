@@ -1,6 +1,6 @@
 import httpx
 
-BASE = "https://unitrader-production.up.railway.app"
+BASE = "https://api.unitrader.ai"
 
 for path in ["/health", "/health/database", "/health/ai"]:
     try:
