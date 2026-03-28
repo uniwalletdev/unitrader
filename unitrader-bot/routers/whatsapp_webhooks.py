@@ -43,6 +43,9 @@ _whatsapp_bot_service = None
 def set_whatsapp_bot_service(service) -> None:
     global _whatsapp_bot_service
     _whatsapp_bot_service = service
+    # #region agent log H-A — confirm bot service was set at startup
+    logger.info("[DBG-026d4d] WA-SVC-SET service=%s", service is not None)
+    # #endregion
 
 
 def get_whatsapp_bot_service():
@@ -70,26 +73,22 @@ async def whatsapp_webhook(
 
     Signature validation is enforced in production; skipped in development.
     """
-    # #region agent log H-A/H-B/H-C — did Twilio actually reach our server?
-    import json as _json, os as _os
-    _log_path = "debug-026d4d.log"
-    def _dbg(msg, data, hyp):
-        import time as _t
-        entry = {"sessionId":"026d4d","hypothesisId":hyp,"location":"whatsapp_webhooks.py:webhook","message":msg,"data":data,"timestamp":int(_t.time()*1000)}
-        with open(_log_path, "a") as _f: _f.write(_json.dumps(entry)+"\n")
-    _dbg("webhook_hit", {
-        "svc_initialized": _whatsapp_bot_service is not None,
-        "is_production": settings.is_production,
-        "api_base_url": settings.api_base_url,
-        "has_twilio_sig": x_twilio_signature is not None,
-        "method": request.method,
-        "url": str(request.url),
-    }, "H-A,H-B,H-C")
+    # #region agent log H-A/H-B/H-C — did Twilio actually reach our FastAPI server?
+    logger.info(
+        "[DBG-026d4d] WA-WEBHOOK-HIT svc=%s is_prod=%s api_base=%s has_sig=%s url=%s",
+        _whatsapp_bot_service is not None,
+        settings.is_production,
+        settings.api_base_url,
+        x_twilio_signature is not None,
+        str(request.url),
+    )
     # #endregion
 
     svc = _whatsapp_bot_service
     if not svc:
-        # Bot not initialised — still return 200 to prevent Twilio retries
+        # #region agent log H-B — bot not initialised (missing Twilio env vars)
+        logger.info("[DBG-026d4d] WA-WEBHOOK-NO-SVC — bot service is None, returning 200")
+        # #endregion
         return {"status": "ok"}
 
     # ── Parse Twilio form-data payload ────────────────────────────────────────
@@ -104,11 +103,10 @@ async def whatsapp_webhook(
             form_dict    = dict(form)
             sig_valid    = validator.validate(webhook_url, form_dict, x_twilio_signature or "")
             # #region agent log H-D/H-E — signature validation result
-            _dbg("sig_validation", {
-                "webhook_url_used": webhook_url,
-                "sig_valid": sig_valid,
-                "sig_header_present": x_twilio_signature is not None,
-            }, "H-D,H-E")
+            logger.info(
+                "[DBG-026d4d] WA-SIG-CHECK valid=%s url_used=%s sig_present=%s",
+                sig_valid, webhook_url, x_twilio_signature is not None,
+            )
             # #endregion
             if not sig_valid:
                 logger.warning("Invalid Twilio signature on WhatsApp webhook")
@@ -126,8 +124,8 @@ async def whatsapp_webhook(
     from_field   = form.get("From", "")
     message_body = form.get("Body", "").strip()
 
-    # #region agent log H-C — confirm message processing reached
-    _dbg("msg_received", {"from": from_field, "body_len": len(message_body)}, "H-C")
+    # #region agent log H-C — confirm message body parsed
+    logger.info("[DBG-026d4d] WA-MSG-PARSED from=%s body_len=%d", from_field, len(message_body))
     # #endregion
 
     if not from_field:
