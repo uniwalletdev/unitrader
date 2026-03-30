@@ -101,6 +101,7 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<SimResponse | null>(null);
   const [marketUnavailable, setMarketUnavailable] = useState(false);
+  const [aiPickSymbols, setAiPickSymbols] = useState<string[]>(["SPY", "VOO", "AAPL", "MSFT"]);
 
   const debounceRef = useRef<number | null>(null);
 
@@ -113,6 +114,16 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
     }
     setWelcomeRequested(getWelcomeParam());
   }, [mode]);
+
+  useEffect(() => {
+    api.get("/api/trading/ai-picks", { params: { limit: 4 } })
+      .then((res) => {
+        const picks = (res.data?.data || []) as Array<{ symbol: string }>;
+        const syms = picks.map((p) => p.symbol).filter(Boolean);
+        if (syms.length >= 2) setAiPickSymbols(syms);
+      })
+      .catch(() => {}); // silently keep hardcoded fallback
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -188,10 +199,10 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
     const yourPicks = approvedAssets.length ? approvedAssets : ["AAPL", "MSFT", "SPY"];
     return [
       { id: "your_picks", label: "Your picks", symbols: yourPicks.slice(0, 6) },
-      { id: "apex_recommends", label: "Unitrader recommends", symbols: ["SPY", "VOO", "AAPL", "MSFT"] },
+      { id: "apex_recommends", label: "Unitrader recommends", symbols: aiPickSymbols },
       { id: "crypto", label: "Crypto", symbols: ["BTC/USD", "ETH/USD"] },
     ];
-  }, [traderClass, approvedAssets]);
+  }, [traderClass, approvedAssets, aiPickSymbols]);
 
   const selectedPreset = useMemo(() => {
     return presets.find((p) => p.id === presetId) ?? presets[0] ?? null;

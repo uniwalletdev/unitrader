@@ -318,6 +318,7 @@ _SKIP_DEFAULTS = {
     "risk_level_setting": "balanced",
     "max_trade_amount": 100.0,
     "trader_class": "complete_novice",
+    "trade_mode": "picks",
 }
 
 

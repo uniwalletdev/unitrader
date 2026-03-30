@@ -380,7 +380,7 @@ class UserSettings(Base):
     # UI / Preferences
     theme: Mapped[str] = mapped_column(String(10), default="dark", nullable=False)
     explanation_level: Mapped[str] = mapped_column(String(20), default="simple", nullable=False)
-    trade_mode: Mapped[str] = mapped_column(String(20), default="guided", nullable=False)
+    trade_mode: Mapped[str] = mapped_column(String(20), default="picks", nullable=False)
 
     # Trading control
     trading_paused: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

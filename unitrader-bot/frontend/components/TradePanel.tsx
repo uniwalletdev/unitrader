@@ -294,8 +294,8 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         setTradingPaused(sRes.data.trading_paused || false);
         setMaxDailyLoss(sRes.data.max_daily_loss || 10);
         setTraderClass(sRes.data.trader_class || "complete_novice");
-        const rawMode = sRes.data.trade_mode || "auto";
-        setTradeMode(rawMode === "picks" ? "picks" : "auto");
+        const rawMode = sRes.data.trade_mode || "picks";
+        setTradeMode(rawMode === "auto" ? "auto" : "picks");
         setTrust(tRes.data?.data ?? tRes.data);
       } catch {
         if (!mounted) return;

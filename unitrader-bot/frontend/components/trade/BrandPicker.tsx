@@ -243,6 +243,7 @@ export default function BrandPicker({
   const [quickStats, setQuickStats] = useState<QuickStatsMap>({});
   const [fearGreed, setFearGreed] = useState<{ value: number; label: string } | null>(null);
   const [trending, setTrending] = useState<Array<{ symbol: string; brand: string; volume_change_pct?: number | null }>>([]);
+  const [aiFeatureItems, setAiFeatureItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
 
   const selections = selectedSymbols ?? [];
   const setSelections = (next: string[]) => {
@@ -303,14 +304,44 @@ export default function BrandPicker({
     didLockCryptoTab.current = true;
   }, [traderClass]);
 
+  // novice / saver: fetch live AI picks to power the featured row
+  useEffect(() => {
+    if (traderClass !== "complete_novice" && traderClass !== "curious_saver") return;
+    let mounted = true;
+    api.get("/api/trading/ai-picks", { params: { limit: 4 } })
+      .then((res) => {
+        const picks = (res.data?.data || []) as Array<{ symbol: string }>;
+        const BRAND_MAP: Record<string, string> = {
+          AAPL: "Apple", MSFT: "Microsoft", NVDA: "NVIDIA", TSLA: "Tesla",
+          AMZN: "Amazon", GOOGL: "Alphabet", META: "Meta",
+          SPY: "S&P 500 ETF", VOO: "Vanguard S&P 500",
+          "BTC/USD": "Bitcoin", BTCUSDT: "Bitcoin",
+          ETHUSDT: "Ethereum", SOLUSDT: "Solana",
+          EUR_USD: "EUR/USD", GBP_USD: "GBP/USD",
+        };
+        const items = picks
+          .map((p) => ({ symbol: p.symbol, brand: BRAND_MAP[p.symbol] ?? p.symbol }))
+          .filter((x) => x.symbol);
+        if (mounted && items.length >= 2) setAiFeatureItems(items);
+      })
+      .catch(() => {});
+    return () => { mounted = false; };
+  }, [traderClass]);
+
   const featuredRow = useMemo(() => {
     if (traderClass === "complete_novice") {
+      if (aiFeatureItems && aiFeatureItems.length >= 2) {
+        return { title: "AI's picks right now", items: aiFeatureItems };
+      }
       const picks = favourites.slice(0, 3).map((sym) => ({ symbol: sym, brand: sym }));
       return picks.length
         ? { title: "Unitrader's picks for you", items: picks }
         : null;
     }
     if (traderClass === "curious_saver") {
+      if (aiFeatureItems && aiFeatureItems.length >= 2) {
+        return { title: "Best opportunities right now", items: aiFeatureItems };
+      }
       return {
         title: "Popular with UK investors",
         items: [
@@ -327,7 +358,7 @@ export default function BrandPicker({
         : { title: "Trending this week", items: CRYPTO_BRANDS.slice(0, 4) };
     }
     return null;
-  }, [traderClass, favourites, trending]);
+  }, [traderClass, favourites, trending, aiFeatureItems]);
 
   const gridItems = useMemo(() => {
     const base =
