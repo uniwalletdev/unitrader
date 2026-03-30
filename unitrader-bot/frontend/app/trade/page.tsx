@@ -216,6 +216,7 @@ function AIAnalysisCard({
 function TradePage() {
   const searchParams = useSearchParams();
   const welcome = searchParams?.get("welcome") === "true";
+  const debug = searchParams?.get("debug") || "";
 
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [trust, setTrust] = useState<TrustLadder | null>(null);
@@ -301,6 +302,21 @@ function TradePage() {
     const t = window.setTimeout(() => setToast(null), 3000);
     return () => window.clearTimeout(t);
   }, [toast]);
+
+  // Debug isolation toggles (production-safe). Use:
+  // /trade?debug=bare to bypass complex UI and isolate hook-order crashes.
+  if (debug === "bare") {
+    return (
+      <div className="min-h-screen bg-dark-950 flex items-center justify-center px-6">
+        <div className="rounded-2xl border border-dark-800 bg-dark-950 p-6 text-center">
+          <div className="text-sm font-semibold text-white">Trade debug: bare</div>
+          <div className="mt-2 text-xs text-dark-400">
+            If this renders, the crash is in a child component.
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // onboarding_complete gate: only render Apex wizard full-screen
   if (!loading && settings?.onboarding_complete === false) {
