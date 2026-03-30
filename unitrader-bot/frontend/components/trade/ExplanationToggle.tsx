@@ -15,12 +15,20 @@ export type ExplanationLevel = "expert" | "simple" | "metaphor";
 export default function ExplanationToggle({
   explanations,
   onLevelChange,
+  traderClass: traderClassProp,
+  settingsLevel: settingsLevelProp,
 }: {
   explanations: { expert: string; simple: string; metaphor: string };
   onLevelChange?: (level: ExplanationLevel) => void;
+  traderClass?: TraderClass;
+  settingsLevel?: ExplanationLevel | null;
 }) {
-  const [traderClass, setTraderClass] = useState<TraderClass>("complete_novice");
-  const [settingsLevel, setSettingsLevel] = useState<ExplanationLevel | null>(null);
+  const [traderClass, setTraderClass] = useState<TraderClass>(
+    traderClassProp ?? "complete_novice",
+  );
+  const [settingsLevel, setSettingsLevel] = useState<ExplanationLevel | null>(
+    settingsLevelProp ?? null,
+  );
   const [activeLevel, setActiveLevel] = useState<ExplanationLevel>("metaphor");
   const [displayText, setDisplayText] = useState<string>(explanations.metaphor);
   const [fading, setFading] = useState(false);
@@ -42,6 +50,8 @@ export default function ExplanationToggle({
 
   // Load userSettings on mount (trader_class + explanation_level)
   useEffect(() => {
+    // If parent already provided settings, skip the extra API call.
+    if (traderClassProp || settingsLevelProp !== undefined) return;
     let mounted = true;
     (async () => {
       try {
@@ -58,7 +68,7 @@ export default function ExplanationToggle({
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [traderClassProp, settingsLevelProp]);
 
   // Resolve active level with priority:
   // 1) localStorage apex_explanation_level

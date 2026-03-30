@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import { CheckCircle } from "lucide-react";
 import GalaxyLoader from "@/components/layout/GalaxyLoader";
 import { api, authApi, tradingApi } from "@/lib/api";
@@ -29,6 +30,7 @@ type TraderClass =
 type UserSettings = {
   trader_class?: TraderClass;
   explanation_level?: string;
+  approved_assets?: string[];
   trading_paused?: boolean;
   max_daily_loss?: number;
   onboarding_complete?: boolean;
@@ -213,8 +215,18 @@ function AIAnalysisCard({
   );
 }
 
+// #region agent log — module-level render counter for H-B
+let _tradeRenderCount = 0;
+// #endregion
+
 function TradePage() {
+  // #region agent log
+  _tradeRenderCount++;
+  const _rc = _tradeRenderCount;
+  // #endregion
+
   const searchParams = useSearchParams();
+  const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
   const welcome = searchParams?.get("welcome") === "true";
   const debug = searchParams?.get("debug") || "";
   const debugSet = useMemo(
@@ -274,11 +286,36 @@ function TradePage() {
   );
 
   useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',location:'trade/page.tsx:useEffect-main',message:'main useEffect fired — H-B: getToken stability probe',data:{renderCount:_rc,authLoaded,isSignedIn,getTokenRef:typeof getToken},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     if (bare) return;
     let mounted = true;
     (async () => {
       setLoading(true);
       try {
+        // App Router pages rely on Clerk. Ensure we have a fresh token for backend auth.
+        // Without this, the page can spam protected endpoints with 401s and get rate-limited.
+        if (authLoaded && isSignedIn) {
+          const token = await getToken();
+          if (token) api.defaults.headers.common.Authorization = `Bearer ${token}`;
+        }
+
+        // If Clerk isn't ready or user isn't signed in yet, avoid hammering the API.
+        if (!authLoaded || !isSignedIn) {
+          if (!mounted) return;
+          setSettings({ trader_class: "complete_novice", onboarding_complete: false });
+          setTrust({
+            stage: 1,
+            paperEnabled: true,
+            canAdvance: false,
+            daysAtStage: 1,
+            paperTradesCount: 0,
+            maxAmountGbp: 25,
+          });
+          return;
+        }
+
         const [sRes, tRes] = await Promise.all([
           authApi.getSettings(),
           api.get("/api/onboarding/trust-ladder"),
@@ -304,7 +341,7 @@ function TradePage() {
     return () => {
       mounted = false;
     };
-  }, [bare]);
+  }, [bare, authLoaded, isSignedIn, getToken]);
 
   useEffect(() => {
     if (!trace) return;
@@ -322,6 +359,10 @@ function TradePage() {
     const t = window.setTimeout(() => setToast(null), 3000);
     return () => window.clearTimeout(t);
   }, [toast]);
+
+  // #region agent log
+  fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',location:'trade/page.tsx:post-hooks',message:'TradePage render — all hooks called',data:{renderCount:_rc,authLoaded,isSignedIn,loading,settingsOnboardingComplete:settings?.onboarding_complete},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
 
   // Debug isolation toggles (production-safe). Use:
   // - /trade?debug=bare to bypass complex UI and isolate hook-order crashes.
@@ -525,6 +566,7 @@ function TradePage() {
       {layout === "A" && trust && (
         <div className="mb-4">
           <TrustLadderBanner
+            traderClass={traderClass}
             stage={trust.stage}
             paperEnabled={trust.paperEnabled}
             canAdvance={trust.canAdvance}
@@ -546,6 +588,8 @@ function TradePage() {
             {!dbg("no_picker") && (
               <BrandPicker
                 exchange={exchange}
+                traderClass={traderClass}
+                favourites={settings?.approved_assets ?? []}
                 onManualSymbol={(s) => setSymbol(s.toUpperCase())}
                 onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
                 selectedSymbols={symbol ? [symbol] : []}
@@ -575,6 +619,14 @@ function TradePage() {
                   simple: analysis?.simple ?? analysis?.message ?? "—",
                   metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
                 }}
+                traderClass={traderClass}
+                settingsLevel={
+                  settings?.explanation_level === "expert" ||
+                  settings?.explanation_level === "simple" ||
+                  settings?.explanation_level === "metaphor"
+                    ? (settings.explanation_level as any)
+                    : null
+                }
               />
             )}
             <button
@@ -596,6 +648,8 @@ function TradePage() {
             {!dbg("no_picker") && (
               <BrandPicker
                 exchange={exchange}
+                traderClass={traderClass}
+                favourites={settings?.approved_assets ?? []}
                 onManualSymbol={(s) => setSymbol(s.toUpperCase())}
                 onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
                 selectedSymbols={symbol ? [symbol] : []}
@@ -627,6 +681,14 @@ function TradePage() {
                     simple: analysis?.simple ?? analysis?.message ?? "—",
                     metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
                   }}
+                  traderClass={traderClass}
+                  settingsLevel={
+                    settings?.explanation_level === "expert" ||
+                    settings?.explanation_level === "simple" ||
+                    settings?.explanation_level === "metaphor"
+                      ? (settings.explanation_level as any)
+                      : null
+                  }
                 />
               )}
               <button
@@ -775,6 +837,8 @@ function TradePage() {
             {!dbg("no_picker") && (
               <BrandPicker
                 exchange={exchange}
+                traderClass={traderClass}
+                favourites={settings?.approved_assets ?? []}
                 onManualSymbol={(s) => setSymbol(s.toUpperCase())}
                 onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
                 selectedSymbols={symbol ? [symbol] : []}
@@ -805,6 +869,14 @@ function TradePage() {
                   simple: analysis?.simple ?? analysis?.message ?? "—",
                   metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
                 }}
+                  traderClass={traderClass}
+                  settingsLevel={
+                    settings?.explanation_level === "expert" ||
+                    settings?.explanation_level === "simple" ||
+                    settings?.explanation_level === "metaphor"
+                      ? (settings.explanation_level as any)
+                      : null
+                  }
               />
             )}
             <button

@@ -24,6 +24,10 @@ type QuickStatsMap = Record<string, { rsi?: number | null }>;
 
 interface BrandPickerProps {
   exchange: string;
+  /** If provided, avoids fetching settings on mount. */
+  traderClass?: TraderClass;
+  /** If provided, avoids fetching settings on mount. */
+  favourites?: string[];
   /** Used for simulator mode max-selection cap. */
   simulatorMode?: boolean;
   selectedSymbols?: string[];
@@ -220,6 +224,8 @@ function BrandCard(props: {
 
 export default function BrandPicker({
   exchange,
+  traderClass: traderClassProp,
+  favourites: favouritesProp,
   simulatorMode = false,
   selectedSymbols,
   onChangeSelectedSymbols,
@@ -247,6 +253,19 @@ export default function BrandPicker({
   const didLockCryptoTab = useRef(false);
 
   useEffect(() => {
+    // If parent already provided settings, skip the extra API call.
+    if (traderClassProp || favouritesProp) {
+      const tc = traderClassProp ?? "complete_novice";
+      const fav = favouritesProp ?? [];
+      setTraderClass(tc);
+      setFavourites(fav);
+      if (tc === "self_taught") setCategory("all");
+      else if (tc === "crypto_native") setCategory("crypto");
+      else setCategory("stocks");
+      setLoadingSettings(false);
+      return;
+    }
+
     let mounted = true;
     (async () => {
       setLoadingSettings(true);
@@ -274,7 +293,7 @@ export default function BrandPicker({
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [traderClassProp, favouritesProp]);
 
   // crypto_native: lock crypto tab on first load only
   useEffect(() => {

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@clerk/nextjs";
 import {
   AlertCircle,
   Check,
@@ -209,6 +210,7 @@ function PnlHelp({ value }: { value: string }) {
 
 export default function PositionsPage() {
   const router = useRouter();
+  const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
   const [traderClass, setTraderClass] = useState<TraderClass>("complete_novice");
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
@@ -229,6 +231,10 @@ export default function PositionsPage() {
     setError(null);
     setLoading(true);
     try {
+      // Ensure backend auth header is present for protected endpoints
+      const token = await getToken();
+      if (token) api.defaults.headers.common.Authorization = `Bearer ${token}`;
+
       const [settingsRes, posRes] = await Promise.all([
         authApi.getSettings(),
         tradingApi.openPositions(),
@@ -250,9 +256,15 @@ export default function PositionsPage() {
   };
 
   useEffect(() => {
+    if (!authLoaded) return;
+    if (!isSignedIn) {
+      setLoading(false);
+      setError("Please sign in to view your positions.");
+      return;
+    }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [authLoaded, isSignedIn]);
 
   const [livePositions, paperPositions] = useMemo(() => {
     const live: Position[] = [];

@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
-import { authApi, api } from "@/lib/api";
+import { useState } from "react";
+import { api } from "@/lib/api";
 import { Lock, ShieldCheck } from "lucide-react";
 
 type TraderClass = "complete_novice" | "curious_saver";
 
 export interface TrustLadderBannerProps {
+  traderClass: TraderClass | string;
   stage: 1 | 2 | 3 | 4;
   paperEnabled: boolean;
   canAdvance: boolean;
@@ -17,31 +18,10 @@ function clsx(...parts: Array<string | false | null | undefined>) {
 }
 
 export default function TrustLadderBanner(props: TrustLadderBannerProps) {
-  const [traderClass, setTraderClass] = useState<TraderClass | "other" | null>(null);
   const [advancing, setAdvancing] = useState(false);
 
-  // CRITICAL RULE: check trader_class before rendering anything.
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const res = await authApi.getSettings();
-        const tc = String(res.data?.trader_class ?? "");
-        if (!mounted) return;
-        if (tc === "complete_novice" || tc === "curious_saver") setTraderClass(tc);
-        else setTraderClass("other");
-      } catch {
-        if (!mounted) return;
-        setTraderClass("other");
-      }
-    })();
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  if (traderClass === null) return null;
-  if (traderClass === "other") return null;
+  const tc = String(props.traderClass ?? "");
+  if (tc !== "complete_novice" && tc !== "curious_saver") return null;
 
   const isStage1 = props.stage === 1;
   const isStage2 = props.stage === 2;

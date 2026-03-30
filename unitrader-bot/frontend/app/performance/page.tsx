@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, authApi, tradingApi } from "@/lib/api";
+import { useAuth } from "@clerk/nextjs";
 import {
   BarChart3,
   Download,
@@ -160,6 +161,7 @@ function FeedbackThumbs({ tradeId }: { tradeId: string }) {
 }
 
 export default function PerformancePage() {
+  const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
   const [traderClass, setTraderClass] = useState<TraderClass>("complete_novice");
   const [period, setPeriod] = useState<30 | 90 | 365>(30);
   const [loading, setLoading] = useState(true);
@@ -178,6 +180,10 @@ export default function PerformancePage() {
     setLoading(true);
     setError(null);
     try {
+      // Ensure backend auth header is present for protected endpoints
+      const token = await getToken();
+      if (token) api.defaults.headers.common.Authorization = `Bearer ${token}`;
+
       const [settingsRes, summaryRes, histRes] = await Promise.all([
         authApi.getSettings(),
         api.get("/api/performance/summary", { params: { days } }),
@@ -202,9 +208,15 @@ export default function PerformancePage() {
   };
 
   useEffect(() => {
+    if (!authLoaded) return;
+    if (!isSignedIn) {
+      setLoading(false);
+      setError("Please sign in to view performance.");
+      return;
+    }
     load(period);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period]);
+  }, [period, authLoaded, isSignedIn]);
 
   useEffect(() => {
     api
