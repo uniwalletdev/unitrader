@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useRouter } from "next/router";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { authApi } from "@/lib/api";
 
@@ -40,7 +39,6 @@ export default function CircuitBreakerAlert({
   dailyLossPct,
   maxDailyLossPct,
 }: CircuitBreakerAlertProps) {
-  const router = useRouter();
   const [showConfirm, setShowConfirm] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +87,10 @@ export default function CircuitBreakerAlert({
           {/* Buttons */}
           <div className="flex gap-2 flex-wrap">
             <button
-              onClick={() => router.push("/settings#trading-safety")}
+              onClick={() => {
+                if (typeof window === "undefined") return;
+                window.location.href = "/settings#trading-safety";
+              }}
               className="px-4 py-2 bg-red-500 text-white text-sm font-medium rounded-xl hover:bg-red-600 transition-colors"
             >
               Adjust my limit
