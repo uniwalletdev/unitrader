@@ -2,10 +2,12 @@
 routers/onboarding.py — Onboarding and user agreement endpoints.
 
 Endpoints:
-    POST /api/onboarding/accept-risk-disclosure — Accept risk disclosure
-    GET  /api/onboarding/trust-ladder          — Trust ladder status (frontend)
-    POST /api/onboarding/complete-wizard       — Mark onboarding complete after Apex wizard
-    POST /api/onboarding/skip                  — Skip onboarding using sensible defaults
+    POST /api/onboarding/accept-risk-disclosure  — Accept risk disclosure
+    GET  /api/onboarding/trust-ladder            — Trust ladder status (frontend)
+    GET  /api/onboarding/trust-ladder/status     — Alias
+    POST /api/onboarding/trust-ladder/advance    — Advance to next trust ladder stage
+    POST /api/onboarding/complete-wizard         — Mark onboarding complete after wizard
+    POST /api/onboarding/skip                    — Skip onboarding using sensible defaults
 """
 
 import logging
@@ -33,11 +35,15 @@ async def _trust_ladder_data(current_user: User, db: AsyncSession) -> dict:
     stage = 1
     if s and getattr(s, "risk_disclosure_accepted", False):
         stage = 2
+    if s and getattr(s, "onboarding_complete", False):
+        stage = 3
     max_amount = 25 if stage <= 2 else 500
     return {
         "stage": stage,
-        "paperEnabled": True,
-        "canAdvance": bool(s and getattr(s, "risk_disclosure_accepted", False)),
+        # Paper trading active until stage 3 (full trading unlocked)
+        "paperEnabled": stage < 3,
+        # Can advance from stage 2 once risk disclosure is accepted
+        "canAdvance": stage == 2,
         "daysAtStage": 1,
         "paperTradesCount": 0,
         "maxAmountGbp": max_amount,
@@ -60,6 +66,80 @@ async def get_trust_ladder_status(
 ):
     """Alias of /trust-ladder — some frontend versions call this path."""
     return await _trust_ladder_data(current_user, db)
+
+
+@router.post("/trust-ladder/advance")
+async def advance_trust_ladder(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Advance the user to the next trust ladder stage.
+
+    Stage 1 → 2: Accepts risk disclosure and switches from Watch to Micro Mode.
+    Stage 2 → 3: Marks onboarding complete and unlocks full trading.
+
+    Idempotent — calling when already at max stage returns success without error.
+    """
+    try:
+        result = await db.execute(
+            select(UserSettings).where(UserSettings.user_id == current_user.id)
+        )
+        settings = result.scalar_one_or_none()
+        if not settings:
+            settings = UserSettings(user_id=current_user.id)
+            db.add(settings)
+
+        stage = 1
+        if getattr(settings, "risk_disclosure_accepted", False):
+            stage = 2
+        if getattr(settings, "onboarding_complete", False):
+            stage = 3
+
+        if stage >= 3:
+            return {"success": True, "stage": stage, "message": "Already at full trading stage"}
+
+        ip_address = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+
+        if stage == 1:
+            settings.risk_disclosure_accepted = True
+            settings.risk_disclosure_accepted_at = datetime.now(timezone.utc)
+            new_stage = 2
+            event_type = "trust_ladder_stage_1_to_2"
+        else:
+            # stage == 2: unlock full trading
+            settings.onboarding_complete = True
+            new_stage = 3
+            event_type = "trust_ladder_stage_2_to_3"
+
+        db.add(AuditLog(
+            user_id=current_user.id,
+            event_type=event_type,
+            event_details={"from_stage": stage, "to_stage": new_stage},
+            ip_address=ip_address,
+            user_agent=user_agent,
+        ))
+        await db.commit()
+
+        try:
+            from src.agents.shared_memory import SharedMemory
+            SharedMemory.invalidate(current_user.id)
+        except Exception:
+            pass
+
+        logger.info(
+            "Trust ladder advance for user %s: stage %d → %d",
+            current_user.id, stage, new_stage,
+        )
+        return {"success": True, "stage": new_stage}
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        await db.rollback()
+        logger.error("advance_trust_ladder error for user %s: %s", current_user.id, exc)
+        raise HTTPException(status_code=500, detail="Failed to advance trust ladder")
 
 
 # ─────────────────────────────────────────────

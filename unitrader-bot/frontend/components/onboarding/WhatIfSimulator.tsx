@@ -100,6 +100,7 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
 
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<SimResponse | null>(null);
+  const [marketUnavailable, setMarketUnavailable] = useState(false);
 
   const debounceRef = useRef<number | null>(null);
 
@@ -234,8 +235,11 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
           },
         });
         const d = (res.data?.data ?? res.data) as SimResponse;
+        setMarketUnavailable(false);
         setData(d);
-      } catch {
+      } catch (err: unknown) {
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        setMarketUnavailable(status === 503);
         setData(null);
       } finally {
         setLoading(false);
@@ -310,6 +314,14 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
 
       {loading ? (
         <Skeleton />
+      ) : marketUnavailable ? (
+        <div className="rounded-xl border border-dark-800 bg-dark-950 p-4 text-center text-sm text-dark-300">
+          <div className="mb-1 font-semibold text-dark-200">Market data unavailable</div>
+          <div className="text-xs">
+            Markets may be closed or data is not yet ready. The simulation will appear automatically
+            when data is available — usually on the next trading day.
+          </div>
+        </div>
       ) : (
         <>
           {isCompactBacktest ? (
