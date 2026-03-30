@@ -318,7 +318,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         setTradingPaused(sRes.data.trading_paused || false);
         setMaxDailyLoss(sRes.data.max_daily_loss || 10);
         setTraderClass(sRes.data.trader_class || "complete_novice");
-        const rawMode = sRes.data.trade_mode || "picks";
+        const rawMode = sRes.data.trade_mode || "auto";
         setTradeMode(rawMode === "auto" ? "auto" : "picks");
         setTrust(tRes.data?.data ?? tRes.data);
       } catch {
@@ -381,11 +381,12 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
 
     try {
       const sym = normaliseSymbol(resolvedSymbol, selectedExchange);
-      const res = await tradingApi.execute(sym, selectedExchange);
+      // Analysis only — no order placed here. User confirms trade in the modal.
+      const res = await tradingApi.analyze(sym, selectedExchange);
       const data = res.data?.data ?? res.data;
       setOdResult(data);
       if (data?.status === "rejected" || data?.status === "error") {
-        setOdError(data.reason || "Trade was not executed.");
+        setOdError(data.reason || "Analysis failed.");
       }
     } catch (err: any) {
       const detail = err.response?.data?.detail;

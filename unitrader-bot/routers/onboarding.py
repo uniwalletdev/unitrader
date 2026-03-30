@@ -272,6 +272,8 @@ async def complete_wizard(
             db.add(settings)
 
         settings.onboarding_complete = True
+        # Users who complete the full wizard have consented to automated trading
+        settings.trade_mode = "auto"
         if body.goal:
             settings.financial_goal = body.goal
         if body.risk_level:
@@ -318,7 +320,7 @@ _SKIP_DEFAULTS = {
     "risk_level_setting": "balanced",
     "max_trade_amount": 100.0,
     "trader_class": "complete_novice",
-    "trade_mode": "picks",
+    "trade_mode": "auto",
 }
 
 

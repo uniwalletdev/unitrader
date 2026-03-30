@@ -623,7 +623,7 @@ async def get_ai_picks(
 
 
 # ─────────────────────────────────────────────
-# POST /api/trading/execute
+# POST /api/trading/execute — Full cycle: analyse → decide → place order
 # ─────────────────────────────────────────────
 
 @router.post("/execute")
@@ -632,13 +632,25 @@ async def execute_trade(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Run a full market analysis cycle and execute a trade if conditions are met.
+    """Run a complete trade cycle for the given symbol and exchange.
 
-    All exchanges can trade all products they offer. Free-tier users have
-    a limit of 10 trades per calendar month.
+    Calls TradingAgent.run_cycle() which:
+      1. Fetches live market data
+      2. Runs Claude AI analysis and decision
+      3. Places a real (or paper) order on the exchange if signal is BUY/SELL
+      4. Persists the trade to the database
+      5. Returns the outcome
+
+    After a successful execution the symbol is also saved to
+    UserSettings.approved_assets so the 5-minute background loop continues
+    trading it automatically without further user action.
+
+    Use POST /analyze for analysis-only (no order placed).
     """
+    from src.agents.core.trading_agent import TradingAgent
+
     try:
-        # ── Onboarding gate — skip only allowed if complete or explicitly skipped ──
+        # ── Onboarding gate ────────────────────────────────────────────────────
         settings_result = await db.execute(
             select(UserSettings).where(UserSettings.user_id == current_user.id)
         )
@@ -653,65 +665,47 @@ async def execute_trade(
         trade_check = await check_trade_limit(current_user, db)
         if not trade_check["allowed"]:
             reason = trade_check.get("reason", "unknown")
-            used = trade_check.get("trades_used", 0)
-            limit = trade_check.get("trades_limit", 10)
+            detail = reason if reason in {"trial_limit_reached", "subscription_required"} else "subscription_required"
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
-            # Frontend displays `detail` directly; keep this as a stable code string.
-            # If you want richer messaging, map these codes client-side.
-            if reason in {"trial_limit_reached", "subscription_required"}:
-                detail = reason
-            else:
-                detail = "subscription_required"
-
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=detail,
-            )
-
-        orchestrator = get_orchestrator()
-        result = await orchestrator.route(
-            user_id=current_user.id,
-            action="trade_analyze",
-            payload={"symbol": body.symbol.upper(), "exchange": body.exchange},
-            db=db,
+        # ── Full cycle: analyse + execute ──────────────────────────────────────
+        agent = TradingAgent(user_id=current_user.id)
+        result = await agent.run_cycle(
+            symbol=body.symbol.upper(),
+            exchange_name=body.exchange.lower(),
         )
 
-        # Agent/orchestrator returned no result
         if result is None:
-            logger.error(
-                "Trading agent returned no result for user %s on %s",
-                current_user.id,
-                body.symbol,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="agent_unavailable",
-            )
+            logger.error("run_cycle returned None for user %s symbol %s", current_user.id, body.symbol)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="agent_unavailable")
 
-        # Propagate explicit agent errors (e.g. market_data_unavailable)
         if isinstance(result, dict) and result.get("status") == "error":
             reason = result.get("reason", "market_data_unavailable")
-            logger.error(
-                "Trading agent error for user %s on %s: %s",
-                current_user.id,
-                body.symbol,
-                reason,
-            )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=reason,
-            )
+            logger.error("run_cycle error user=%s symbol=%s: %s", current_user.id, body.symbol, reason)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=reason)
 
-        # Keep existing UI contract: return the trade result directly.
+        # ── Persist symbol so the background loop picks it up automatically ───
+        if isinstance(result, dict) and result.get("status") == "executed":
+            try:
+                if not _user_settings:
+                    r2 = await db.execute(select(UserSettings).where(UserSettings.user_id == current_user.id))
+                    _user_settings = r2.scalar_one_or_none()
+                if _user_settings:
+                    sym_upper = body.symbol.upper()
+                    current_assets: list = list(_user_settings.approved_assets or [])
+                    if sym_upper not in current_assets:
+                        current_assets.insert(0, sym_upper)
+                        _user_settings.approved_assets = current_assets
+                        await db.commit()
+            except Exception as _exc:
+                logger.warning("Could not persist approved_assets for user %s: %s", current_user.id, _exc)
+
         return {"status": "success", "data": result}
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("Trade execute failed for user %s", current_user.id)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="trade_execution_failed",
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="trade_execution_failed")
 
 
 # ─────────────────────────────────────────────
