@@ -3,13 +3,99 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { useEffect } from "react";
 import { StatusBar, Style } from "@capacitor/status-bar";
 import "@/styles/globals.css";
-import { isNative } from "@/hooks/useCapacitor";
+import { isNative, platform } from "@/hooks/useCapacitor";
 import ErrorBoundary from "@/components/ErrorBoundary";
 
 export default function App({ Component, pageProps }: AppProps) {
   useEffect(() => {
+    // #region agent log
+    fetch("http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "026d4d",
+      },
+      body: JSON.stringify({
+        sessionId: "026d4d",
+        runId: "pre-fix",
+        hypothesisId: "H1",
+        location: "pages/_app.tsx:useEffect(mount)",
+        message: "app mounted",
+        data: {
+          pathname:
+            typeof window !== "undefined" ? window.location.pathname : "no-window",
+          publishableKeyPresent: Boolean(
+            process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
+          ),
+          isNative,
+          platform,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+
+    // #region agent log
+    const onError = (event: ErrorEvent) => {
+      fetch("http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "026d4d",
+        },
+        body: JSON.stringify({
+          sessionId: "026d4d",
+          runId: "pre-fix",
+          hypothesisId: "H2",
+          location: "pages/_app.tsx:window.error",
+          message: "window error event",
+          data: {
+            message: event.message,
+            filename: event.filename,
+            lineno: event.lineno,
+            colno: event.colno,
+          },
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    };
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason =
+        event.reason instanceof Error
+          ? { name: event.reason.name, message: event.reason.message }
+          : { message: String(event.reason) };
+      fetch("http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Debug-Session-Id": "026d4d",
+        },
+        body: JSON.stringify({
+          sessionId: "026d4d",
+          runId: "pre-fix",
+          hypothesisId: "H2",
+          location: "pages/_app.tsx:unhandledrejection",
+          message: "unhandled rejection",
+          data: reason,
+          timestamp: Date.now(),
+        }),
+      }).catch(() => {});
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("error", onError);
+      window.addEventListener("unhandledrejection", onUnhandledRejection);
+    }
+    // #endregion
+
     if (!isNative) return;
     StatusBar.setStyle({ style: Style.Dark }).catch(() => {});
+
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener("error", onError);
+        window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      }
+    };
   }, []);
 
   return (
