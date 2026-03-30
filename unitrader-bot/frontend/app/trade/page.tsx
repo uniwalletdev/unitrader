@@ -215,16 +215,7 @@ function AIAnalysisCard({
   );
 }
 
-// #region agent log — module-level render counter for H-B
-let _tradeRenderCount = 0;
-// #endregion
-
 function TradePage() {
-  // #region agent log
-  _tradeRenderCount++;
-  const _rc = _tradeRenderCount;
-  // #endregion
-
   const searchParams = useSearchParams();
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
   const welcome = searchParams?.get("welcome") === "true";
@@ -286,9 +277,6 @@ function TradePage() {
   );
 
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',location:'trade/page.tsx:useEffect-main',message:'main useEffect fired — H-B: getToken stability probe',data:{renderCount:_rc,authLoaded,isSignedIn,getTokenRef:typeof getToken},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     if (bare) return;
     let mounted = true;
     (async () => {
@@ -341,7 +329,8 @@ function TradePage() {
     return () => {
       mounted = false;
     };
-  }, [bare, authLoaded, isSignedIn, getToken]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bare, authLoaded, isSignedIn]);
 
   useEffect(() => {
     if (!trace) return;
@@ -359,10 +348,6 @@ function TradePage() {
     const t = window.setTimeout(() => setToast(null), 3000);
     return () => window.clearTimeout(t);
   }, [toast]);
-
-  // #region agent log
-  fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',location:'trade/page.tsx:post-hooks',message:'TradePage render — all hooks called',data:{renderCount:_rc,authLoaded,isSignedIn,loading,settingsOnboardingComplete:settings?.onboarding_complete},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
 
   // Debug isolation toggles (production-safe). Use:
   // - /trade?debug=bare to bypass complex UI and isolate hook-order crashes.

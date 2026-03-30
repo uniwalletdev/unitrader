@@ -211,17 +211,10 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
   // Dashboard card is always visible, but content differs.
   const shouldRender = mode === "dashboard" ? true : shouldShowWelcomeModal;
 
-  // #region agent log
-  fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',location:'WhatIfSimulator.tsx:213',message:'shouldRender check — H-A probe',data:{mode,shouldRender,shouldShowWelcomeModal,welcomeRequested,traderClassSet:traderClass!==null},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
-
-  if (!shouldRender) return null;
-
-  // Load data (debounced on amount)
+  // Load data — MUST be before any early return to satisfy React's rules of hooks.
+  // Guard inside the effect body so data is only fetched when the component is actually visible.
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',location:'WhatIfSimulator.tsx:217',message:'data-loading useEffect fired — H-A: this hook is AFTER early-return',data:{traderClass,amount,timeDays,presetId},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
+    if (!shouldRender) return;
     if (!traderClass) return;
     if (isCompactBacktest) {
       // still call simulate-history with nominal params; backend can ignore amount
@@ -252,7 +245,10 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
     return () => {
       if (debounceRef.current) window.clearTimeout(debounceRef.current);
     };
-  }, [amount, timeDays, selectedPreset, traderClass, isCompactBacktest]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shouldRender, amount, timeDays, selectedPreset, traderClass, isCompactBacktest]);
+
+  if (!shouldRender) return null;
 
   const content = (
     <div className="space-y-4">

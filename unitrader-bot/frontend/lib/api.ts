@@ -29,7 +29,23 @@ api.interceptors.response.use(
       url.includes("/clerk-sync") ||
       url.includes("/clerk-setup") ||
       url.includes("/api/auth/me");  // "me" is called during silent token check
-    if (err.response?.status === 401 && typeof window !== "undefined" && !isAuthEndpoint) {
+    // IMPORTANT: Don't redirect from App Router pages. They use Clerk session cookies
+    // and can be valid even when our legacy localStorage JWT is missing/expired.
+    // Redirecting here causes login <-> trade loops.
+    const isAppRouterPath =
+      typeof window !== "undefined" &&
+      (window.location.pathname === "/trade" ||
+        window.location.pathname.startsWith("/trade/") ||
+        window.location.pathname.startsWith("/learning") ||
+        window.location.pathname.startsWith("/positions") ||
+        window.location.pathname.startsWith("/performance"));
+
+    if (
+      err.response?.status === 401 &&
+      typeof window !== "undefined" &&
+      !isAuthEndpoint &&
+      !isAppRouterPath
+    ) {
       localStorage.removeItem("access_token");
       window.location.href = "/login";
     }
