@@ -72,7 +72,8 @@ export default function LandingPage() {
           content="Unitrader is your personal AI trader. The same technology that's made hedge funds billions — now available to anyone."
         />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="icon" href="/favicon.ico" />
+        <link rel="icon" type="image/png" href="/logo-ring.png" />
+        <link rel="apple-touch-icon" href="/logo-ring.png" />
       </Head>
 
       {/* ── Navbar ─────────────────────────────────────────────────── */}
@@ -80,11 +81,8 @@ export default function LandingPage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-4 sm:px-6">
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand-500">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M4 12L8 4l4 8" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo-ring.png" alt="Unitrader" className="h-9 w-9 object-contain" />
             <span className="text-lg font-bold text-white">Unitrader</span>
           </Link>
 
