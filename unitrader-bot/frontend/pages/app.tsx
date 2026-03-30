@@ -1322,6 +1322,15 @@ export default function AppPage() {
         try {
           const r = await authApi.me();
           setUser(r.data);
+          // Gate: send users who haven't finished onboarding to /trade
+          try {
+            const sRes = await authApi.getSettings();
+            if (sRes.data?.onboarding_complete === false) {
+              syncingRef.current = false;
+              router.replace("/trade");
+              return;
+            }
+          } catch { /* non-fatal — allow /app if settings fetch fails */ }
           setAuthChecked(true);
           return;
         } catch {
@@ -1343,6 +1352,15 @@ export default function AppPage() {
         }
         localStorage.setItem("access_token", res.data.access_token);
         setUser(res.data.user);
+        // Gate: send users who haven't finished onboarding to /trade
+        try {
+          const sRes = await authApi.getSettings();
+          if (sRes.data?.onboarding_complete === false) {
+            redirectedToOnboarding = true;
+            router.replace("/trade");
+            return;
+          }
+        } catch { /* non-fatal — allow /app if settings fetch fails */ }
       } catch (err) {
         devLogError("Clerk sync failed", err);
         // Don't redirect to /login if Clerk says we're signed in — that causes a loop.

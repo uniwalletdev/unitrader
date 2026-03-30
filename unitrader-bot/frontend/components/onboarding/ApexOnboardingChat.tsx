@@ -1,29 +1,26 @@
 /*
- * components/onboarding/ApexOnboardingChat.tsx — Full-screen trader-class-aware onboarding.
+ * components/onboarding/ApexOnboardingChat.tsx — Trader-class-aware onboarding wizard.
  *
- * The Conversation Agent (Phase 9) now returns metadata.detected_class in each response.
- * This component tracks class detection and adapts the conversation flow:
+ * On mount, loads user settings to resume partial progress automatically.
+ * Stage 0 shows universal goal options so any experience level can self-identify.
+ * Class is detected locally from the stage-0 answer — no API round-trip per step.
  *
- * - complete_novice (default): 5 full stages with detailed explanations
- * - curious_saver: 5 stages, saver-focused language
- * - self_taught: 3 compressed stages, skip basics
- * - experienced: 2 stages + optional skip-to-pro mode
- * - crypto_native: 3 stages, no stock questions, crypto-only exchanges
- * - semi_institutional: 1-2 stages + API routing option
+ * Stage counts by class:
+ *   complete_novice / curious_saver : 4 (goal → risk → budget → exchange)
+ *   self_taught / crypto_native     : 3 (goal → risk → exchange)
+ *   experienced                     : 2 (goal → risk)
+ *   semi_institutional               : 2 (goal → setup)
  *
- * Routing on completion:
- *   novice/curious: /risk-disclosure -> /trade?welcome=true
- *   self_taught: /risk-disclosure -> /trade
- *   experienced: /risk-disclosure -> /trade
- *   crypto: /risk-disclosure -> /trade?welcome=true
- *   semi_institutional: /risk-disclosure -> /trade (or API setup)
+ * Routing:
+ *   complete → completeWizard() → /risk-disclosure → /trade
+ *   skip     → skipOnboarding() → /trade
  */
 
 import React, { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/router";
 import Link from "next/link";
-import { api, authApi } from "@/lib/api";
-import { devLog, devLogError } from "@/lib/devLog";
+import { authApi } from "@/lib/api";
+import { devLog } from "@/lib/devLog";
 
 interface Message {
   id: string;
@@ -37,15 +34,6 @@ interface QuickReply {
   value: string;
 }
 
-interface OnboardingMeta {
-  stage?: number;
-  detected_class?: string;
-  goal?: string;
-  risk?: string;
-  budget?: string;
-  exchange?: string;
-}
-
 type TraderClass =
   | "complete_novice"
   | "curious_saver"
@@ -55,336 +43,435 @@ type TraderClass =
   | "semi_institutional";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Quick Reply Options by Trader Class
+// Stage field map — field name at each stage index per class
 // ─────────────────────────────────────────────────────────────────────────────
+
+const STAGE_MAP: Record<TraderClass, string[]> = {
+  complete_novice:    ["goal", "risk", "budget", "exchange"],
+  curious_saver:      ["goal", "risk", "budget", "exchange"],
+  self_taught:        ["goal", "risk", "exchange"],
+  experienced:        ["goal", "risk"],
+  crypto_native:      ["goal", "risk", "exchange"],
+  semi_institutional: ["goal", "setup"],
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stage question text — aligned with STAGE_MAP
+// ─────────────────────────────────────────────────────────────────────────────
+
+const STAGE_QUESTIONS: Record<TraderClass, string[]> = {
+  complete_novice:    ["What's your main goal?", "How comfortable are you with market risk?", "What's your starting budget?", "What would you like to trade?"],
+  curious_saver:      ["What's your main goal?", "How comfortable are you with market risk?", "What's your starting budget?", "What would you like to trade?"],
+  self_taught:        ["What can Unitrader help you with?", "What's your risk tolerance?", "Which markets do you trade?"],
+  experienced:        ["How can Unitrader work for you?", "What's your execution preference?"],
+  crypto_native:      ["What's your crypto trading goal?", "How do you feel about volatility?", "Which exchange do you use?"],
+  semi_institutional: ["What's your primary objective?", "How would you like to set up?"],
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Quick reply options
+// Stage 0 uses universal options (all classes see the same first question).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const UNIVERSAL_GOAL_REPLIES: QuickReply[] = [
+  { label: "Grow my savings",                    value: "grow_savings" },
+  { label: "Generate extra income",              value: "generate_income" },
+  { label: "I'm new — I want to learn",          value: "learn_trading" },
+  { label: "Automate my existing strategy",      value: "automate" },
+  { label: "Trade crypto / Bitcoin",             value: "crypto_focus" },
+  { label: "I'm an experienced trader",          value: "enhance_algo" },
+  { label: "Institutional / fund management",    value: "institutional" },
+];
 
 const QUICK_REPLIES: Record<TraderClass, Record<string, QuickReply[]>> = {
   complete_novice: {
-    goal: [
-      { label: "My savings aren't growing", value: "grow_savings" },
-      { label: "I want extra income", value: "generate_income" },
-      { label: "I want to learn", value: "learn_trading" },
-      { label: "Curious about crypto", value: "crypto_focus" },
-    ],
+    goal: UNIVERSAL_GOAL_REPLIES,
     risk: [
-      { label: "Very stressed - keep it safe", value: "conservative" },
-      { label: "A bit nervous but I'd trust you", value: "balanced" },
-      { label: "Fine, markets go up and down", value: "moderate" },
-      { label: "I want bigger swings", value: "aggressive" },
+      { label: "Very stressed — keep it safe",      value: "conservative" },
+      { label: "A bit nervous but I'd trust you",   value: "balanced" },
+      { label: "Fine, markets go up and down",      value: "moderate" },
+      { label: "I want bigger swings",              value: "aggressive" },
     ],
     budget: [
-      { label: "£25 - just testing", value: "25" },
-      { label: "£100 - comfortable", value: "100" },
-      { label: "£250 - ready", value: "250" },
-      { label: "£500 or more", value: "500" },
+      { label: "£25 — just testing",  value: "25" },
+      { label: "£100 — comfortable",  value: "100" },
+      { label: "£250 — ready",        value: "250" },
+      { label: "£500 or more",        value: "500" },
     ],
     exchange: [
-      { label: "Stocks - Apple, Tesla etc", value: "alpaca" },
-      { label: "Crypto - Bitcoin etc", value: "binance" },
-      { label: "Mix of everything", value: "mixed" },
+      { label: "Stocks — Apple, Tesla etc", value: "alpaca" },
+      { label: "Crypto — Bitcoin etc",      value: "binance" },
+      { label: "Mix of everything",         value: "mixed" },
     ],
   },
   curious_saver: {
-    goal: [
-      { label: "Grow beyond my ISA returns", value: "grow_savings" },
-      { label: "Complement my index funds", value: "learn_trading" },
-      { label: "Learn active trading", value: "learn_trading" },
-      { label: "Try crypto", value: "crypto_focus" },
-    ],
+    goal: UNIVERSAL_GOAL_REPLIES,
     risk: [
-      { label: "Careful - I've seen losses", value: "conservative" },
-      { label: "Moderate - I understand volatility", value: "balanced" },
-      { label: "I'm comfortable with risk", value: "moderate" },
+      { label: "Careful — I've seen losses",          value: "conservative" },
+      { label: "Moderate — I understand volatility",  value: "balanced" },
+      { label: "I'm comfortable with risk",           value: "moderate" },
     ],
     budget: [
-      { label: "£50 - topping up", value: "50" },
-      { label: "£100", value: "100" },
-      { label: "£250", value: "250" },
-      { label: "£500 or more", value: "500" },
+      { label: "£50 — topping up", value: "50"  },
+      { label: "£100",             value: "100" },
+      { label: "£250",             value: "250" },
+      { label: "£500 or more",     value: "500" },
     ],
     exchange: [
-      { label: "Stocks - Apple, Tesla etc", value: "alpaca" },
-      { label: "Crypto - Bitcoin etc", value: "binance" },
-      { label: "Mix of everything", value: "mixed" },
+      { label: "Stocks — Apple, Tesla etc", value: "alpaca" },
+      { label: "Crypto — Bitcoin etc",      value: "binance" },
+      { label: "Mix of everything",         value: "mixed" },
     ],
   },
   self_taught: {
-    goal: [
-      { label: "Improve my current strategy", value: "improve_strategy" },
-      { label: "Automate my trading", value: "automate" },
-      { label: "Get AI signal confirmation", value: "ai_confirmation" },
-      { label: "Save time on analysis", value: "save_time" },
-    ],
+    goal: UNIVERSAL_GOAL_REPLIES,
     risk: [
-      { label: "Moderate", value: "balanced" },
-      { label: "Aggressive", value: "aggressive" },
-      { label: "Let me set precise parameters", value: "custom" },
+      { label: "Moderate",                       value: "balanced" },
+      { label: "Aggressive",                     value: "aggressive" },
+      { label: "Let me set precise parameters",  value: "custom" },
     ],
     exchange: [
-      { label: "Stocks (Alpaca)", value: "alpaca" },
+      { label: "Stocks (Alpaca)",  value: "alpaca" },
       { label: "Crypto (Binance)", value: "binance" },
-      { label: "Both", value: "mixed" },
+      { label: "Both",             value: "mixed" },
     ],
   },
   experienced: {
-    goal: [
-      { label: "Enhance algorithmic execution", value: "enhance_algo" },
-      { label: "Portfolio optimization", value: "portfolio_opt" },
-      { label: "Risk-adjusted returns", value: "risk_adjusted" },
-    ],
+    goal: UNIVERSAL_GOAL_REPLIES,
     risk: [
       { label: "Volatility-based sizing", value: "volatility_based" },
-      { label: "Fixed allocation", value: "fixed" },
+      { label: "Fixed allocation",        value: "fixed" },
     ],
   },
   crypto_native: {
-    goal: [
-      { label: "Maximize yield farming", value: "yield" },
-      { label: "Diversify across chains", value: "diversify" },
-      { label: "Automate DeFi strategies", value: "defi_strat" },
-      { label: "Catch Alt Season", value: "alt_season" },
-    ],
+    goal: UNIVERSAL_GOAL_REPLIES,
     risk: [
-      { label: "I can handle volatility", value: "aggressive" },
-      { label: "Balanced approach", value: "balanced" },
-      { label: "Conservative - stable coins only", value: "conservative" },
-    ],
-    budget: [
-      { label: "0.1 BTC equivalent (USDT)", value: "1000" },
-      { label: "1 BTC equivalent", value: "10000" },
-      { label: "5 BTC+", value: "50000" },
+      { label: "I can handle volatility",          value: "aggressive" },
+      { label: "Balanced approach",                value: "balanced" },
+      { label: "Conservative — stablecoins only",  value: "conservative" },
     ],
     exchange: [
       { label: "Coinbase Advanced Trade", value: "coinbase" },
-      { label: "Binance", value: "binance" },
-      { label: "I use a DEX mostly", value: "dex" },
+      { label: "Binance",                 value: "binance" },
+      { label: "I use a DEX mostly",      value: "dex" },
     ],
   },
   semi_institutional: {
-    goal: [
-      { label: "Institutional-grade automation", value: "institutional" },
-      { label: "Risk-weighted portfolio", value: "risk_weighted" },
-      { label: "Multi-asset execution", value: "multi_asset" },
-    ],
-    risk: [
-      { label: "Systematic (model-based)", value: "systematic" },
-      { label: "Discretionary with guardrails", value: "discretionary" },
+    goal: UNIVERSAL_GOAL_REPLIES,
+    setup: [
+      { label: "Connect via API",       value: "api" },
+      { label: "Manual setup for now",  value: "manual" },
     ],
   },
 };
 
-const STAGE_QUESTIONS: Record<TraderClass, string[]> = {
-  complete_novice: [
-    "What's your main goal?",
-    "How comfortable are you with market risk?",
-    "What's your starting budget?",
-    "What would you like to trade?",
-    "Great — let's get your exchange connected.",
-  ],
-  curious_saver: [
-    "What's your main goal?",
-    "How comfortable are you with market risk?",
-    "What's your starting budget?",
-    "What would you like to trade?",
-    "Let's connect your exchange.",
-  ],
-  self_taught: [
-    "What can Unitrader help you with?",
-    "What's your risk tolerance?",
-    "Which markets do you trade?",
-  ],
-  experienced: [
-    "How can Unitrader optimize your strategy?",
-    "What's your execution preference?",
-  ],
-  crypto_native: [
-    "What's your crypto trading goal?",
-    "How do you feel about volatility?",
-    "Which exchange do you use?",
-  ],
-  semi_institutional: [
-    "Let's set up your institutional integration.",
-    "API-first or manual for now?",
-  ],
+// ─────────────────────────────────────────────────────────────────────────────
+// Local class detection from stage-0 answer
+// ─────────────────────────────────────────────────────────────────────────────
+
+function detectClassFromGoal(value: string): TraderClass {
+  if (["institutional", "risk_weighted", "multi_asset"].includes(value))              return "semi_institutional";
+  if (["enhance_algo", "portfolio_opt", "risk_adjusted"].includes(value))             return "experienced";
+  if (["improve_strategy", "automate", "ai_confirmation", "save_time"].includes(value)) return "self_taught";
+  if (["crypto_focus", "yield", "defi_strat", "alt_season", "diversify"].includes(value)) return "crypto_native";
+  return "complete_novice";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Local response generator — instant, no API round-trip
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getLocalResponse(cls: TraderClass, field: string, value: string): string {
+  if (field === "goal") {
+    const responses: Record<string, string> = {
+      grow_savings:    "Great — growing savings steadily is exactly what I'm built for. How comfortable are you with market risk?",
+      generate_income: "Income-focused trading — I'll target steady, consistent returns. How do you feel about risk?",
+      learn_trading:   "I'll explain every trade as I make it so you build real market knowledge. How comfortable are you with volatility?",
+      crypto_focus:    "Crypto mode — I'll focus on Bitcoin, Ethereum and top altcoins. How do you feel about market swings?",
+      improve_strategy:"I'll add AI signal analysis on top of your existing approach. What's your risk tolerance?",
+      automate:        "Let's automate your edge — I'll execute to your parameters. What's your risk tolerance?",
+      ai_confirmation: "I'll act as your second opinion on every trade. What's your risk preference?",
+      save_time:       "I'll handle the monitoring and execution — you set the rules. Risk preference?",
+      enhance_algo:    "Experienced trader mode — I'll skip the basics. What's your execution preference?",
+      portfolio_opt:   "Portfolio optimisation mode — I'll run correlation analysis and rebalancing. Execution preference?",
+      risk_adjusted:   "Risk-adjusted focus — Sharpe ratio matters here. Execution preference?",
+      yield:           "Yield maximisation — I'll scan for the best opportunities. How do you handle crypto volatility?",
+      diversify:       "Cross-asset diversification — smart risk spreading. Volatility tolerance?",
+      defi_strat:      "DeFi automation mode active. Volatility tolerance?",
+      alt_season:      "Alt season strategy locked in — I'll watch rotation signals. Which exchange do you use?",
+      institutional:   "Institutional-grade setup confirmed. How would you like to connect?",
+      risk_weighted:   "Risk-weighted portfolio mode. How would you like to set up?",
+      multi_asset:     "Multi-asset execution across markets. Connection preference?",
+    };
+    return responses[value] ?? "Got it — noted.";
+  }
+
+  if (field === "risk") {
+    const nextPrompt: Partial<Record<TraderClass, string>> = {
+      complete_novice:  " What's your starting budget?",
+      curious_saver:    " What's your starting budget?",
+      self_taught:      " Which markets do you trade?",
+      crypto_native:    " Which exchange do you use?",
+      experienced:      " You're all set — let's get you trading.",
+    };
+    const riskLabels: Record<string, string> = {
+      conservative:     "Conservative approach locked in — I'll protect your capital first.",
+      balanced:         "Balanced — steady growth without unnecessary exposure.",
+      moderate:         "Moderate risk — I'll pursue good opportunities without over-extending.",
+      aggressive:       "Aggressive mode — I'll chase high-conviction opportunities.",
+      volatility_based: "Volatility-based sizing — dynamic risk management.",
+      fixed:            "Fixed allocation confirmed — disciplined sizing.",
+      systematic:       "Systematic model confirmed.",
+      discretionary:    "Discretionary with guardrails — noted.",
+      custom:           "Custom parameters — you can fine-tune everything in Settings.",
+    };
+    return (riskLabels[value] ?? "Risk preference noted.") + (nextPrompt[cls] ?? "");
+  }
+
+  if (field === "budget") {
+    const budgetLabels: Record<string, string> = {
+      "25":  "£25 noted — a sensible starting point.",
+      "50":  "£50 confirmed.",
+      "100": "£100 confirmed — I'll build positions carefully.",
+      "250": "£250 — solid capital to work with.",
+      "500": "£500 or more — excellent, I'll build a diversified portfolio.",
+    };
+    return (budgetLabels[value] ?? "Budget noted.") + " What would you like to trade?";
+  }
+
+  if (field === "exchange") {
+    const exchangeLabels: Record<string, string> = {
+      alpaca:   "Alpaca confirmed — I'll trade US stocks and ETFs on your behalf.",
+      binance:  "Binance confirmed — I'll trade crypto.",
+      coinbase: "Coinbase Advanced Trade confirmed.",
+      mixed:    "Both markets — I'll diversify across stocks and crypto.",
+      dex:      "DEX noted — I'll use centralised exchanges for now. DEX support coming soon.",
+    };
+    return (exchangeLabels[value] ?? "Exchange noted.") + " You're all set — completing your setup now.";
+  }
+
+  if (field === "setup") {
+    if (value === "manual") return "Manual setup confirmed — add exchange API keys in Settings whenever you're ready.";
+    return "Let's get your API connected — redirecting you now.";
+  }
+
+  return "Got it — you're all set!";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Class display labels
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CLASS_LABEL: Record<TraderClass, string> = {
+  complete_novice:    "",
+  curious_saver:      "Saver-focused mode",
+  self_taught:        "Self-taught trader",
+  experienced:        "Professional mode",
+  crypto_native:      "Crypto trading mode",
+  semi_institutional: "Institutional setup",
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function ApexOnboardingChat() {
   const router = useRouter();
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "welcome",
-      role: "assistant",
-      content: "Hi! I'm Unitrader, your AI trading companion. Let's get you started. What's your main goal?",
-      timestamp: new Date(),
-    },
-  ]);
+
+  const [initializing, setInitializing]   = useState(true);
+  const [messages, setMessages]           = useState<Message[]>([]);
   const [detectedClass, setDetectedClass] = useState<TraderClass>("complete_novice");
-  const [currentStage, setCurrentStage] = useState(0);
-  const [isLoading, setIsLoading] = useState(false);
+  const [currentStage, setCurrentStage]   = useState(0);
   const [userResponses, setUserResponses] = useState<Record<string, string>>({});
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [showApiOption, setShowApiOption] = useState(false);
+  const [skipping, setSkipping]           = useState(false);
+  const [completing, setCompleting]       = useState(false);
+  const messagesEndRef                    = useRef<HTMLDivElement>(null);
 
-  const maxStages = STAGE_QUESTIONS[detectedClass].length;
+  // ── Load settings on mount — resume partial progress if found ──────────────
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await authApi.getSettings();
+        if (!mounted) return;
+        const s = res.data;
 
-  // Auto-scroll to bottom
+        const savedClass = (s.trader_class || "complete_novice") as TraderClass;
+        const hasGoal    = !!s.financial_goal;
+        const hasRisk    = !!s.risk_level_setting;
+        const isResuming = hasGoal || savedClass !== "complete_novice";
+
+        if (isResuming) {
+          const cls = savedClass;
+          const saved: Record<string, string> = {};
+          if (hasGoal && s.financial_goal)    saved["stage_0"] = s.financial_goal;
+          if (hasRisk && s.risk_level_setting) saved["stage_1"] = s.risk_level_setting;
+
+          const resumeStage = Math.min(
+            Object.keys(saved).length,
+            STAGE_QUESTIONS[cls].length - 1,
+          );
+
+          setDetectedClass(cls);
+          setUserResponses(saved);
+          setCurrentStage(resumeStage);
+          setMessages([{
+            id: "resume",
+            role: "assistant",
+            content: `Welcome back! Let's pick up where you left off. ${STAGE_QUESTIONS[cls][resumeStage]}`,
+            timestamp: new Date(),
+          }]);
+          devLog(`Onboarding resume: class=${cls} stage=${resumeStage}`);
+        } else {
+          setMessages([{
+            id: "welcome",
+            role: "assistant",
+            content: "Hi! I'm Unitrader, your AI trading companion. Takes about 30 seconds. What's your main goal?",
+            timestamp: new Date(),
+          }]);
+        }
+      } catch {
+        // Non-fatal — start fresh if settings unavailable
+        setMessages([{
+          id: "welcome",
+          role: "assistant",
+          content: "Hi! I'm Unitrader, your AI trading companion. Takes about 30 seconds. What's your main goal?",
+          timestamp: new Date(),
+        }]);
+      } finally {
+        if (mounted) setInitializing(false);
+      }
+    })();
+    return () => { mounted = false; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Get quick replies for current stage
+  const maxStages      = STAGE_QUESTIONS[detectedClass].length;
+  const progressPercent = Math.round(((currentStage + 1) / maxStages) * 100);
+
   const getQuickReplies = (): QuickReply[] => {
-    const stageMap: Record<TraderClass, string[]> = {
-      complete_novice: ["goal", "risk", "budget", "exchange"],
-      curious_saver: ["goal", "risk", "budget", "exchange"],
-      self_taught: ["goal", "risk", "exchange"],
-      experienced: ["goal", "risk"],
-      crypto_native: ["goal", "risk", "exchange"],
-      semi_institutional: ["api_option", "continue"],
-    };
-
-    const fields = stageMap[detectedClass];
-    const field = fields[currentStage];
-
-    if (field === "api_option") {
-      return [
-        { label: "Connect via API", value: "api" },
-        { label: "Manual setup", value: "manual" },
-      ];
-    }
-
-    return QUICK_REPLIES[detectedClass][field] || [];
+    const field = STAGE_MAP[detectedClass][currentStage];
+    return QUICK_REPLIES[detectedClass]?.[field] ?? [];
   };
 
-  // Handle user response
-  const handleQuickReply = async (value: string) => {
-    if (isLoading) return;
+  const handleQuickReply = (value: string) => {
+    if (completing || skipping) return;
 
-    // Special handlers
-    if (detectedClass === "experienced" && currentStage === 0) {
-      if (value === "skip_to_pro") {
-        router.push("/risk-disclosure");
-        return;
-      }
-    }
-
+    // Semi-institutional API routing
     if (detectedClass === "semi_institutional" && value === "api") {
-      router.push("/settings/api?setup=onboarding");
+      setCompleting(true);
+      setTimeout(async () => {
+        try { await authApi.completeWizard({ trader_class: "semi_institutional", goal: userResponses["stage_0"] }); } catch { /* non-fatal */ }
+        router.push("/settings/api?setup=onboarding");
+      }, 600);
       return;
     }
 
-    // Add user message
-    const userMsg: Message = {
-      id: `msg-${Date.now()}`,
-      role: "user",
-      content: value,
-      timestamp: new Date(),
-    };
-    setMessages((prev) => [...prev, userMsg]);
-    setUserResponses((prev) => ({ ...prev, [`stage_${currentStage}`]: value }));
+    const field           = STAGE_MAP[detectedClass][currentStage];
+    const updatedResponses = { ...userResponses, [`stage_${currentStage}`]: value };
+    setUserResponses(updatedResponses);
 
-    // Send to backend
-    setIsLoading(true);
-    try {
-      const response = await api.post("/api/onboarding/message", {
-        message: value,
-        stage: currentStage,
-        trader_class: detectedClass,
+    // Show the human-readable label in the user bubble
+    const label = getQuickReplies().find(r => r.value === value)?.label ?? value;
+    setMessages(prev => [...prev, {
+      id: `user-${Date.now()}`,
+      role: "user",
+      content: label,
+      timestamp: new Date(),
+    }]);
+
+    // Detect class from stage-0 answer before computing next stage
+    let nextClass = detectedClass;
+    if (currentStage === 0) {
+      nextClass = detectClassFromGoal(value);
+      if (nextClass !== detectedClass) {
+        setDetectedClass(nextClass);
+        devLog(`Trader class detected: ${nextClass}`);
+      }
+    }
+
+    const nextMaxStages = STAGE_QUESTIONS[nextClass].length;
+    const nextStage     = currentStage + 1;
+    const isComplete    = nextStage >= nextMaxStages;
+
+    const responseText = getLocalResponse(nextClass, field, value);
+    setMessages(prev => [...prev, {
+      id: `ai-${Date.now()}`,
+      role: "assistant",
+      content: isComplete ? `${responseText} Setting you up now — one moment...` : responseText,
+      timestamp: new Date(),
+    }]);
+
+    if (isComplete) {
+      setCompleting(true);
+
+      // Map stage responses back to named fields
+      const fields  = STAGE_MAP[nextClass];
+      const byField: Record<string, string> = {};
+      fields.forEach((f, i) => {
+        const val = i === currentStage ? value : updatedResponses[`stage_${i}`];
+        if (val) byField[f] = val;
       });
 
-      // Parse detected class from response
-      if (response.data.metadata?.detected_class) {
-        const newClass = response.data.metadata.detected_class as TraderClass;
-        if (newClass !== detectedClass) {
-          setDetectedClass(newClass);
-          devLog(`💡 Detected trader class: ${newClass}`);
-        }
-      }
-
-      // Add assistant response
-      const assistantMsg: Message = {
-        id: `msg-${Date.now()}`,
-        role: "assistant",
-        content: response.data.message,
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
-
-      // Move to next stage
-      const nextStage = currentStage + 1;
-      if (nextStage >= maxStages) {
-        // Wizard complete — persist to server so onboarding_complete is set
-        const allResponses = { ...userResponses, [`stage_${currentStage}`]: value };
-        const goal = allResponses["stage_0"] || undefined;
-        const risk = allResponses["stage_1"] || undefined;
-        const budget = Number(allResponses["stage_2"]) || undefined;
-        const exchange = allResponses["stage_3"] || undefined;
-
-        setTimeout(async () => {
-          try {
-            await authApi.completeWizard({
-              goal,
-              risk_level: risk,
-              budget,
-              exchange,
-              trader_class: detectedClass,
-            });
-          } catch {
-            // Non-fatal — server will still accept the route
-          }
-          try {
-            if (typeof window !== "undefined") {
-              window.localStorage.setItem("unitrader_onboarding_chat_completed_v1", "true");
-            }
-          } catch {
-            // ignore
-          }
-          router.push("/risk-disclosure");
-        }, 1500);
-      } else {
-        setCurrentStage(nextStage);
-      }
-    } catch (error) {
-      devLogError("Onboarding error", error);
-      const errorMsg: Message = {
-        id: `msg-${Date.now()}`,
-        role: "assistant",
-        content: "Sorry, something went wrong. Please try again.",
-        timestamp: new Date(),
-      };
-      setMessages((prev) => [...prev, errorMsg]);
-    } finally {
-      setIsLoading(false);
+      setTimeout(async () => {
+        try {
+          await authApi.completeWizard({
+            goal:         byField.goal,
+            risk_level:   byField.risk,
+            budget:       byField.budget ? Number(byField.budget) : undefined,
+            exchange:     byField.exchange ?? byField.setup,
+            trader_class: nextClass,
+          });
+        } catch { /* non-fatal — proceed to risk disclosure regardless */ }
+        try {
+          window.localStorage.setItem("unitrader_onboarding_chat_completed_v1", "true");
+        } catch { /* ignore */ }
+        router.push("/risk-disclosure");
+      }, 1500);
+    } else {
+      setCurrentStage(nextStage);
     }
   };
-
-  const [skipping, setSkipping] = useState(false);
 
   const handleSkip = async () => {
-    if (skipping) return;
+    if (skipping || completing) return;
     setSkipping(true);
-    try {
-      await authApi.skipOnboarding();
-      router.push("/trade");
-    } catch {
-      router.push("/trade");
-    }
+    try { await authApi.skipOnboarding(); } catch { /* non-fatal */ }
+    router.push("/trade");
   };
 
+  // ── Loading screen while settings load ─────────────────────────────────────
+  if (initializing) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-gradient-to-b from-slate-900 to-slate-800">
+        <div className="flex space-x-2">
+          <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" />
+          <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "100ms" }} />
+          <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "200ms" }} />
+        </div>
+      </div>
+    );
+  }
+
   const quickReplies = getQuickReplies();
-  const progressPercent = ((currentStage + 1) / maxStages) * 100;
 
   return (
     <div className="flex flex-col h-screen bg-gradient-to-b from-slate-900 to-slate-800 text-white">
+
       {/* Header */}
       <div className="px-4 py-3 border-b border-slate-700 bg-slate-800/50">
         <div className="flex items-center justify-between mb-2">
-          <h1 className="text-lg font-semibold">Welcome to Unitrader</h1>
+          <h1 className="text-lg font-semibold">Unitrader Setup</h1>
           <div className="flex items-center gap-3">
             <button
               onClick={handleSkip}
-              disabled={skipping}
-              className="text-xs text-slate-500 hover:text-slate-300 transition-colors underline underline-offset-2"
+              disabled={skipping || completing}
+              className="text-xs text-slate-500 hover:text-slate-300 transition-colors underline underline-offset-2 disabled:opacity-40"
             >
               {skipping ? "Skipping…" : "Skip — trade now"}
             </button>
@@ -395,46 +482,42 @@ export default function ApexOnboardingChat() {
         </div>
         <div className="w-full bg-slate-700 rounded-full h-1 overflow-hidden">
           <div
-            className="bg-gradient-to-r from-cyan-500 to-blue-500 h-full transition-all duration-300"
+            className="bg-gradient-to-r from-cyan-500 to-blue-500 h-full transition-all duration-500"
             style={{ width: `${progressPercent}%` }}
           />
         </div>
-        {detectedClass !== "complete_novice" && (
-          <p className="text-xs text-cyan-400 mt-2">
-            {detectedClass === "crypto_native" && "🚀 Crypto trading mode active"}
-            {detectedClass === "experienced" && "⚡ Professional mode"}
-            {detectedClass === "semi_institutional" && "🏦 Institutional setup"}
-            {detectedClass === "self_taught" && "📊 Self-taught trader"}
-            {detectedClass === "curious_saver" && "💰 Saver focused"}
-          </p>
+        {CLASS_LABEL[detectedClass] && (
+          <p className="text-xs text-cyan-400 mt-1.5">{CLASS_LABEL[detectedClass]}</p>
         )}
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {messages.map((msg) => (
           <div
             key={msg.id}
             className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
           >
             <div
-              className={`max-w-xs px-4 py-3 rounded-lg ${
+              className={`max-w-xs sm:max-w-sm px-4 py-3 rounded-2xl text-sm leading-relaxed ${
                 msg.role === "user"
                   ? "bg-cyan-600 text-white rounded-br-none"
                   : "bg-slate-700 text-slate-100 rounded-bl-none"
               }`}
             >
-              <p className="text-sm leading-relaxed">{msg.content}</p>
+              {msg.content}
             </div>
           </div>
         ))}
-        {isLoading && (
+
+        {/* Typing indicator while completing */}
+        {completing && (
           <div className="flex justify-start">
-            <div className="bg-slate-700 px-4 py-3 rounded-lg rounded-bl-none">
-              <div className="flex space-x-2">
+            <div className="bg-slate-700 px-4 py-3 rounded-2xl rounded-bl-none">
+              <div className="flex space-x-1.5">
                 <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" />
-                <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce delay-100" />
-                <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce delay-200" />
+                <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "100ms" }} />
+                <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: "200ms" }} />
               </div>
             </div>
           </div>
@@ -443,28 +526,19 @@ export default function ApexOnboardingChat() {
       </div>
 
       {/* Quick Replies */}
-      <div className="px-4 pb-4 space-y-2 max-h-[40vh] overflow-y-auto">
-        {currentStage === 0 && detectedClass === "experienced" && (
-          <button
-            onClick={() => handleQuickReply("skip_to_pro")}
-            disabled={isLoading}
-            className="w-full px-3 py-2 text-sm font-medium bg-gradient-to-r from-purple-600 to-pink-600 rounded-lg hover:from-purple-700 hover:to-pink-700 disabled:opacity-50 transition"
-          >
-            ⚡ Skip to Pro mode
-          </button>
-        )}
-
-        {quickReplies.map((reply) => (
-          <button
-            key={reply.value}
-            onClick={() => handleQuickReply(reply.value)}
-            disabled={isLoading}
-            className="w-full px-3 py-2 text-sm font-medium text-left bg-slate-700 hover:bg-slate-600 rounded-lg disabled:opacity-50 transition border border-slate-600 hover:border-slate-500"
-          >
-            {reply.label}
-          </button>
-        ))}
-      </div>
+      {!completing && (
+        <div className="px-4 pb-4 space-y-2 max-h-[45vh] overflow-y-auto">
+          {quickReplies.map((reply) => (
+            <button
+              key={reply.value}
+              onClick={() => handleQuickReply(reply.value)}
+              className="w-full px-3 py-2.5 text-sm font-medium text-left bg-slate-700 hover:bg-slate-600 rounded-xl transition border border-slate-600 hover:border-slate-500 active:scale-[0.98]"
+            >
+              {reply.label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Footer */}
       <div className="px-4 py-3 text-center text-xs text-slate-500 border-t border-slate-700">
