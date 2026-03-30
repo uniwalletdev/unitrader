@@ -1,7 +1,7 @@
 /**
  * GalaxyLoader — brand loading animation.
  *
- * Spins the ring logo image (public/logo-ring.png) using a plain CSS
+ * Spins the galaxy logo image (public/logo-galaxy.png) using a plain CSS
  * animation. Drop the PNG/SVG into public/ and it works immediately.
  *
  * Usage:
@@ -25,12 +25,12 @@ export default function GalaxyLoader({
   const spinner = (
     // eslint-disable-next-line @next/next/no-img-element
     <img
-      src="/logo-ring.png"
+      src="/logo-galaxy.png"
       alt="Loading"
       width={size}
       height={size}
-      className="animate-spin"
-      style={{ animationDuration: "2.4s" }}
+      className="uw-galaxy-spin"
+      style={{ width: size, height: size }}
     />
   );
 

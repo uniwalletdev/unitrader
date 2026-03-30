@@ -207,7 +207,7 @@ export default function OnboardingPage() {
       <>
         <Head>
           <title>Before we start — Unitrader</title>
-          <link rel="icon" type="image/png" href="/logo-ring.png" />
+          <link rel="icon" type="image/png" href="/logo-galaxy.png" />
         </Head>
         <ContextStep onContinue={() => setStep(1)} />
       </>
@@ -219,14 +219,14 @@ export default function OnboardingPage() {
     <>
       <Head>
         <title>Name Your AI — Unitrader</title>
-        <link rel="icon" type="image/png" href="/logo-ring.png" />
+        <link rel="icon" type="image/png" href="/logo-galaxy.png" />
       </Head>
 
       <div className="min-h-screen bg-dark-950 flex flex-col items-center justify-center px-4">
         <div className="w-full max-w-md animate-fade-in">
           <div className="flex items-center gap-2.5 mb-8 justify-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo-ring.png" alt="Unitrader" className="w-9 h-9 object-contain" />
+            <img src="/logo-galaxy.png" alt="Unitrader" className="w-9 h-9 object-contain" />
             <span className="text-white font-bold text-xl tracking-tight">Unitrader</span>
           </div>
 

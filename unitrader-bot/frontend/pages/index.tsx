@@ -72,8 +72,8 @@ export default function LandingPage() {
           content="Unitrader is your personal AI trader. The same technology that's made hedge funds billions — now available to anyone."
         />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <link rel="icon" type="image/png" href="/logo-ring.png" />
-        <link rel="apple-touch-icon" href="/logo-ring.png" />
+        <link rel="icon" type="image/png" href="/logo-galaxy.png" />
+        <link rel="apple-touch-icon" href="/logo-galaxy.png" />
       </Head>
 
       {/* ── Navbar ─────────────────────────────────────────────────── */}
@@ -82,7 +82,7 @@ export default function LandingPage() {
           {/* Logo */}
           <Link href="/" className="flex items-center gap-2.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logo-ring.png" alt="Unitrader" className="h-9 w-9 object-contain" />
+            <img src="/logo-galaxy.png" alt="Unitrader" className="h-9 w-9 object-contain" />
             <span className="text-lg font-bold text-white">Unitrader</span>
           </Link>
 

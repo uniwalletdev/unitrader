@@ -177,4 +177,19 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 0 10px rgba(10, 219, 106, 0.3), 0 2px 4px rgba(0,0,0,0.3);
 }
 
+/* GalaxyLoader (Milky Way style spin) */
+@keyframes uw-galaxy-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.uw-galaxy-spin {
+  animation: uw-galaxy-spin 9.5s linear infinite;
+  transform-origin: center center;
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .uw-galaxy-spin { animation: none; }
+}
 

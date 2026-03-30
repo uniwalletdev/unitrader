@@ -1477,8 +1477,8 @@ export default function AppPage() {
       <Head>
         <title>{user?.ai_name ? `${user.ai_name} — Unitrader` : "Unitrader App"}</title>
         <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover" />
-        <link rel="icon" type="image/png" href="/logo-ring.png" />
-        <link rel="apple-touch-icon" href="/logo-ring.png" />
+        <link rel="icon" type="image/png" href="/logo-galaxy.png" />
+        <link rel="apple-touch-icon" href="/logo-galaxy.png" />
       </Head>
 
       <div className="flex h-screen overflow-hidden bg-dark-950">

@@ -5,8 +5,8 @@ import "@/styles/globals.css";
 export const metadata: Metadata = {
   title: "Unitrader — Your Personal AI Trader",
   icons: {
-    icon: "/logo-ring.png",
-    apple: "/logo-ring.png",
+    icon: "/logo-galaxy.png",
+    apple: "/logo-galaxy.png",
   },
 };
 
