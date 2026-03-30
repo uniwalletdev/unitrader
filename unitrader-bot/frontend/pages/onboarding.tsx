@@ -8,6 +8,7 @@ import Head from "next/head";
 import { useRouter } from "next/router";
 import { useState, useEffect, useCallback } from "react";
 import { ArrowRight, Zap, RefreshCw } from "lucide-react";
+import GalaxyLoader from "@/components/layout/GalaxyLoader";
 import { authApi } from "@/lib/api";
 
 // ─────────────────────────────────────────────
@@ -175,10 +176,7 @@ export default function OnboardingPage() {
   if (!isLoaded || syncing) {
     return (
       <div className="min-h-screen bg-dark-950 flex items-center justify-center">
-        <div className="text-center">
-          <RefreshCw size={18} className="animate-spin text-brand-400 mx-auto mb-4" />
-          <p className="text-dark-400 text-sm">Setting up your account…</p>
-        </div>
+        <GalaxyLoader size={72} label="Setting up your account…" />
       </div>
     );
   }

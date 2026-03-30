@@ -23,6 +23,7 @@ import TrialChoiceModal from "@/components/TrialChoiceModal";
 import AccountDashboard from "@/components/AccountDashboard";
 import { useTrialStatus, clearTrialCache } from "@/hooks/useTrialStatus";
 import MobileNav from "@/components/layout/MobileNav";
+import GalaxyLoader from "@/components/layout/GalaxyLoader";
 import { isNative } from "@/hooks/useCapacitor";
 
 // ─────────────────────────────────────────────
@@ -1430,10 +1431,7 @@ export default function AppPage() {
   if (!authChecked) {
     return (
       <div className="flex h-screen items-center justify-center bg-dark-950">
-        <div className="flex flex-col items-center gap-3">
-          <RefreshCw size={18} className="animate-spin text-brand-400" />
-          <span className="text-xs text-dark-500">Loading...</span>
-        </div>
+        <GalaxyLoader size={72} label="Loading your account…" />
       </div>
     );
   }

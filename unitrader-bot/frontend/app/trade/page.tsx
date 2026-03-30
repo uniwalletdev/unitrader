@@ -2,7 +2,8 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Loader2, CheckCircle } from "lucide-react";
+import { CheckCircle } from "lucide-react";
+import GalaxyLoader from "@/components/layout/GalaxyLoader";
 import { api, authApi, tradingApi } from "@/lib/api";
 
 import ApexOnboardingChat from "@/components/onboarding/ApexOnboardingChat";
@@ -386,7 +387,7 @@ function TradePage() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-dark-950">
-        <Loader2 size={26} className="animate-spin text-brand-500" />
+        <GalaxyLoader size={72} label="Loading your trader…" />
       </div>
     );
   }
@@ -778,7 +779,7 @@ function TradePage() {
 
 export default function TradePageWrapper() {
   return (
-    <Suspense fallback={<div className="flex h-screen items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-dark-400" /></div>}>
+    <Suspense fallback={<div className="flex h-screen items-center justify-center bg-dark-950"><GalaxyLoader size={64} /></div>}>
       <TradePage />
     </Suspense>
   );
