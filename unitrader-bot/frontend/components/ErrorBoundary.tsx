@@ -23,35 +23,6 @@ export default class ErrorBoundary extends React.Component<
     // Do NOT send secrets; error objects may include request details.
     // eslint-disable-next-line no-console
     console.error("Client-side exception", err);
-
-    // #region agent log
-    try {
-      const e = err instanceof Error ? err : new Error(String(err));
-      fetch("http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "026d4d",
-        },
-        body: JSON.stringify({
-          sessionId: "026d4d",
-          runId: "pre-fix",
-          hypothesisId: "H0",
-          location: "components/ErrorBoundary.tsx:componentDidCatch",
-          message: "client exception caught",
-          data: {
-            name: e.name,
-            message: e.message,
-            stackTop: e.stack?.split("\n").slice(0, 12).join("\n"),
-            href: typeof window !== "undefined" ? window.location.href : "no-window",
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-    } catch {
-      // ignore
-    }
-    // #endregion
   }
 
   render() {

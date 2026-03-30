@@ -1,34 +1,8 @@
 import { SignUp } from "@clerk/nextjs";
 import Head from "next/head";
 import Link from "next/link";
-import { useEffect } from "react";
 
 export default function RegisterPage() {
-  useEffect(() => {
-    // #region agent log
-    fetch("http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "026d4d",
-      },
-      body: JSON.stringify({
-        sessionId: "026d4d",
-        runId: "pre-fix",
-        hypothesisId: "H3",
-        location: "pages/register/[[...index]].tsx:useEffect(mount)",
-        message: "register page mounted",
-        data: {
-          pathname:
-            typeof window !== "undefined" ? window.location.pathname : "no-window",
-          afterSignUpUrl: "/onboarding",
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-  }, []);
-
   return (
     <>
       <Head>

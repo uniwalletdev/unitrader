@@ -17,7 +17,6 @@
  */
 
 import React, { useState, useEffect, useRef } from "react";
-import { useRouter } from "next/router";
 import Link from "next/link";
 import { authApi } from "@/lib/api";
 import { devLog } from "@/lib/devLog";
@@ -276,7 +275,10 @@ const CLASS_LABEL: Record<TraderClass, string> = {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function ApexOnboardingChat() {
-  const router = useRouter();
+  const navigate = (href: string) => {
+    if (typeof window === "undefined") return;
+    window.location.href = href;
+  };
 
   const [initializing, setInitializing]   = useState(true);
   const [messages, setMessages]           = useState<Message[]>([]);
@@ -367,7 +369,7 @@ export default function ApexOnboardingChat() {
       setCompleting(true);
       setTimeout(async () => {
         try { await authApi.completeWizard({ trader_class: "semi_institutional", goal: userResponses["stage_0"] }); } catch { /* non-fatal */ }
-        router.push("/settings/api?setup=onboarding");
+        navigate("/settings/api?setup=onboarding");
       }, 600);
       return;
     }
@@ -431,7 +433,7 @@ export default function ApexOnboardingChat() {
         try {
           window.localStorage.setItem("unitrader_onboarding_chat_completed_v1", "true");
         } catch { /* ignore */ }
-        router.push("/risk-disclosure");
+        navigate("/risk-disclosure");
       }, 1500);
     } else {
       setCurrentStage(nextStage);
@@ -442,7 +444,7 @@ export default function ApexOnboardingChat() {
     if (skipping || completing) return;
     setSkipping(true);
     try { await authApi.skipOnboarding(); } catch { /* non-fatal */ }
-    router.push("/trade");
+    navigate("/trade");
   };
 
   // ── Loading screen while settings load ─────────────────────────────────────

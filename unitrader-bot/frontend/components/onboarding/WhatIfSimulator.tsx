@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/router";
 import { authApi, api } from "@/lib/api";
 import { BarChart3, ExternalLink, Loader2, X } from "lucide-react";
 
@@ -78,7 +77,20 @@ function SimpleBars({
 }
 
 export default function WhatIfSimulator({ mode }: { mode: Mode }) {
-  const router = useRouter();
+  const getWelcomeParam = () => {
+    if (typeof window === "undefined") return false;
+    return new URLSearchParams(window.location.search).get("welcome") === "true";
+  };
+  const clearWelcomeParam = () => {
+    if (typeof window === "undefined") return;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("welcome");
+      window.history.replaceState({}, "", url.toString());
+    } catch {
+      // ignore
+    }
+  };
   const [traderClass, setTraderClass] = useState<TraderClass | null>(null);
   const [approvedAssets, setApprovedAssets] = useState<string[]>([]);
 
@@ -91,8 +103,15 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
 
   const debounceRef = useRef<number | null>(null);
 
-  const welcomeRequested =
-    (mode === "welcome_modal" || mode === "modal") && router.query?.welcome === "true";
+  const [welcomeRequested, setWelcomeRequested] = useState(false);
+
+  useEffect(() => {
+    if (mode !== "welcome_modal" && mode !== "modal") {
+      setWelcomeRequested(false);
+      return;
+    }
+    setWelcomeRequested(getWelcomeParam());
+  }, [mode]);
 
   useEffect(() => {
     let mounted = true;
@@ -424,9 +443,8 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
           <button
             type="button"
             onClick={() => {
-              const q = { ...router.query };
-              delete q.welcome;
-              router.replace({ pathname: router.pathname, query: q }, undefined, { shallow: true });
+              clearWelcomeParam();
+              setWelcomeRequested(false);
             }}
             className="rounded-lg p-2 text-dark-400 hover:bg-dark-900 hover:text-white"
             aria-label="Close"
@@ -439,9 +457,8 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
           <button
             type="button"
             onClick={() => {
-              const q = { ...router.query };
-              delete q.welcome;
-              router.replace({ pathname: router.pathname, query: q }, undefined, { shallow: true });
+              clearWelcomeParam();
+              setWelcomeRequested(false);
             }}
             className="btn-primary"
           >
