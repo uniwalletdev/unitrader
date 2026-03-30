@@ -217,6 +217,11 @@ function TradePage() {
   const searchParams = useSearchParams();
   const welcome = searchParams?.get("welcome") === "true";
   const debug = searchParams?.get("debug") || "";
+  const debugSet = useMemo(
+    () => new Set((debug || "").split(",").map((x) => x.trim()).filter(Boolean)),
+    [debug],
+  );
+  const dbg = (key: string) => debugSet.has(key);
 
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [trust, setTrust] = useState<TrustLadder | null>(null);
@@ -304,7 +309,8 @@ function TradePage() {
   }, [toast]);
 
   // Debug isolation toggles (production-safe). Use:
-  // /trade?debug=bare to bypass complex UI and isolate hook-order crashes.
+  // - /trade?debug=bare to bypass complex UI and isolate hook-order crashes.
+  // - /trade?debug=no_sim,no_market,no_picker,no_chart,no_explain to bisect which child triggers it.
   if (debug === "bare") {
     return (
       <div className="min-h-screen bg-dark-950 flex items-center justify-center px-6">
@@ -436,7 +442,7 @@ function TradePage() {
     <div className="min-h-screen bg-dark-950">
       <RiskWarning variant="bar" />
       <div className="px-4 py-6 md:px-6">
-      {showSimulatorModal && <WhatIfSimulator mode="modal" />}
+      {!dbg("no_sim") && showSimulatorModal && <WhatIfSimulator mode="modal" />}
 
       {toast && (
         <div className="fixed right-4 top-4 z-50 rounded-xl border border-dark-800 bg-dark-950 px-4 py-3 text-sm text-white shadow-xl">
@@ -479,14 +485,16 @@ function TradePage() {
       </div>
 
       {/* Market status */}
-      <div className="mb-4">
-        <MarketStatusBar
-          traderClass={traderClass}
-          exchange={exchange}
-          symbol={symbol}
-          onStatusChange={setMarketStatus}
-        />
-      </div>
+      {!dbg("no_market") && (
+        <div className="mb-4">
+          <MarketStatusBar
+            traderClass={traderClass}
+            exchange={exchange}
+            symbol={symbol}
+            onStatusChange={setMarketStatus}
+          />
+        </div>
+      )}
 
       {/* Trust ladder banner for A */}
       {layout === "A" && trust && (
@@ -510,12 +518,14 @@ function TradePage() {
       {layout === "A" && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="space-y-4">
-            <BrandPicker
-              exchange={exchange}
-              onManualSymbol={(s) => setSymbol(s.toUpperCase())}
-              onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
-              selectedSymbols={symbol ? [symbol] : []}
-            />
+            {!dbg("no_picker") && (
+              <BrandPicker
+                exchange={exchange}
+                onManualSymbol={(s) => setSymbol(s.toUpperCase())}
+                onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
+                selectedSymbols={symbol ? [symbol] : []}
+              />
+            )}
             <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} helperText={amountHelperText} />
             <RiskSection variant="plain" />
             <button
@@ -533,13 +543,15 @@ function TradePage() {
           </div>
 
           <AIAnalysisCard analysis={analysis}>
-            <ExplanationToggle
-              explanations={{
-                expert: analysis?.expert ?? "—",
-                simple: analysis?.simple ?? analysis?.message ?? "—",
-                metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
-              }}
-            />
+            {!dbg("no_explain") && (
+              <ExplanationToggle
+                explanations={{
+                  expert: analysis?.expert ?? "—",
+                  simple: analysis?.simple ?? analysis?.message ?? "—",
+                  metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
+                }}
+              />
+            )}
             <button
               type="button"
               onClick={() => setConfirmOpen(true)}
@@ -556,15 +568,17 @@ function TradePage() {
       {layout === "B" && (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div className="space-y-4">
-            <BrandPicker
-              exchange={exchange}
-              onManualSymbol={(s) => setSymbol(s.toUpperCase())}
-              onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
-              selectedSymbols={symbol ? [symbol] : []}
-            />
+            {!dbg("no_picker") && (
+              <BrandPicker
+                exchange={exchange}
+                onManualSymbol={(s) => setSymbol(s.toUpperCase())}
+                onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
+                selectedSymbols={symbol ? [symbol] : []}
+              />
+            )}
             {symbol && (
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                <PriceChart symbol={symbol} traderClass="self_taught" signal="NONE" />
+                {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="self_taught" signal="NONE" />}
               </div>
             )}
             <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" helperText={amountHelperText} />
@@ -581,13 +595,15 @@ function TradePage() {
 
           <div className="space-y-4">
             <AIAnalysisCard analysis={analysis} title="AI analysis">
-              <ExplanationToggle
-                explanations={{
-                  expert: analysis?.expert ?? "—",
-                  simple: analysis?.simple ?? analysis?.message ?? "—",
-                  metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
-                }}
-              />
+              {!dbg("no_explain") && (
+                <ExplanationToggle
+                  explanations={{
+                    expert: analysis?.expert ?? "—",
+                    simple: analysis?.simple ?? analysis?.message ?? "—",
+                    metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
+                  }}
+                />
+              )}
               <button
                 type="button"
                 onClick={() => setConfirmOpen(true)}
@@ -634,7 +650,7 @@ function TradePage() {
 
             {symbol && (
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                <PriceChart symbol={symbol} traderClass="experienced" signal="NONE" />
+                {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="experienced" signal="NONE" />}
               </div>
             )}
 
@@ -731,15 +747,17 @@ function TradePage() {
             <div className="rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
               Fear & Greed widget (placeholder)
             </div>
-            <BrandPicker
-              exchange={exchange}
-              onManualSymbol={(s) => setSymbol(s.toUpperCase())}
-              onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
-              selectedSymbols={symbol ? [symbol] : []}
-            />
+            {!dbg("no_picker") && (
+              <BrandPicker
+                exchange={exchange}
+                onManualSymbol={(s) => setSymbol(s.toUpperCase())}
+                onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
+                selectedSymbols={symbol ? [symbol] : []}
+              />
+            )}
             {symbol && (
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                <PriceChart symbol={symbol} traderClass="crypto_native" signal="NONE" />
+                {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="crypto_native" signal="NONE" />}
               </div>
             )}
             <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" helperText={amountHelperText} />
@@ -755,13 +773,15 @@ function TradePage() {
           </div>
 
           <AIAnalysisCard analysis={analysis}>
-            <ExplanationToggle
-              explanations={{
-                expert: analysis?.expert ?? "—",
-                simple: analysis?.simple ?? analysis?.message ?? "—",
-                metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
-              }}
-            />
+            {!dbg("no_explain") && (
+              <ExplanationToggle
+                explanations={{
+                  expert: analysis?.expert ?? "—",
+                  simple: analysis?.simple ?? analysis?.message ?? "—",
+                  metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
+                }}
+              />
+            )}
             <button
               type="button"
               onClick={() => setConfirmOpen(true)}
