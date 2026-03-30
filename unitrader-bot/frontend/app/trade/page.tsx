@@ -222,10 +222,12 @@ function TradePage() {
     [debug],
   );
   const dbg = (key: string) => debugSet.has(key);
+  const bare = dbg("bare");
+  const trace = dbg("trace");
 
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [trust, setTrust] = useState<TrustLadder | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !bare);
 
   const traderClass: TraderClass = settings?.trader_class ?? "complete_novice";
 
@@ -245,13 +247,14 @@ function TradePage() {
   // Show a one-time banner when user skipped onboarding via the escape hatch
   const [skipBanner, setSkipBanner] = useState(false);
   useEffect(() => {
+    if (bare) return;
     if (typeof window === "undefined") return;
     const skipped = sessionStorage.getItem("unitrader_onboarding_skipped");
     if (skipped === "true") {
       setSkipBanner(true);
       sessionStorage.removeItem("unitrader_onboarding_skipped");
     }
-  }, []);
+  }, [bare]);
 
   const isPaper = useMemo(() => {
     // novice/saver: paper mode until trust stage advances; else live
@@ -271,6 +274,7 @@ function TradePage() {
   );
 
   useEffect(() => {
+    if (bare) return;
     let mounted = true;
     (async () => {
       setLoading(true);
@@ -300,7 +304,18 @@ function TradePage() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [bare]);
+
+  useEffect(() => {
+    if (!trace) return;
+    if (typeof window === "undefined") return;
+    try {
+      const n = Number(sessionStorage.getItem("unitrader_trade_mounts") || "0") + 1;
+      sessionStorage.setItem("unitrader_trade_mounts", String(n));
+    } catch {
+      // ignore
+    }
+  }, [trace]);
 
   useEffect(() => {
     if (!toast) return;
@@ -311,7 +326,11 @@ function TradePage() {
   // Debug isolation toggles (production-safe). Use:
   // - /trade?debug=bare to bypass complex UI and isolate hook-order crashes.
   // - /trade?debug=no_sim,no_market,no_picker,no_chart,no_explain to bisect which child triggers it.
-  if (debug === "bare") {
+  if (bare) {
+    const mounts =
+      typeof window !== "undefined"
+        ? Number(sessionStorage.getItem("unitrader_trade_mounts") || "0")
+        : 0;
     return (
       <div className="min-h-screen bg-dark-950 flex items-center justify-center px-6">
         <div className="rounded-2xl border border-dark-800 bg-dark-950 p-6 text-center">
@@ -319,6 +338,12 @@ function TradePage() {
           <div className="mt-2 text-xs text-dark-400">
             If this renders, the crash is in a child component.
           </div>
+          {trace && (
+            <div className="mt-3 text-[11px] text-dark-500">
+              mounts this session: {mounts} · href:{" "}
+              {typeof window !== "undefined" ? window.location.href : "—"}
+            </div>
+          )}
         </div>
       </div>
     );
