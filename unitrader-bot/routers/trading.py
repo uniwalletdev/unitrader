@@ -12,6 +12,7 @@ Endpoints:
     POST /api/trading/exchange-keys       — Save encrypted exchange API keys
     GET  /api/trading/exchange-keys       — List connected exchanges
     DELETE /api/trading/exchange-keys/{exchange} — Remove exchange keys
+    GET  /api/trading/exchange-assets     — Instant tier-1 symbol list for connected exchange (no AI)
     GET  /api/trading/market-top          — Dynamic AI-ranked top picks (hourly cache)
     GET  /api/trading/symbol-search       — Fuzzy symbol + company name search
     GET  /api/trading/ai-picks            — AI analysis of dynamic symbol candidates
@@ -485,6 +486,36 @@ async def get_market_top(
             status_code=500,
             detail="market_top_unavailable",
         )
+
+
+# ─────────────────────────────────────────────
+# GET /api/trading/exchange-assets — Instant tier-1 symbol list (no AI)
+# ─────────────────────────────────────────────
+
+@router.get("/exchange-assets")
+async def get_exchange_assets(
+    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    limit: int = Query(default=8, ge=1, le=20),
+    current_user=Depends(get_current_user),
+):
+    """Return the top N most liquid symbols for a connected exchange — no AI analysis.
+
+    This is the instant tier-1 response (<50ms) that populates the dashboard
+    immediately while AI analysis loads in the background via /market-top.
+
+    Symbols are ordered by approximate liquidity / market importance. The
+    frontend renders tiles immediately using WebSocket live prices; AI decisions
+    are added when /market-top completes (tier-2 enhancement).
+    """
+    from src.watchlists import SYMBOL_UNIVERSE, SYMBOL_LABELS
+
+    ex = exchange.lower()
+    universe = SYMBOL_UNIVERSE.get(ex, SYMBOL_UNIVERSE["alpaca"])[:limit]
+    data = [
+        {"symbol": sym, "label": SYMBOL_LABELS.get(sym, sym)}
+        for sym in universe
+    ]
+    return {"status": "success", "data": data}
 
 
 # ─────────────────────────────────────────────

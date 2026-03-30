@@ -241,10 +241,15 @@ export default function BrandPicker({
   const [trending, setTrending] = useState<Array<{ symbol: string; brand: string; volume_change_pct?: number | null }>>([]);
   const [aiFeatureItems, setAiFeatureItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
 
-  // Live grid — populated from /api/trading/market-top for each exchange
+  // Tier-1: instant symbol list from /exchange-assets (no AI, <100ms)
+  const [tier1StockItems, setTier1StockItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
+  const [tier1CryptoItems, setTier1CryptoItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
+  const [tier1Loading, setTier1Loading] = useState(true);
+
+  // Tier-2: AI-ranked picks from /market-top (slow, enhances tier-1 in background)
   const [liveStockItems, setLiveStockItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
   const [liveCryptoItems, setLiveCryptoItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
-  const [gridLoading, setGridLoading] = useState(true);
+  const [aiEnhanced, setAiEnhanced] = useState(false);
 
   const selections = selectedSymbols ?? [];
   const setSelections = (next: string[]) => {
@@ -321,10 +326,36 @@ export default function BrandPicker({
     return () => { mounted = false; };
   }, [traderClass]);
 
-  // Fetch live top picks from both exchanges to power the main grid
+  // Tier-1: fetch instant symbol list (no AI) — populates grid in <100ms
   useEffect(() => {
     let mounted = true;
-    setGridLoading(true);
+    const mapItem = (d: any) => ({
+      symbol: d.symbol as string,
+      brand: (d.label || BRAND_MAP[d.symbol as string] || d.symbol) as string,
+    });
+    Promise.all([
+      api.get("/api/trading/exchange-assets", { params: { exchange: "alpaca", limit: 9 } }),
+      api.get("/api/trading/exchange-assets", { params: { exchange: "binance", limit: 6 } }),
+    ])
+      .then(([stockRes, cryptoRes]) => {
+        if (!mounted) return;
+        setTier1StockItems((stockRes.data?.data || []).map(mapItem));
+        setTier1CryptoItems((cryptoRes.data?.data || []).map(mapItem));
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setTier1StockItems([]);
+        setTier1CryptoItems([]);
+      })
+      .finally(() => {
+        if (mounted) setTier1Loading(false);
+      });
+    return () => { mounted = false; };
+  }, []);
+
+  // Tier-2: fetch AI-ranked picks in background — silently enhances the grid
+  useEffect(() => {
+    let mounted = true;
     const mapItem = (d: any) => ({
       symbol: d.symbol as string,
       brand: (d.label || BRAND_MAP[d.symbol as string] || d.symbol) as string,
@@ -337,15 +368,13 @@ export default function BrandPicker({
         if (!mounted) return;
         setLiveStockItems((stockRes.data?.data || []).map(mapItem));
         setLiveCryptoItems((cryptoRes.data?.data || []).map(mapItem));
+        setAiEnhanced(true);
       })
       .catch(() => {
         if (!mounted) return;
-        setLiveStockItems([]);
-        setLiveCryptoItems([]);
+        // Keep tier-1 items on tier-2 failure — no disruption to user
       })
-      .finally(() => {
-        if (mounted) setGridLoading(false);
-      });
+      .finally(() => {});
     return () => { mounted = false; };
   }, []);
 
@@ -373,8 +402,9 @@ export default function BrandPicker({
   }, [traderClass, favourites, trending, aiFeatureItems]);
 
   const gridItems = useMemo(() => {
-    const stocks = liveStockItems ?? [];
-    const crypto = liveCryptoItems ?? [];
+    // Prefer AI-enhanced tier-2; fall back to instant tier-1
+    const stocks = liveStockItems ?? tier1StockItems ?? [];
+    const crypto = liveCryptoItems ?? tier1CryptoItems ?? [];
     const base =
       category === "stocks"
         ? stocks
@@ -388,7 +418,7 @@ export default function BrandPicker({
       (x) =>
         x.symbol.toLowerCase().includes(q) || x.brand.toLowerCase().includes(q),
     );
-  }, [category, search, liveStockItems, liveCryptoItems]);
+  }, [category, search, liveStockItems, liveCryptoItems, tier1StockItems, tier1CryptoItems]);
 
   // self_taught: load RSI quick stats for visible symbols
   useEffect(() => {
@@ -521,9 +551,9 @@ export default function BrandPicker({
 
   return (
     <div className="space-y-4">
-      {loadingSettings || gridLoading ? (
+      {loadingSettings || tier1Loading ? (
         <div className="space-y-3">
-          <div className="text-xs text-dark-400 animate-pulse">Fetching best opportunities right now…</div>
+          <div className="text-xs text-dark-400 animate-pulse">Loading tradable assets…</div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 6 }).map((_, i) => (
               <SkeletonCard key={i} />
@@ -671,6 +701,22 @@ export default function BrandPicker({
               </div>
             </div>
           )}
+
+          {/* AI status badge — shows loading state while tier-2 enhances the list */}
+          <div className="flex items-center gap-1.5 text-[11px]">
+            {aiEnhanced ? (
+              <>
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-brand-400" />
+                <span className="text-brand-400 font-medium">AI-ranked</span>
+                <span className="text-dark-500">— sorted by today&apos;s best opportunities</span>
+              </>
+            ) : (
+              <>
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-dark-500 animate-pulse" />
+                <span className="text-dark-500">AI analysing market…</span>
+              </>
+            )}
+          </div>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {gridItems.map((it) => (

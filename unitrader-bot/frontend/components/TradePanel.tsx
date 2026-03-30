@@ -167,7 +167,11 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   const [showLiveFeed, setShowLiveFeed]     = useState(false);
   const [showWatchlist, setShowWatchlist]   = useState(true);
 
-  // Dynamic market-top: AI-ranked top picks fetched from the backend
+  // Tier-1: instant symbol list from /exchange-assets — shows while AI loads
+  const [tier1Assets, setTier1Assets]       = useState<Array<{symbol: string; label: string}> | null>(null);
+  const [tier1Loading, setTier1Loading]     = useState(false);
+
+  // Tier-2: AI-ranked top picks — enhances tier-1 tiles in the background
   const [marketTop, setMarketTop]           = useState<MarketTopItem[]>([]);
   const [marketTopLoading, setMarketTopLoading] = useState(false);
   const [marketTopAge, setMarketTopAge]     = useState<number | null>(null);
@@ -197,7 +201,23 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
     return map;
   }, [recentTrades]);
 
-  // ── Fetch dynamic market top ──
+  // ── Fetch tier-1 instant symbol list (no AI) ──
+  const fetchTier1Assets = useCallback(async (exchange: string) => {
+    if (!exchange) return;
+    setTier1Loading(true);
+    try {
+      const res = await api.get("/api/trading/exchange-assets", {
+        params: { exchange, limit: 8 },
+      });
+      setTier1Assets(res.data?.data || []);
+    } catch {
+      setTier1Assets([]);
+    } finally {
+      setTier1Loading(false);
+    }
+  }, []);
+
+  // ── Fetch dynamic market top (AI-enhanced tier-2) ──
   const fetchMarketTop = useCallback(async (exchange: string, forceRefresh = false) => {
     if (!exchange) return;
     setMarketTopLoading(true);
@@ -208,7 +228,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
       setMarketTop(res.data?.data || []);
       setMarketTopAge(res.data?.age_minutes ?? null);
     } catch {
-      // Keep previous results on error
+      // Keep tier-1 results on error
     } finally {
       setMarketTopLoading(false);
     }
@@ -265,10 +285,14 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
       .finally(() => setLoading(false));
   }, []);
 
-  // ── Fetch market top when selected exchange changes ──
+  // ── When exchange changes: load tier-1 immediately, AI tier-2 in background ──
   useEffect(() => {
-    if (selectedExchange) fetchMarketTop(selectedExchange);
-  }, [selectedExchange, fetchMarketTop]);
+    if (!selectedExchange) return;
+    setTier1Assets(null);
+    setMarketTop([]);
+    fetchTier1Assets(selectedExchange);
+    fetchMarketTop(selectedExchange);
+  }, [selectedExchange, fetchTier1Assets, fetchMarketTop]);
 
   // ── Close search dropdown on outside click ──
   useEffect(() => {
@@ -383,7 +407,8 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   };
 
   // Top market picks used as quick-select chips in on-demand panel
-  const suggestions = marketTop.slice(0, 8);
+  // Use AI-ranked picks if loaded, otherwise fall back to instant tier-1 list
+  const suggestions = (marketTop.length > 0 ? marketTop : tier1Assets ?? []).slice(0, 8);
 
   // ── Loading ──
   if (loading) {
@@ -548,11 +573,17 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
             className="flex w-full items-center justify-between px-5 py-4 text-left"
           >
             <div>
-              <p className="text-sm font-semibold text-white">Today&apos;s AI Top Picks</p>
+              <p className="text-sm font-semibold text-white">
+                {marketTop.length > 0 ? "Today's AI Top Picks" : "Live Assets"}
+              </p>
               <p className="text-xs text-dark-500 mt-0.5">
-                {marketTopAge !== null
-                  ? `Best of 40–80 assets · Refreshed ${marketTopAge}m ago`
-                  : "Best of 40–80 assets · Refreshing now…"}
+                {marketTop.length > 0
+                  ? marketTopAge !== null
+                    ? `Best of 40–80 assets · Refreshed ${marketTopAge}m ago`
+                    : "Best of 40–80 assets · Refreshing now…"
+                  : marketTopLoading
+                    ? "AI scanning 40–80 assets for best picks…"
+                    : `${selectedExchange.charAt(0).toUpperCase() + selectedExchange.slice(1)} · live prices`}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -561,7 +592,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
                 type="button"
                 onClick={(e) => { e.stopPropagation(); fetchMarketTop(selectedExchange, true); }}
                 className="rounded-lg border border-dark-700 px-2 py-1 text-[10px] font-semibold text-dark-500 hover:text-dark-300 hover:border-dark-600 transition-all"
-                title="Force refresh picks"
+                title="Force refresh AI picks"
               >
                 Refresh
               </button>
@@ -570,27 +601,58 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
           </button>
           {showWatchlist && (
             <div className="border-t border-dark-800 p-5">
-              {marketTopLoading && marketTop.length === 0 ? (
-                <div className="flex items-center gap-2 text-sm text-dark-500 py-4 justify-center">
-                  <Loader2 size={14} className="animate-spin" />
-                  AI is scanning 40–80 assets…
-                </div>
-              ) : marketTop.length === 0 ? (
-                <p className="text-xs text-dark-500 text-center py-4">No picks yet — tap Refresh to scan now.</p>
-              ) : (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  {marketTop.map((item) => (
-                    <WatchlistTile
-                      key={item.symbol}
-                      symbol={item.symbol}
-                      label={item.label}
-                      exchange={selectedExchange}
-                      priceChangePct={item.price_change_pct}
-                      lastDecision={lastDecisionBySymbol[item.symbol] ?? (item.decision !== "WAIT" ? { side: item.decision } : undefined)}
-                    />
-                  ))}
-                </div>
-              )}
+              {(() => {
+                // Show tier-1 immediately; enhance with AI tier-2 once ready
+                const displayItems = marketTop.length > 0
+                  ? marketTop
+                  : (tier1Assets ?? []);
+                const isAiEnhanced = marketTop.length > 0;
+
+                if (tier1Loading && displayItems.length === 0) {
+                  return (
+                    <div className="flex items-center gap-2 text-sm text-dark-500 py-4 justify-center">
+                      <Loader2 size={14} className="animate-spin" />
+                      Loading assets…
+                    </div>
+                  );
+                }
+                if (displayItems.length === 0) {
+                  return <p className="text-xs text-dark-500 text-center py-4">No picks yet — tap Refresh to scan now.</p>;
+                }
+                return (
+                  <>
+                    {!isAiEnhanced && marketTopLoading && (
+                      <div className="mb-3 flex items-center gap-1.5 text-[11px] text-dark-500">
+                        <Loader2 size={10} className="animate-spin" />
+                        AI analysing market — picks will update shortly
+                      </div>
+                    )}
+                    {isAiEnhanced && (
+                      <div className="mb-3 flex items-center gap-1.5 text-[11px] text-brand-400">
+                        <span className="inline-block h-1.5 w-1.5 rounded-full bg-brand-400" />
+                        AI-ranked · best opportunities right now
+                      </div>
+                    )}
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {displayItems.map((item) => (
+                        <WatchlistTile
+                          key={item.symbol}
+                          symbol={item.symbol}
+                          label={item.label}
+                          exchange={selectedExchange}
+                          priceChangePct={'price_change_pct' in item ? (item as MarketTopItem).price_change_pct : undefined}
+                          lastDecision={
+                            lastDecisionBySymbol[item.symbol] ??
+                            ('decision' in item && (item as MarketTopItem).decision !== "WAIT"
+                              ? { side: (item as MarketTopItem).decision }
+                              : undefined)
+                          }
+                        />
+                      ))}
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           )}
           {!showWatchlist && (
