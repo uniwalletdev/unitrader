@@ -375,6 +375,12 @@ function TradePage() {
     );
   }
 
+  // Fully onboarded users belong on the main dashboard — no reason to stay here
+  if (!loading && settings?.onboarding_complete === true) {
+    window.location.replace("/app");
+    return null;
+  }
+
   // onboarding_complete gate: only render Apex wizard full-screen
   if (!loading && settings?.onboarding_complete === false) {
     return (
@@ -390,10 +396,10 @@ function TradePage() {
                 if (typeof window !== "undefined") {
                   sessionStorage.setItem("unitrader_onboarding_skipped", "true");
                 }
-                setSettings((prev) => ({ ...prev, onboarding_complete: true }));
               } catch {
-                setSettings((prev) => ({ ...prev, onboarding_complete: true }));
+                // ignore — still redirect to dashboard
               }
+              window.location.href = "/app";
             }}
           >
             Skip setup — trade now

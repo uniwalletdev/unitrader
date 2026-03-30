@@ -101,7 +101,7 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState<SimResponse | null>(null);
   const [marketUnavailable, setMarketUnavailable] = useState(false);
-  const [aiPickSymbols, setAiPickSymbols] = useState<string[]>(["SPY", "VOO", "AAPL", "MSFT"]);
+  const [aiPickSymbols, setAiPickSymbols] = useState<string[]>([]);
 
   const debounceRef = useRef<number | null>(null);
 
@@ -196,12 +196,18 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
     }
 
     // complete_novice / curious_saver / self_taught defaults
-    const yourPicks = approvedAssets.length ? approvedAssets : ["AAPL", "MSFT", "SPY"];
-    return [
-      { id: "your_picks", label: "Your picks", symbols: yourPicks.slice(0, 6) },
-      { id: "apex_recommends", label: "Unitrader recommends", symbols: aiPickSymbols },
-      { id: "crypto", label: "Crypto", symbols: ["BTC/USD", "ETH/USD"] },
-    ];
+    // "Your picks" uses approved assets if set, otherwise falls back to live AI picks once loaded
+    const yourPicks = approvedAssets.length ? approvedAssets : aiPickSymbols;
+    const result = [];
+    if (yourPicks.length) {
+      result.push({ id: "your_picks", label: "Your picks", symbols: yourPicks.slice(0, 6) });
+    }
+    // Only show "Unitrader recommends" once live AI picks have arrived
+    if (aiPickSymbols.length >= 2) {
+      result.push({ id: "apex_recommends", label: "Unitrader recommends", symbols: aiPickSymbols });
+    }
+    result.push({ id: "crypto", label: "Crypto", symbols: ["BTC/USD", "ETH/USD"] });
+    return result;
   }, [traderClass, approvedAssets, aiPickSymbols]);
 
   const selectedPreset = useMemo(() => {

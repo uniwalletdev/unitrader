@@ -23,7 +23,7 @@ export default function LoginPage() {
           path="/login"
           routing="path"
           signUpUrl="/register"
-          afterSignInUrl="/trade"
+          afterSignInUrl="/app"
           appearance={{
             elements: {
               rootBox: "w-full max-w-md",

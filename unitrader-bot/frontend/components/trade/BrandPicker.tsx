@@ -36,25 +36,21 @@ interface BrandPickerProps {
   onManualSymbol?: (symbol: string) => void;
 }
 
-const STOCK_BRANDS: Array<{ symbol: string; brand: string }> = [
-  { symbol: "AAPL", brand: "Apple" },
-  { symbol: "MSFT", brand: "Microsoft" },
-  { symbol: "NVDA", brand: "NVIDIA" },
-  { symbol: "TSLA", brand: "Tesla" },
-  { symbol: "AMZN", brand: "Amazon" },
-  { symbol: "GOOGL", brand: "Alphabet" },
-  { symbol: "META", brand: "Meta" },
-  { symbol: "SPY", brand: "S&P 500 (SPY)" },
-  { symbol: "VOO", brand: "Vanguard S&P 500 (VOO)" },
-];
-
-const CRYPTO_BRANDS: Array<{ symbol: string; brand: string }> = [
-  { symbol: "BTC/USD", brand: "Bitcoin" },
-  { symbol: "ETH/USD", brand: "Ethereum" },
-  { symbol: "SOL/USD", brand: "Solana" },
-  { symbol: "DOGE/USD", brand: "Dogecoin" },
-  { symbol: "XRP/USD", brand: "XRP" },
-];
+// Display-name lookup for AI-returned symbols — not a tradeable list
+const BRAND_MAP: Record<string, string> = {
+  AAPL: "Apple", MSFT: "Microsoft", NVDA: "NVIDIA", TSLA: "Tesla",
+  AMZN: "Amazon", GOOGL: "Alphabet", META: "Meta",
+  SPY: "S&P 500 ETF", VOO: "Vanguard S&P 500",
+  NFLX: "Netflix", ORCL: "Oracle", AMD: "AMD", INTC: "Intel", CRM: "Salesforce",
+  "BTC/USD": "Bitcoin", BTCUSDT: "Bitcoin",
+  "ETH/USD": "Ethereum", ETHUSDT: "Ethereum",
+  "SOL/USD": "Solana", SOLUSDT: "Solana",
+  "DOGE/USD": "Dogecoin", DOGEUSDT: "Dogecoin",
+  "XRP/USD": "XRP", XRPUSDT: "XRP",
+  BNBUSDT: "BNB", ADAUSDT: "Cardano", DOTUSDT: "Polkadot",
+  EUR_USD: "EUR/USD", GBP_USD: "GBP/USD", USD_JPY: "USD/JPY",
+  AUD_USD: "AUD/USD", USD_CAD: "USD/CAD",
+};
 
 function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -245,6 +241,11 @@ export default function BrandPicker({
   const [trending, setTrending] = useState<Array<{ symbol: string; brand: string; volume_change_pct?: number | null }>>([]);
   const [aiFeatureItems, setAiFeatureItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
 
+  // Live grid — populated from /api/trading/market-top for each exchange
+  const [liveStockItems, setLiveStockItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
+  const [liveCryptoItems, setLiveCryptoItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
+  const [gridLoading, setGridLoading] = useState(true);
+
   const selections = selectedSymbols ?? [];
   const setSelections = (next: string[]) => {
     onChangeSelectedSymbols?.(next);
@@ -311,14 +312,6 @@ export default function BrandPicker({
     api.get("/api/trading/ai-picks", { params: { limit: 4 } })
       .then((res) => {
         const picks = (res.data?.data || []) as Array<{ symbol: string }>;
-        const BRAND_MAP: Record<string, string> = {
-          AAPL: "Apple", MSFT: "Microsoft", NVDA: "NVIDIA", TSLA: "Tesla",
-          AMZN: "Amazon", GOOGL: "Alphabet", META: "Meta",
-          SPY: "S&P 500 ETF", VOO: "Vanguard S&P 500",
-          "BTC/USD": "Bitcoin", BTCUSDT: "Bitcoin",
-          ETHUSDT: "Ethereum", SOLUSDT: "Solana",
-          EUR_USD: "EUR/USD", GBP_USD: "GBP/USD",
-        };
         const items = picks
           .map((p) => ({ symbol: p.symbol, brand: BRAND_MAP[p.symbol] ?? p.symbol }))
           .filter((x) => x.symbol);
@@ -328,45 +321,66 @@ export default function BrandPicker({
     return () => { mounted = false; };
   }, [traderClass]);
 
+  // Fetch live top picks from both exchanges to power the main grid
+  useEffect(() => {
+    let mounted = true;
+    setGridLoading(true);
+    const mapItem = (d: any) => ({
+      symbol: d.symbol as string,
+      brand: (d.label || BRAND_MAP[d.symbol as string] || d.symbol) as string,
+    });
+    Promise.all([
+      api.get("/api/trading/market-top", { params: { exchange: "alpaca", limit: 9 } }),
+      api.get("/api/trading/market-top", { params: { exchange: "binance", limit: 6 } }),
+    ])
+      .then(([stockRes, cryptoRes]) => {
+        if (!mounted) return;
+        setLiveStockItems((stockRes.data?.data || []).map(mapItem));
+        setLiveCryptoItems((cryptoRes.data?.data || []).map(mapItem));
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setLiveStockItems([]);
+        setLiveCryptoItems([]);
+      })
+      .finally(() => {
+        if (mounted) setGridLoading(false);
+      });
+    return () => { mounted = false; };
+  }, []);
+
   const featuredRow = useMemo(() => {
     if (traderClass === "complete_novice") {
       if (aiFeatureItems && aiFeatureItems.length >= 2) {
         return { title: "AI's picks right now", items: aiFeatureItems };
       }
-      const picks = favourites.slice(0, 3).map((sym) => ({ symbol: sym, brand: sym }));
-      return picks.length
-        ? { title: "Unitrader's picks for you", items: picks }
-        : null;
+      // Fall back to user's own saved favourites — personalised, not hardcoded
+      const picks = favourites.slice(0, 3).map((sym) => ({ symbol: sym, brand: BRAND_MAP[sym] ?? sym }));
+      return picks.length ? { title: "Unitrader's picks for you", items: picks } : null;
     }
     if (traderClass === "curious_saver") {
       if (aiFeatureItems && aiFeatureItems.length >= 2) {
         return { title: "Best opportunities right now", items: aiFeatureItems };
       }
-      return {
-        title: "Popular with UK investors",
-        items: [
-          { symbol: "SPY", brand: "S&P 500 (SPY)" },
-          { symbol: "VOO", brand: "Vanguard S&P 500 (VOO)" },
-          { symbol: "AAPL", brand: "Apple" },
-          { symbol: "MSFT", brand: "Microsoft" },
-        ],
-      };
+      // No AI picks yet — show nothing until they arrive
+      return null;
     }
     if (traderClass === "crypto_native") {
-      return trending.length
-        ? { title: "Trending this week", items: trending }
-        : { title: "Trending this week", items: CRYPTO_BRANDS.slice(0, 4) };
+      // Use live trending data only; no hardcoded fallback
+      return trending.length ? { title: "Trending this week", items: trending } : null;
     }
     return null;
   }, [traderClass, favourites, trending, aiFeatureItems]);
 
   const gridItems = useMemo(() => {
+    const stocks = liveStockItems ?? [];
+    const crypto = liveCryptoItems ?? [];
     const base =
       category === "stocks"
-        ? STOCK_BRANDS
+        ? stocks
         : category === "crypto"
-          ? CRYPTO_BRANDS
-          : [...STOCK_BRANDS, ...CRYPTO_BRANDS];
+          ? crypto
+          : [...stocks, ...crypto];
 
     const q = search.trim().toLowerCase();
     if (!q) return base;
@@ -374,7 +388,7 @@ export default function BrandPicker({
       (x) =>
         x.symbol.toLowerCase().includes(q) || x.brand.toLowerCase().includes(q),
     );
-  }, [category, search]);
+  }, [category, search, liveStockItems, liveCryptoItems]);
 
   // self_taught: load RSI quick stats for visible symbols
   useEffect(() => {
@@ -507,11 +521,19 @@ export default function BrandPicker({
 
   return (
     <div className="space-y-4">
-      {loadingSettings ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <SkeletonCard key={i} />
-          ))}
+      {loadingSettings || gridLoading ? (
+        <div className="space-y-3">
+          <div className="text-xs text-dark-400 animate-pulse">Fetching best opportunities right now…</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
+          </div>
+        </div>
+      ) : gridItems.length === 0 ? (
+        <div className="rounded-xl border border-dark-800 bg-dark-900 p-6 text-center">
+          <div className="text-sm text-dark-400">No opportunities available right now</div>
+          <div className="mt-1 text-xs text-dark-500">Markets may be closed. Try again shortly or enter a symbol manually.</div>
         </div>
       ) : (
         <>

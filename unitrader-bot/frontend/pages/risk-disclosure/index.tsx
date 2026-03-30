@@ -33,8 +33,8 @@ export default function RiskDisclosurePage() {
 
     try {
       await authApi.acceptRiskDisclosure();
-      // Redirect to trade page with welcome flag
-      router.push("/trade?welcome=true");
+      // Redirect to the main dashboard after accepting risk disclosure
+      router.push("/app");
     } catch (err: unknown) {
       devLogError("Risk disclosure error", err);
       setError("Something went wrong — please try again");
