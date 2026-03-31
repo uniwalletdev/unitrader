@@ -409,7 +409,11 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
 
   // Top market picks used as quick-select chips in on-demand panel
   // Use AI-ranked picks if loaded, otherwise fall back to instant tier-1 list
-  const suggestions = (marketTop.length > 0 ? marketTop : tier1Assets ?? []).slice(0, 8);
+  const suggestions = (
+    marketTop.length > 0
+      ? marketTop
+      : (tier1Assets ?? []).map((x) => ({ ...x, decision: "WAIT" as const }))
+  ).slice(0, 8);
 
   // ── Loading ──
   if (loading) {
