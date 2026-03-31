@@ -87,15 +87,21 @@ export function useSignalStack(userSettings: { signal_stack_mode?: string }) {
     }));
     try {
       const res = await signalApi.stack();
-      const data = res.data;
+      const data = res.data as any;
+      // Backend may return either:
+      //  - { signals, last_scan_at, ... }
+      //  - { status: "success", data: { signals, last_scan_at, ... } }
+      const payload = data?.data && typeof data.data === "object" ? data.data : data;
+      const rawSignals = payload?.signals;
+      const safeSignals = Array.isArray(rawSignals) ? rawSignals : [];
       setState((prev) => ({
         ...prev,
-        signals: data.signals ?? [],
+        signals: safeSignals,
         isLoading: false,
         isRefreshing: false,
-        lastScanAt: data.last_scan_at ?? null,
-        nextScanInMinutes: data.next_scan_in_minutes ?? null,
-        assetsScanned: data.assets_scanned ?? 0,
+        lastScanAt: payload?.last_scan_at ?? null,
+        nextScanInMinutes: payload?.next_scan_in_minutes ?? null,
+        assetsScanned: payload?.assets_scanned ?? 0,
         error: null,
       }));
     } catch {
