@@ -50,6 +50,7 @@ from routers.whatsapp_webhooks import (
 )
 from src.error_handling import configure_third_party_loggers, http_exception_handler
 from src.agents.orchestrator import get_orchestrator
+from src.agents.signal_stack_agent import signal_stack_agent
 from src.agents.marketing.content_writer import generate_weekly_posts, generate_monthly_guide
 from backend.agents.content_agent import ContentAgent
 from src.services.trade_monitoring import monitor_loop
@@ -208,15 +209,16 @@ async def lifespan(app: FastAPI):
         )
 
     # 4. Launch background loops
-    trading_task  = asyncio.create_task(_trading_loop(),       name="trading_loop")
-    monitor_task  = asyncio.create_task(monitor_loop(),        name="monitor_loop")
-    content_task  = asyncio.create_task(_content_scheduler(),  name="content_scheduler")
-    email_task    = asyncio.create_task(_email_scheduler(),    name="email_scheduler")
-    learning_task = asyncio.create_task(_learning_scheduler(), name="learning_scheduler")
-    goals_task    = asyncio.create_task(_goals_scheduler(),    name="goals_scheduler")
+    trading_task  = asyncio.create_task(_trading_loop(),             name="trading_loop")
+    monitor_task  = asyncio.create_task(monitor_loop(),              name="monitor_loop")
+    content_task  = asyncio.create_task(_content_scheduler(),        name="content_scheduler")
+    email_task    = asyncio.create_task(_email_scheduler(),          name="email_scheduler")
+    learning_task = asyncio.create_task(_learning_scheduler(),       name="learning_scheduler")
+    goals_task    = asyncio.create_task(_goals_scheduler(),          name="goals_scheduler")
+    signal_task   = asyncio.create_task(_signal_stack_scheduler(),   name="signal_stack_scheduler")
     logger.info(
         "Background loops started "
-        "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly, goals=weekly@8am)"
+        "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly, goals=weekly@8am, signal_stack=30min)"
     )
 
     # 5. Initialise Telegram bot (optional — disabled if token not set)
@@ -278,11 +280,11 @@ async def lifespan(app: FastAPI):
             pass
 
     # Background tasks
-    for task in (trading_task, monitor_task, content_task, email_task, learning_task, goals_task):
+    for task in (trading_task, monitor_task, content_task, email_task, learning_task, goals_task, signal_task):
         task.cancel()
     try:
         await asyncio.gather(
-            trading_task, monitor_task, content_task, email_task, learning_task, goals_task,
+            trading_task, monitor_task, content_task, email_task, learning_task, goals_task, signal_task,
             return_exceptions=True,
         )
     except Exception:
@@ -459,6 +461,38 @@ async def _trading_loop() -> None:
             logger.error("Trading loop outer error: %s", exc)
 
         await asyncio.sleep(300)  # 5 minutes
+
+
+# ─────────────────────────────────────────────
+# Background: Signal Stack Scheduler (every 30 minutes)
+# ─────────────────────────────────────────────
+
+async def _signal_stack_scheduler() -> None:
+    """
+    Runs the Signal Stack scan every 30 minutes.
+    Full scan (all asset classes) Mon-Fri 09:00-22:00 UTC.
+    Crypto-only scan at all other times (crypto trades 24/7).
+    """
+    logger.info("Signal stack scheduler started")
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            is_weekday = now.weekday() < 5
+            market_hour = 9 <= now.hour < 22
+
+            if is_weekday and market_hour:
+                async with AsyncSessionLocal() as db:
+                    result = await signal_stack_agent.run_scan(db, triggered_by="scheduler")
+                    logger.info("Signal Stack full scan: %s", result)
+            else:
+                async with AsyncSessionLocal() as db:
+                    result = await signal_stack_agent.run_crypto_only_scan(db)
+                    logger.info("Signal Stack crypto scan: %s", result)
+        except Exception as exc:
+            logger.error("Signal stack scheduler error: %s", exc)
+            sentry_sdk.capture_exception(exc)
+
+        await asyncio.sleep(1800)  # 30 minutes
 
 
 # ─────────────────────────────────────────────

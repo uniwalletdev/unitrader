@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { CheckCircle } from "lucide-react";
 import GalaxyLoader from "@/components/layout/GalaxyLoader";
-import { api, authApi, tradingApi } from "@/lib/api";
+import { api, authApi, signalApi, tradingApi } from "@/lib/api";
 
 import ApexOnboardingChat from "@/components/onboarding/ApexOnboardingChat";
 import WhatIfSimulator from "@/components/onboarding/WhatIfSimulator";
@@ -18,6 +18,10 @@ import TradeConfirmModal from "@/components/trade/TradeConfirmModal";
 import CircuitBreakerAlert from "@/components/trade/CircuitBreakerAlert";
 import RiskWarning from "@/components/layout/RiskWarning";
 import NeverHoldBanner from "@/components/layout/NeverHoldBanner";
+import BrowseStack from "@/components/signals/BrowseStack";
+import ApexSelectsPanel from "@/components/signals/ApexSelectsPanel";
+import FullAutoPanel from "@/components/signals/FullAutoPanel";
+import { useSignalStack } from "@/hooks/useSignalStack";
 
 type TraderClass =
   | "complete_novice"
@@ -34,6 +38,16 @@ type UserSettings = {
   trading_paused?: boolean;
   max_daily_loss?: number;
   onboarding_complete?: boolean;
+  signal_stack_mode?: "browse" | "apex_selects" | "full_auto";
+  risk_disclosure_accepted?: boolean;
+  max_trade_amount?: number;
+  apex_selects_threshold?: number;
+  apex_selects_max_trades?: number;
+  apex_selects_asset_classes?: string[];
+  auto_trade_enabled?: boolean;
+  auto_trade_threshold?: number;
+  auto_trade_max_per_scan?: number;
+  watchlist?: string[];
 };
 
 type TrustLadder = {
@@ -247,6 +261,11 @@ function TradePage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [positionsCount, setPositionsCount] = useState<number | null>(null);
 
+  // Signal Stack UI state
+  const [signalMode, setSignalMode] = useState<"browse" | "apex_selects" | "full_auto">("browse");
+  const [manualExpanded, setManualExpanded] = useState(false);
+  const [modeSaving, setModeSaving] = useState(false);
+
   // Show a one-time banner when user skipped onboarding via the escape hatch
   const [skipBanner, setSkipBanner] = useState(false);
   useEffect(() => {
@@ -376,10 +395,7 @@ function TradePage() {
   }
 
   // Fully onboarded users belong on the main dashboard — no reason to stay here
-  if (!loading && settings?.onboarding_complete === true) {
-    window.location.replace("/app");
-    return null;
-  }
+  // NOTE: We intentionally keep onboarded users on /trade now (Signal Stack is primary).
 
   // onboarding_complete gate: only render Apex wizard full-screen
   if (!loading && settings?.onboarding_complete === false) {
@@ -461,6 +477,95 @@ function TradePage() {
       // ignore
     }
     return data;
+  };
+
+  // Class-aware defaults for Signal Stack mode + manual trade expansion
+  useEffect(() => {
+    if (!settings) return;
+    const tc = settings.trader_class ?? "complete_novice";
+    const defaultMode =
+      tc === "experienced" || tc === "semi_institutional" ? "apex_selects" : "browse";
+    setSignalMode(settings.signal_stack_mode ?? defaultMode);
+    const manualDefaultExpanded =
+      tc === "experienced" || tc === "semi_institutional" || tc === "self_taught";
+    setManualExpanded(manualDefaultExpanded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings?.signal_stack_mode, settings?.trader_class]);
+
+  const explanationLevel = useMemo(() => {
+    const level = settings?.explanation_level;
+    if (level === "expert" || level === "simple" || level === "metaphor") return level;
+    if (traderClass === "complete_novice" || traderClass === "curious_saver") return "simple";
+    return "expert";
+  }, [settings?.explanation_level, traderClass]);
+
+  const fullAutoLocked = useMemo(() => {
+    if (traderClass === "experienced" || traderClass === "semi_institutional") return false;
+    const stage = trust?.stage ?? 1;
+    return stage < 3;
+  }, [traderClass, trust?.stage]);
+
+  const modeDescription = useMemo(() => {
+    if (signalMode === "browse") {
+      return "Apex has pre-analysed assets. Best opportunities ranked below.";
+    }
+    if (signalMode === "apex_selects") {
+      return "Set your parameters. Apex finds the best match.";
+    }
+    return "Apex is trading automatically on your schedule.";
+  }, [signalMode]);
+
+  const { signals, isLoading: signalsLoading, isRefreshing, lastScanAt, nextScanInMinutes, assetsScanned, error: signalsError, acceptSignal, skipSignal, refresh } =
+    useSignalStack({ signal_stack_mode: signalMode });
+
+  const maxSignals = useMemo(() => {
+    if (traderClass === "complete_novice") return 3;
+    if (traderClass === "curious_saver") return 5;
+    return 10;
+  }, [traderClass]);
+
+  const browseSignals = useMemo(() => signals.slice(0, maxSignals), [signals, maxSignals]);
+
+  const handleSetMode = async (mode: "browse" | "apex_selects" | "full_auto") => {
+    if (mode === signalMode) return;
+    if (mode === "full_auto" && fullAutoLocked) {
+      setToast("Full Auto is locked — complete the Trust Ladder first.");
+      return;
+    }
+    setSignalMode(mode);
+    setSettings((prev) => (prev ? { ...prev, signal_stack_mode: mode } : prev));
+    setModeSaving(true);
+    try {
+      await signalApi.updateSettings(mode);
+    } catch {
+      // non-fatal: keep optimistic UI
+    } finally {
+      setModeSaving(false);
+    }
+  };
+
+  const handleAcceptSignal = async (signalId: string): Promise<boolean> => {
+    const sig = signals.find((s) => s.id === signalId);
+    try {
+      const ok = await acceptSignal(signalId);
+      if (ok) {
+        setToast(`Apex is buying ${sig?.asset_name ?? "this asset"}`);
+      }
+      return ok;
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      if (detail === "risk_disclosure_required" || detail === "risk_disclosure_not_accepted") {
+        if (typeof window !== "undefined") {
+          window.location.href = `/risk-disclosure?next=${encodeURIComponent("/trade")}`;
+        }
+        return false;
+      }
+      return false;
+    }
+  };
+
+  const handleSkipSignal = (signalId: string) => {
+    skipSignal(signalId);
   };
 
   if (loading) {
@@ -572,315 +677,311 @@ function TradePage() {
         <NeverHoldBanner />
       </div>
 
-      {/* Layout A */}
-      {layout === "A" && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div className="space-y-4">
-            {!dbg("no_picker") && (
-              <BrandPicker
-                exchange={exchange}
-                traderClass={traderClass}
-                favourites={settings?.approved_assets ?? []}
-                onManualSymbol={(s) => setSymbol(s.toUpperCase())}
-                onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
-                selectedSymbols={symbol ? [symbol] : []}
-              />
-            )}
-            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} helperText={amountHelperText} />
-            <RiskSection variant="plain" />
-            <button
-              type="button"
-              onClick={handleAnalyse}
-              disabled={analyzing || !symbol.trim()}
-              title={marketStatus?.analyzeTooltip}
-              className="btn-primary w-full disabled:opacity-60"
-            >
-              {analyzing ? "Analysing…" : "Analyse with Unitrader"}
-            </button>
-            {marketStatus?.analyzeIndicator && (
-              <div className="text-xs text-amber-300">{marketStatus.analyzeIndicator.text}</div>
-            )}
-          </div>
-
-          <AIAnalysisCard analysis={analysis}>
-            {!dbg("no_explain") && (
-              <ExplanationToggle
-                explanations={{
-                  expert: analysis?.expert ?? "—",
-                  simple: analysis?.simple ?? analysis?.message ?? "—",
-                  metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
-                }}
-                traderClass={traderClass}
-                settingsLevel={
-                  settings?.explanation_level === "expert" ||
-                  settings?.explanation_level === "simple" ||
-                  settings?.explanation_level === "metaphor"
-                    ? (settings.explanation_level as any)
-                    : null
-                }
-              />
-            )}
-            <button
-              type="button"
-              onClick={() => setConfirmOpen(true)}
-              disabled={!analysis}
-              className={clsx("btn-primary mt-4 w-full", !analysis && "opacity-60")}
-            >
-              {isPaper ? "Confirm practice trade" : "Execute trade"}
-            </button>
-          </AIAnalysisCard>
-        </div>
-      )}
-
-      {/* Layout B — self_taught */}
-      {layout === "B" && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div className="space-y-4">
-            {!dbg("no_picker") && (
-              <BrandPicker
-                exchange={exchange}
-                traderClass={traderClass}
-                favourites={settings?.approved_assets ?? []}
-                onManualSymbol={(s) => setSymbol(s.toUpperCase())}
-                onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
-                selectedSymbols={symbol ? [symbol] : []}
-              />
-            )}
-            {symbol && (
-              <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="self_taught" signal="NONE" />}
-              </div>
-            )}
-            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" helperText={amountHelperText} />
-            <RiskSection variant="pct" />
-            <button
-              type="button"
-              onClick={handleAnalyse}
-              disabled={analyzing || !symbol.trim()}
-              className="btn-primary w-full disabled:opacity-60"
-            >
-              {analyzing ? "Analysing…" : "Analyse"}
-            </button>
-          </div>
-
-          <div className="space-y-4">
-            <AIAnalysisCard analysis={analysis} title="AI analysis">
-              {!dbg("no_explain") && (
-                <ExplanationToggle
-                  explanations={{
-                    expert: analysis?.expert ?? "—",
-                    simple: analysis?.simple ?? analysis?.message ?? "—",
-                    metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
-                  }}
-                  traderClass={traderClass}
-                  settingsLevel={
-                    settings?.explanation_level === "expert" ||
-                    settings?.explanation_level === "simple" ||
-                    settings?.explanation_level === "metaphor"
-                      ? (settings.explanation_level as any)
-                      : null
-                  }
-                />
-              )}
+      {/* ── Signal Stack: primary interface ─────────────────────────────────── */}
+      {settings?.onboarding_complete === true && (
+        <div className="mb-6">
+          {/* Mode toggle */} 
+          <div className="rounded-2xl border border-dark-800 bg-dark-950 p-3 mb-3">
+            <div className="grid grid-cols-3 gap-1 rounded-xl border border-dark-800 bg-dark-900 p-1">
               <button
                 type="button"
-                onClick={() => setConfirmOpen(true)}
-                disabled={!analysis}
-                className={clsx("btn-primary mt-4 w-full", !analysis && "opacity-60")}
+                onClick={() => handleSetMode("browse")}
+                className={clsx(
+                  "rounded-lg px-3 py-2 text-xs font-semibold transition-all",
+                  signalMode === "browse" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white",
+                )}
               >
-                Execute trade
+                Browse signals · You choose
               </button>
-            </AIAnalysisCard>
-
-            <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
-              Portfolio context (placeholder)
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Layout C — experienced */}
-      {layout === "C" && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div className="space-y-4">
-            <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-              <div className="text-xs font-semibold text-white">Exchange</div>
-              <select
-                value={exchange}
-                onChange={(e) => setExchange(e.target.value)}
-                className="mt-2 w-full rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-sm text-white"
-              >
-                <option value="alpaca">Alpaca</option>
-                <option value="binance">Binance</option>
-                <option value="oanda">OANDA</option>
-              </select>
-            </div>
-
-            <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-              <div className="text-xs font-semibold text-white">Symbol</div>
-              <input
-                value={symbol}
-                onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-                placeholder="AAPL"
-                className="mt-2 w-full rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-sm text-white"
-              />
-            </div>
-
-            {symbol && (
-              <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="experienced" signal="NONE" />}
-              </div>
-            )}
-
-            <div className="rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
-              Pro order settings (placeholder)
-            </div>
-
-            <button
-              type="button"
-              onClick={handleAnalyse}
-              disabled={analyzing || !symbol.trim()}
-              className="btn-primary w-full disabled:opacity-60"
-            >
-              {analyzing ? "Analysing…" : "Analyse"}
-            </button>
-            {marketStatus?.analyzeIndicator && (
-              <div className="text-xs text-amber-300">{marketStatus.analyzeIndicator.text}</div>
-            )}
-          </div>
-
-          <div className="space-y-4">
-            <AIAnalysisCard analysis={analysis} title="AI analysis (technical)">
-              <ExplanationToggle
-                explanations={{
-                  expert: analysis?.expert ?? "—",
-                  simple: analysis?.simple ?? analysis?.message ?? "—",
-                  metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
-                }}
-              />
               <button
                 type="button"
-                onClick={() => setConfirmOpen(true)}
-                disabled={!analysis}
-                className={clsx("btn-primary mt-4 w-full", !analysis && "opacity-60")}
+                onClick={() => handleSetMode("apex_selects")}
+                className={clsx(
+                  "rounded-lg px-3 py-2 text-xs font-semibold transition-all",
+                  signalMode === "apex_selects" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white",
+                )}
               >
-                Execute
+                Apex selects · AI curates
               </button>
-            </AIAnalysisCard>
-
-            <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
-              Portfolio context (detailed placeholder)
+              <button
+                type="button"
+                onClick={() => handleSetMode("full_auto")}
+                title={fullAutoLocked ? "Complete Trust Ladder first" : undefined}
+                className={clsx(
+                  "rounded-lg px-3 py-2 text-xs font-semibold transition-all",
+                  signalMode === "full_auto" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white",
+                  fullAutoLocked && "opacity-50 cursor-not-allowed",
+                )}
+                disabled={fullAutoLocked}
+              >
+                Full auto · Apex acts alone
+              </button>
+            </div>
+            <div className="mt-2 flex items-center justify-between text-[11px] text-dark-400">
+              <span>{modeDescription}</span>
+              {modeSaving && <span className="text-dark-500">Saving…</span>}
             </div>
           </div>
-        </div>
-      )}
 
-      {/* Layout D — semi_institutional */}
-      {layout === "D" && (
-        <div className="space-y-4">
-          <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-            <div className="text-xs font-semibold text-white">Multi-symbol input</div>
-            <textarea
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              placeholder="AAPL, MSFT, NVDA"
-              className="mt-2 min-h-[96px] w-full rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-sm text-white"
+          {/* Panel */} 
+          {signalMode === "browse" && (
+            <BrowseStack
+              signals={browseSignals}
+              isRefreshing={isRefreshing || signalsLoading}
+              lastScanAt={lastScanAt}
+              nextScanInMinutes={nextScanInMinutes}
+              assetsScanned={assetsScanned}
+              traderClass={traderClass}
+              explanationLevel={explanationLevel}
+              onAccept={handleAcceptSignal}
+              onSkip={handleSkipSignal}
+              onRefresh={refresh}
             />
-          </div>
+          )}
+          {signalMode === "apex_selects" && (
+            <ApexSelectsPanel
+              userSettings={settings ?? {}}
+              onExecute={async (ids) => {
+                for (const id of ids) {
+                  await handleAcceptSignal(id);
+                }
+              }}
+            />
+          )}
+          {signalMode === "full_auto" && (
+            <FullAutoPanel
+              userSettings={settings ?? {}}
+              trustLadderStage={trust?.stage ?? 1}
+              onSettingsUpdate={(updates) => setSettings((prev) => (prev ? { ...prev, ...(updates as any) } : prev))}
+            />
+          )}
 
-          <div className="rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
-            Institutional settings (placeholder)
-          </div>
-
-          <button
-            type="button"
-            onClick={handleAnalyse}
-            disabled={analyzing || !symbol.trim()}
-            className="btn-primary w-full disabled:opacity-60"
-          >
-            {analyzing ? "Analysing…" : "Bulk analyse"}
-          </button>
-
-          <AIAnalysisCard analysis={analysis} title="AI analysis (raw JSON access)">
-            <button
-              type="button"
-              onClick={() => setConfirmOpen(true)}
-              disabled={!analysis}
-              className={clsx("btn-primary w-full", !analysis && "opacity-60")}
-            >
-              Execute
-            </button>
-          </AIAnalysisCard>
-
-          <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
-            Portfolio risk panel (placeholder)
-          </div>
+          {signalsError && (
+            <div className="mt-3 rounded-xl border border-dark-800 bg-dark-950 p-3 text-xs text-dark-400">
+              {signalsError} You can still use manual trade below.
+            </div>
+          )}
         </div>
       )}
 
-      {/* Layout E — crypto_native */}
-      {layout === "E" && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <div className="space-y-4">
-            <div className="rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
-              Fear & Greed widget (placeholder)
-            </div>
-            {!dbg("no_picker") && (
-              <BrandPicker
-                exchange={exchange}
-                traderClass={traderClass}
-                favourites={settings?.approved_assets ?? []}
-                onManualSymbol={(s) => setSymbol(s.toUpperCase())}
-                onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
-                selectedSymbols={symbol ? [symbol] : []}
-              />
-            )}
-            {symbol && (
-              <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="crypto_native" signal="NONE" />}
+      {/* ── Manual trade (secondary, collapsible) ───────────────────────────── */}
+      <div className="rounded-2xl border border-dark-800 bg-dark-950 p-3">
+        <button
+          type="button"
+          onClick={() => setManualExpanded((v) => !v)}
+          className="w-full flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-white hover:bg-dark-900 transition-colors"
+        >
+          <span>Search for a specific asset instead</span>
+          <span className="text-dark-400">{manualExpanded ? "▴" : "▾"}</span>
+        </button>
+
+        {manualExpanded && (
+          <div className="mt-3">
+            {/* Layout A */}
+            {layout === "A" && (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-4">
+                  {!dbg("no_picker") && (
+                    <BrandPicker
+                      exchange={exchange}
+                      traderClass={traderClass}
+                      favourites={settings?.approved_assets ?? []}
+                      onManualSymbol={(s) => setSymbol(s.toUpperCase())}
+                      onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
+                      selectedSymbols={symbol ? [symbol] : []}
+                    />
+                  )}
+                  <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} helperText={amountHelperText} />
+                  <RiskSection variant="plain" />
+                  <button
+                    type="button"
+                    onClick={handleAnalyse}
+                    disabled={analyzing || !symbol.trim()}
+                    title={marketStatus?.analyzeTooltip}
+                    className="btn-primary w-full disabled:opacity-60"
+                  >
+                    {analyzing ? "Analysing…" : "Analyse with Unitrader"}
+                  </button>
+                  {marketStatus?.analyzeIndicator && (
+                    <div className="text-xs text-amber-300">{marketStatus.analyzeIndicator.text}</div>
+                  )}
+                </div>
+
+                <AIAnalysisCard analysis={analysis}>
+                  {!dbg("no_explain") && (
+                    <ExplanationToggle
+                      explanations={{
+                        expert: analysis?.expert ?? "—",
+                        simple: analysis?.simple ?? analysis?.message ?? "—",
+                        metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
+                      }}
+                      traderClass={traderClass}
+                      settingsLevel={
+                        settings?.explanation_level === "expert" ||
+                        settings?.explanation_level === "simple" ||
+                        settings?.explanation_level === "metaphor"
+                          ? (settings.explanation_level as any)
+                          : null
+                      }
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setConfirmOpen(true)}
+                    disabled={!analysis}
+                    className={clsx("btn-primary mt-4 w-full", !analysis && "opacity-60")}
+                  >
+                    {isPaper ? "Confirm practice trade" : "Execute trade"}
+                  </button>
+                </AIAnalysisCard>
               </div>
             )}
-            <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" helperText={amountHelperText} />
-            <RiskSection variant="plain" />
-            <button
-              type="button"
-              onClick={handleAnalyse}
-              disabled={analyzing || !symbol.trim()}
-              className="btn-primary w-full disabled:opacity-60"
-            >
-              {analyzing ? "Analysing…" : "Analyse"}
-            </button>
-          </div>
 
-          <AIAnalysisCard analysis={analysis}>
-            {!dbg("no_explain") && (
-              <ExplanationToggle
-                explanations={{
-                  expert: analysis?.expert ?? "—",
-                  simple: analysis?.simple ?? analysis?.message ?? "—",
-                  metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
-                }}
-                  traderClass={traderClass}
-                  settingsLevel={
-                    settings?.explanation_level === "expert" ||
-                    settings?.explanation_level === "simple" ||
-                    settings?.explanation_level === "metaphor"
-                      ? (settings.explanation_level as any)
-                      : null
-                  }
-              />
+            {/* Layout B — self_taught */}
+            {layout === "B" && (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-4">
+                  {!dbg("no_picker") && (
+                    <BrandPicker
+                      exchange={exchange}
+                      traderClass={traderClass}
+                      favourites={settings?.approved_assets ?? []}
+                      onManualSymbol={(s) => setSymbol(s.toUpperCase())}
+                      onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
+                      selectedSymbols={symbol ? [symbol] : []}
+                    />
+                  )}
+                  {symbol && (
+                    <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
+                      {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="self_taught" signal="NONE" />}
+                    </div>
+                  )}
+                  <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" helperText={amountHelperText} />
+                  <RiskSection variant="pct" />
+                  <button
+                    type="button"
+                    onClick={handleAnalyse}
+                    disabled={analyzing || !symbol.trim()}
+                    className="btn-primary w-full disabled:opacity-60"
+                  >
+                    {analyzing ? "Analysing…" : "Analyse"}
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  <AIAnalysisCard analysis={analysis} title="AI analysis">
+                    {!dbg("no_explain") && (
+                      <ExplanationToggle
+                        explanations={{
+                          expert: analysis?.expert ?? "—",
+                          simple: analysis?.simple ?? analysis?.message ?? "—",
+                          metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
+                        }}
+                        traderClass={traderClass}
+                        settingsLevel={
+                          settings?.explanation_level === "expert" ||
+                          settings?.explanation_level === "simple" ||
+                          settings?.explanation_level === "metaphor"
+                            ? (settings.explanation_level as any)
+                            : null
+                        }
+                      />
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setConfirmOpen(true)}
+                      disabled={!analysis}
+                      className={clsx("btn-primary mt-4 w-full", !analysis && "opacity-60")}
+                    >
+                      Execute trade
+                    </button>
+                  </AIAnalysisCard>
+
+                  <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
+                    Portfolio context (placeholder)
+                  </div>
+                </div>
+              </div>
             )}
-            <button
-              type="button"
-              onClick={() => setConfirmOpen(true)}
-              disabled={!analysis}
-              className={clsx("btn-primary mt-4 w-full", !analysis && "opacity-60")}
-            >
-              Execute
-            </button>
-          </AIAnalysisCard>
-        </div>
-      )}
+
+            {/* Layout C — experienced */}
+            {layout === "C" && (
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
+                    <div className="text-xs font-semibold text-white">Exchange</div>
+                    <select
+                      value={exchange}
+                      onChange={(e) => setExchange(e.target.value)}
+                      className="mt-2 w-full rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-sm text-white"
+                    >
+                      <option value="alpaca">Alpaca</option>
+                      <option value="binance">Binance</option>
+                      <option value="oanda">OANDA</option>
+                    </select>
+                  </div>
+
+                  <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
+                    <div className="text-xs font-semibold text-white">Symbol</div>
+                    <input
+                      value={symbol}
+                      onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+                      placeholder="AAPL"
+                      className="mt-2 w-full rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-sm text-white"
+                    />
+                  </div>
+
+                  {symbol && (
+                    <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
+                      {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="experienced" signal="NONE" />}
+                    </div>
+                  )}
+
+                  <div className="rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
+                    Pro order settings (placeholder)
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleAnalyse}
+                    disabled={analyzing || !symbol.trim()}
+                    className="btn-primary w-full disabled:opacity-60"
+                  >
+                    {analyzing ? "Analysing…" : "Analyse"}
+                  </button>
+                  {marketStatus?.analyzeIndicator && (
+                    <div className="text-xs text-amber-300">{marketStatus.analyzeIndicator.text}</div>
+                  )}
+                </div>
+
+                <div className="space-y-4">
+                  <AIAnalysisCard analysis={analysis} title="AI analysis (technical)">
+                    <ExplanationToggle
+                      explanations={{
+                        expert: analysis?.expert ?? "—",
+                        simple: analysis?.simple ?? analysis?.message ?? "—",
+                        metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setConfirmOpen(true)}
+                      disabled={!analysis}
+                      className={clsx("btn-primary mt-4 w-full", !analysis && "opacity-60")}
+                    >
+                      Execute
+                    </button>
+                  </AIAnalysisCard>
+
+                  <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
+                    Portfolio context (detailed placeholder)
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Mandatory confirm modal for all layouts */}
       <TradeConfirmModal

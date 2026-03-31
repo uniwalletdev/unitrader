@@ -6,16 +6,19 @@ Sensitive fields (API keys) are stored encrypted via security.py.
 """
 
 import uuid
+from uuid import uuid4
 from datetime import datetime, time
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Column,
     DateTime,
     Float,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     Time,
@@ -1061,3 +1064,61 @@ class SharedContextModel(Base):
 
     def __repr__(self) -> str:
         return f"<SharedContextModel key={self.key} set_by={self.set_by} expires={self.expires_at}>"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SIGNAL STACK
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SignalStack(Base):
+    __tablename__ = "signal_stack"
+
+    id = Column(PgUUID(as_uuid=True), primary_key=True, default=uuid4)
+    symbol = Column(String, nullable=False)
+    asset_name = Column(String, nullable=False)
+    asset_class = Column(String, nullable=False)
+    exchange = Column(String, nullable=False)
+    signal = Column(String, nullable=False)
+    confidence = Column(Integer, nullable=False)
+    reasoning_expert = Column(Text)
+    reasoning_simple = Column(Text)
+    reasoning_metaphor = Column(Text)
+    rsi = Column(Numeric)
+    macd_signal = Column(String)
+    volume_ratio = Column(Numeric)
+    sentiment_score = Column(String)
+    earnings_days = Column(Integer)
+    fear_greed_index = Column(Integer)
+    current_price = Column(Numeric)
+    price_change_24h = Column(Numeric)
+    community_accepted = Column(Integer, default=0)
+    community_total = Column(Integer, default=0)
+    scan_run_id = Column(PgUUID(as_uuid=True))
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+    expires_at = Column(DateTime(timezone=True))
+
+
+class SignalInteraction(Base):
+    __tablename__ = "signal_interactions"
+
+    id = Column(PgUUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    signal_id = Column(PgUUID(as_uuid=True), ForeignKey("signal_stack.id"), nullable=False)
+    action = Column(String, nullable=False)
+    trade_id = Column(String(36), ForeignKey("trades.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "signal_id", name="uq_signal_interactions_user_signal"),
+    )
+
+
+class SignalScanRun(Base):
+    __tablename__ = "signal_scan_runs"
+
+    id = Column(PgUUID(as_uuid=True), primary_key=True, default=uuid4)
+    assets_scanned = Column(Integer, default=0)
+    signals_generated = Column(Integer, default=0)
+    duration_ms = Column(Integer)
+    triggered_by = Column(String, default="scheduler")
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

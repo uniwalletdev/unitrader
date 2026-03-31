@@ -221,6 +221,16 @@ export const contentApi = {
   socialPosts: () => api.get("/api/content/social-posts"),
 };
 
+// ── Signals ──────────────────────────────────────────────────────────────────
+export const signalApi = {
+  stack: () =>
+    api.get("/api/signals/stack"),
+  interact: (signalId: string, action: string, tradeId?: string | null) =>
+    api.post(`/api/signals/${signalId}/interact`, { action, trade_id: tradeId ?? null }),
+  updateSettings: (signalStackMode: string) =>
+    api.patch("/api/signals/settings", { signal_stack_mode: signalStackMode }),
+};
+
 // ── Learning ─────────────────────────────────────────────────────────────────
 export const learningApi = {
   patterns: () => api.get("/api/learning/patterns"),
