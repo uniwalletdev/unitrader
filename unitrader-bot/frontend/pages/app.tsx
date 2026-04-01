@@ -21,8 +21,8 @@ import LearningPanel from "@/components/LearningPanel";
 import SecuritySettings from "@/components/SecuritySettings";
 import TrialChoiceModal from "@/components/TrialChoiceModal";
 import AccountDashboard from "@/components/AccountDashboard";
-import ApexNotificationFeed from "@/components/notifications/ApexNotificationFeed";
-import ApexActivityStatus from "@/components/notifications/ApexActivityStatus";
+import UnitraderNotificationFeed from "@/components/notifications/UnitraderNotificationFeed";
+import UnitraderActivityStatus from "@/components/notifications/UnitraderActivityStatus";
 import { useTrialStatus, clearTrialCache } from "@/hooks/useTrialStatus";
 import MobileNav from "@/components/layout/MobileNav";
 import GalaxyLoader from "@/components/layout/GalaxyLoader";
@@ -1674,7 +1674,7 @@ export default function AppPage() {
             )}
             {activeTab === "dashboard" && (
               <>
-                <ApexActivityStatus mode={dashboardSignalMode} onOpenTrade={() => setActiveTab("trade")} />
+                <UnitraderActivityStatus mode={dashboardSignalMode} onOpenTrade={() => setActiveTab("trade")} />
                 <AccountDashboard />
               </>
             )}
@@ -1687,7 +1687,7 @@ export default function AppPage() {
             {activeTab === "positions" && <PositionsPanel onNavigate={setActiveTab} />}
             {activeTab === "history" && <History />}
             {activeTab === "performance" && <Performance />}
-            {activeTab === "notifications" && user && <ApexNotificationFeed userId={user.id} maxItems={20} />}
+            {activeTab === "notifications" && user && <UnitraderNotificationFeed userId={user.id} maxItems={20} />}
             {activeTab === "learning" && <LearningPanel user={user} />}
             {activeTab === "settings" && (
               <SettingsPanel

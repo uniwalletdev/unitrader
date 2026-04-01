@@ -21,7 +21,7 @@ function notificationIcon(type: string) {
   }
 }
 
-export default function ApexNotificationFeed({
+export default function UnitraderNotificationFeed({
   userId,
   maxItems = 20,
 }: { userId: string; maxItems?: number }) {

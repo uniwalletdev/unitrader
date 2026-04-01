@@ -34,7 +34,7 @@ function tickerIcon(item: NotificationItem) {
   }
 }
 
-export default function ApexNotificationTicker() {
+export default function UnitraderNotificationTicker() {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);

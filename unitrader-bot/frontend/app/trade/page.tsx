@@ -18,7 +18,7 @@ import TradeConfirmModal from "@/components/trade/TradeConfirmModal";
 import CircuitBreakerAlert from "@/components/trade/CircuitBreakerAlert";
 import RiskWarning from "@/components/layout/RiskWarning";
 import NeverHoldBanner from "@/components/layout/NeverHoldBanner";
-import ApexNotificationTicker from "@/components/notifications/ApexNotificationTicker";
+import UnitraderNotificationTicker from "@/components/notifications/UnitraderNotificationTicker";
 import BrowseStack from "@/components/signals/BrowseStack";
 import ApexSelectsPanel from "@/components/signals/ApexSelectsPanel";
 import FullAutoPanel from "@/components/signals/FullAutoPanel";
@@ -678,7 +678,7 @@ function TradePage() {
         <NeverHoldBanner />
       </div>
 
-      <ApexNotificationTicker />
+      <UnitraderNotificationTicker />
 
       {/* ── Signal Stack: primary interface ─────────────────────────────────── */}
       {settings?.onboarding_complete === true && (

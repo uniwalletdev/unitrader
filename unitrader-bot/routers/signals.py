@@ -26,7 +26,7 @@ from src.agents.orchestrator import get_orchestrator
 from src.agents.shared_memory import SharedMemory
 from src.agents.signal_stack_agent import signal_stack_agent
 from src.integrations.market_data import classify_asset
-from src.services.apex_notifications import get_apex_notification_engine
+from src.services.unitrader_notifications import get_unitrader_notification_engine
 
 logger = logging.getLogger(__name__)
 
@@ -268,7 +268,7 @@ async def _execute_apex_selects_token(
             break
 
     if executed_trades:
-        notification_engine = get_apex_notification_engine()
+        notification_engine = get_unitrader_notification_engine()
         if notification_engine:
             await notification_engine.send_apex_selects_executed(
                 user_id=approval.user_id,

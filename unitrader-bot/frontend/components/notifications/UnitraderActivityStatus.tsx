@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bell, ChevronRight, Loader2, Radar, Shield, Sparkles, SunMedium, Zap } from "lucide-react";
+import { Bell, ChevronRight, Radar, Sparkles, SunMedium, Zap } from "lucide-react";
 
 import { notificationApi, signalApi } from "@/lib/api";
 import { countdownTo, readString, relativeTime, type NotificationItem } from "@/components/notifications/notificationUtils";
@@ -44,8 +44,8 @@ function statusTone(mode: SignalMode) {
   return {
     dot: "bg-amber-400",
     badge: "bg-amber-500/12 text-amber-300 border-amber-500/20",
-      title: "Unitrader is scanning for your next idea",
-      subtitle: "Fresh signals and briefings appear here as Unitrader finds them.",
+    title: "Unitrader is scanning for your next idea",
+    subtitle: "Fresh signals and briefings appear here as Unitrader finds them.",
     icon: <SunMedium size={14} />,
   };
 }
@@ -58,7 +58,7 @@ function activityLabel(item: NotificationItem) {
   return item.title;
 }
 
-export default function ApexActivityStatus({
+export default function UnitraderActivityStatus({
   mode,
   onOpenTrade,
 }: {

@@ -61,7 +61,7 @@ from src.integrations.exchange_client import (
 )
 from src.services.trade_monitoring import enforce_loss_limits
 from src.services.subscription import check_trade_limit
-from src.services.apex_notifications import get_apex_notification_engine
+from src.services.unitrader_notifications import get_unitrader_notification_engine
 
 logger = logging.getLogger(__name__)
 
@@ -977,7 +977,7 @@ async def undo_trade(
             event_details={"trade_id": undo_token.trade_id, "token": token},
         )
     )
-    notification_engine = get_apex_notification_engine()
+    notification_engine = get_unitrader_notification_engine()
     if notification_engine:
         await notification_engine._dispatch(  # type: ignore[attr-defined]
             user_id=undo_token.user_id,

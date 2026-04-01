@@ -71,10 +71,10 @@ from src.integrations.market_data import classify_asset, full_market_analysis
 from src.services.trade_monitoring import is_key_in_backoff, monitor_loop
 from src.services.email_sequences import send_trial_emails_for_all_users
 from src.services.learning_hub import learning_hub
-from src.services.apex_notifications import (
-    ApexNotificationEngine,
-    get_apex_notification_engine,
-    set_apex_notification_engine,
+from src.services.unitrader_notifications import (
+    UnitraderNotificationEngine,
+    get_unitrader_notification_engine,
+    set_unitrader_notification_engine,
 )
 
 # ─────────────────────────────────────────────
@@ -269,12 +269,12 @@ async def lifespan(app: FastAPI):
         logger.info("Telegram bot disabled (TELEGRAM_BOT_TOKEN not set)")
 
     # 5b. Initialise Unitrader notifications engine
-    _apex_notifications = ApexNotificationEngine(
+    _unitrader_notifications = UnitraderNotificationEngine(
         telegram_bot=_tg_bot,
         whatsapp_bot=None,
         claude_client=None,
     )
-    set_apex_notification_engine(_apex_notifications)
+    set_unitrader_notification_engine(_unitrader_notifications)
     logger.info("Unitrader notifications engine initialised")
 
     # 6. Initialise WhatsApp bot (optional — disabled if Twilio creds not set)
@@ -287,7 +287,7 @@ async def lifespan(app: FastAPI):
                 twilio_whatsapp_number=settings.twilio_whatsapp_number,
             )
             set_whatsapp_bot_service(_wa_bot)
-            _apex_notifications.whatsapp_bot = _wa_bot
+            _unitrader_notifications.whatsapp_bot = _wa_bot
             logger.info(
                 "WhatsApp bot initialised — webhook: %s/webhooks/whatsapp",
                 settings.api_base_url,
@@ -676,7 +676,7 @@ async def _run_auto_scan_for_user(settings_row: UserSettings, user: User, db) ->
     trades_this_scan = 0
     run_id = uuid.uuid4()
     orchestrator = get_orchestrator()
-    notification_engine = get_apex_notification_engine()
+    notification_engine = get_unitrader_notification_engine()
 
     for symbol in watchlist:
         if trades_this_scan >= max_per_scan:
@@ -824,7 +824,7 @@ async def _run_apex_selects_for_user(settings_row: UserSettings, user: User, db)
                 expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
             )
         )
-        notification_engine = get_apex_notification_engine()
+        notification_engine = get_unitrader_notification_engine()
         if notification_engine:
             await notification_engine.send_apex_selects_ready(
                 user_id=str(user.id),
@@ -877,7 +877,7 @@ async def morning_briefing_loop() -> None:
                     .limit(5)
                 )
                 top_signals = signals_result.scalars().all()
-                notification_engine = get_apex_notification_engine()
+                notification_engine = get_unitrader_notification_engine()
                 for settings_row, user in users:
                     if not _is_subscription_active(user) or not top_signals or not notification_engine:
                         continue
@@ -922,7 +922,7 @@ async def daily_digest_loop() -> None:
                         User.is_active == True,  # noqa: E712
                     )
                 )
-                notification_engine = get_apex_notification_engine()
+                notification_engine = get_unitrader_notification_engine()
                 for settings_row, user in result.all():
                     if not _is_subscription_active(user) or not notification_engine:
                         continue

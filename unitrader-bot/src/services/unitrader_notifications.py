@@ -1,5 +1,5 @@
 """
-src/services/apex_notifications.py — Unitrader outbound notification engine.
+src/services/unitrader_notifications.py — Unitrader outbound notification engine.
 
 Persists notifications to the database first, then attempts delivery over any
 linked channels without interrupting the calling trade or scheduler flow.
@@ -17,19 +17,19 @@ from models import ApexNotification, UserExternalAccount, UserSettings
 
 logger = logging.getLogger(__name__)
 
-_apex_notification_engine = None
+_unitrader_notification_engine = None
 
 
-def set_apex_notification_engine(service) -> None:
-    global _apex_notification_engine
-    _apex_notification_engine = service
+def set_unitrader_notification_engine(service) -> None:
+    global _unitrader_notification_engine
+    _unitrader_notification_engine = service
 
 
-def get_apex_notification_engine():
-    return _apex_notification_engine
+def get_unitrader_notification_engine():
+    return _unitrader_notification_engine
 
 
-class ApexNotificationEngine:
+class UnitraderNotificationEngine:
     """Create and deliver Unitrader notifications across supported user channels."""
 
     def __init__(self, telegram_bot=None, whatsapp_bot=None, claude_client=None):
@@ -45,7 +45,6 @@ class ApexNotificationEngine:
         undo_token: str,
         db: AsyncSession,
     ) -> None:
-        """Send a post-trade notification after Unitrader executes autonomously."""
         symbol = trade["symbol"]
         asset_name = trade.get("asset_name", symbol)
         side = str(trade["side"]).upper()
@@ -107,7 +106,6 @@ Protection:
         approve_token: str,
         db: AsyncSession,
     ) -> None:
-        """Send approval-ready Unitrader Selects shortlist notification."""
         count = len(selected_signals)
         top = selected_signals[0] if selected_signals else {}
         top_name = top.get("asset_name", top.get("symbol", ""))
@@ -162,7 +160,6 @@ This offer expires in 30 minutes.
         executed_trades: list,
         db: AsyncSession,
     ) -> None:
-        """Confirm the trades Unitrader executed after user approval."""
         count = len(executed_trades)
         lines = []
         for trade in executed_trades[:3]:
@@ -200,7 +197,6 @@ Open Unitrader to review the positions Unitrader is now monitoring.
         trader_class: str,
         db: AsyncSession,
     ) -> None:
-        """Send a morning Browse-mode briefing without auto-executing trades."""
         count = len(top_signals)
         if count == 0:
             return
@@ -270,7 +266,6 @@ Remember: In Browse mode, Unitrader never trades without your tap.
         loss_pct: float,
         db: AsyncSession,
     ) -> None:
-        """Notify the user that Unitrader exited at stop-loss."""
         asset_name = trade.get("asset_name", trade.get("symbol", ""))
         entry = float(trade.get("entry_price", 0) or 0)
 
@@ -306,7 +301,6 @@ Your remaining portfolio is unaffected.
         profit_pct: float,
         db: AsyncSession,
     ) -> None:
-        """Notify the user that Unitrader exited at the target price."""
         asset_name = trade.get("asset_name", trade.get("symbol", ""))
         exchange = trade.get("exchange", "exchange")
 
@@ -337,7 +331,6 @@ Open Unitrader to see your updated portfolio.
         digest: dict,
         db: AsyncSession,
     ) -> None:
-        """Send the daily Unitrader report for full-auto users."""
         trades_today = digest.get("trades_today", 0)
         pnl_today = float(digest.get("pnl_today", 0) or 0)
         signals_skipped = digest.get("signals_skipped", 0)
@@ -387,7 +380,6 @@ Open Unitrader to review positions.
         undo_token: str | None = None,
         trade_id: str | None = None,
     ) -> None:
-        """Persist first, then try each linked delivery channel safely."""
         telegram_id = await self._get_platform_id(user_id, "telegram", db)
         whatsapp_id = await self._get_platform_id(user_id, "whatsapp", db)
         push_token = await self._get_push_token(user_id, db)
@@ -489,7 +481,6 @@ Open Unitrader to review positions.
         body: str,
         data: dict[str, Any],
     ) -> None:
-        """Stub push delivery until a provider is configured."""
         logger.info(
             "Push provider not configured; skipping push send for token=%s title=%s payload_keys=%s",
             f"{push_token[:8]}..." if push_token else "missing",
