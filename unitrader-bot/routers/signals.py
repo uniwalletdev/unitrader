@@ -161,9 +161,10 @@ async def update_signal_settings(
         if hasattr(settings, field):
             setattr(settings, field, value)
 
-    await db.flush()
+    await db.commit()
+    await db.refresh(settings)
     SharedMemory.invalidate(current_user.id)
-    return settings
+    return UserSettingsResponse.model_validate(settings)
 
 
 @router.get("/apex-selects")

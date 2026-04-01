@@ -22,9 +22,10 @@ function notificationIcon(type: string) {
 }
 
 export default function UnitraderNotificationFeed({
+  botName,
   userId,
   maxItems = 20,
-}: { userId: string; maxItems?: number }) {
+}: { botName: string; userId: string; maxItems?: number }) {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -89,7 +90,7 @@ export default function UnitraderNotificationFeed({
     <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-4">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-white">Unitrader notifications</h3>
+          <h3 className="text-sm font-semibold text-white">{botName} notifications</h3>
           <p className="text-[11px] text-dark-500">{unreadCount} unread · {actionableCount} actionable</p>
         </div>
         {unreadCount > 0 && (
@@ -113,7 +114,7 @@ export default function UnitraderNotificationFeed({
         </div>
       ) : items.length === 0 ? (
         <div className="rounded-xl border border-dark-800 bg-dark-900/50 p-4 text-xs text-dark-400">
-          Unitrader has not sent any notifications yet.
+          {botName} has not sent any notifications yet.
         </div>
       ) : (
         <div className="space-y-3">

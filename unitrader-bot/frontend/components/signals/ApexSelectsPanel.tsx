@@ -16,7 +16,8 @@ interface UserSettings {
   max_trade_amount?: number;
 }
 
-interface ApexSelectsPanelProps {
+interface BotSelectsPanelProps {
+  botName: string;
   userSettings: UserSettings;
   onExecute: (signalIds: string[]) => Promise<void>;
 }
@@ -60,7 +61,7 @@ function DirectionBadge({ direction }: { direction: string }) {
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function ApexSelectsPanel({ userSettings, onExecute }: ApexSelectsPanelProps) {
+export default function BotSelectsPanel({ botName, userSettings, onExecute }: BotSelectsPanelProps) {
   const [shortlist, setShortlist] = useState<Signal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -154,7 +155,7 @@ export default function ApexSelectsPanel({ userSettings, onExecute }: ApexSelect
         {/* Max trades slider */}
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <label className="text-xs text-dark-300 font-medium">Max trades Apex can place</label>
+            <label className="text-xs text-dark-300 font-medium">Max trades {botName} can place</label>
             <span className="text-xs font-bold text-white">{maxTrades}</span>
           </div>
           <input
@@ -199,7 +200,7 @@ export default function ApexSelectsPanel({ userSettings, onExecute }: ApexSelect
       {/* ── Shortlist section ─────────────────────────────────────────────── */}
       <div className="rounded-2xl border border-dark-700 bg-dark-900 p-4 flex flex-col gap-3">
         <div>
-          <p className="text-sm font-semibold text-white">Apex's shortlist for you</p>
+          <p className="text-sm font-semibold text-white">{botName}&apos;s shortlist for you</p>
           <p className="text-xs text-dark-400 mt-0.5">
             {isLoading ? "Loading…" : `${shortlist.length} signal${plural} qualify at ${threshold}%+`}
           </p>
@@ -257,7 +258,7 @@ export default function ApexSelectsPanel({ userSettings, onExecute }: ApexSelect
       {showConfirm && (
         <div className="rounded-2xl border border-dark-600 bg-dark-800 p-4 flex flex-col gap-3">
           <p className="text-sm font-semibold text-white">
-            Apex will place {shortlist.length} trade{plural}:
+            {botName} will place {shortlist.length} trade{plural}:
           </p>
           <ul className="flex flex-col gap-1">
             {shortlist.map((s) => (
@@ -295,7 +296,7 @@ export default function ApexSelectsPanel({ userSettings, onExecute }: ApexSelect
       ) : isExecuting ? (
         <div className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-600/50 py-3.5">
           <Loader2 className="w-4 h-4 animate-spin text-white" />
-          <span className="text-sm text-white font-medium">Apex is placing your trades…</span>
+          <span className="text-sm text-white font-medium">{botName} is placing your trades…</span>
         </div>
       ) : (
         !showConfirm && (
@@ -304,7 +305,7 @@ export default function ApexSelectsPanel({ userSettings, onExecute }: ApexSelect
             disabled={shortlist.length === 0 || isLoading}
             className="w-full py-3.5 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold flex items-center justify-center gap-2 transition-all"
           >
-            Let Apex place {shortlist.length} trade{plural} →
+            Let {botName} place {shortlist.length} trade{plural} →
           </button>
         )
       )}

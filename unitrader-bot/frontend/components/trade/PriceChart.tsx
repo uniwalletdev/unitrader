@@ -21,7 +21,7 @@ type TraderClass =
   | "semi_institutional"
   | "crypto_native";
 
-type ApexSignal = "BUY" | "SELL" | "WAIT" | "NONE";
+type TradeSignal = "BUY" | "SELL" | "WAIT" | "NONE";
 
 type OhlcvBar = {
   time: string; // YYYY-MM-DD
@@ -84,7 +84,7 @@ export default function PriceChart({
 }: {
   symbol: string;
   traderClass: TraderClass;
-  signal?: ApexSignal;
+  signal?: TradeSignal;
   fearGreed?: { label: string; value: number } | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);

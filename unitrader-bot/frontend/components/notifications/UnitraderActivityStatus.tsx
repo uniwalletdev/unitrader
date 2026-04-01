@@ -22,12 +22,12 @@ type SignalStackResponse = {
   next_scan_in_minutes?: number | null;
 };
 
-function statusTone(mode: SignalMode) {
+function statusTone(botName: string, mode: SignalMode) {
   if (mode === "full_auto") {
     return {
       dot: "bg-emerald-400",
       badge: "bg-emerald-500/12 text-emerald-300 border-emerald-500/20",
-      title: "Unitrader Autopilot is active",
+      title: `${botName} Autopilot is active`,
       subtitle: "Scanning live markets and managing trades for you.",
       icon: <Zap size={14} />,
     };
@@ -36,7 +36,7 @@ function statusTone(mode: SignalMode) {
     return {
       dot: "bg-sky-400",
       badge: "bg-sky-500/12 text-sky-300 border-sky-500/20",
-      title: "Unitrader is curating your shortlist",
+      title: `${botName} is curating your shortlist`,
       subtitle: "Signals are being ranked against your approval settings.",
       icon: <Radar size={14} />,
     };
@@ -44,8 +44,8 @@ function statusTone(mode: SignalMode) {
   return {
     dot: "bg-amber-400",
     badge: "bg-amber-500/12 text-amber-300 border-amber-500/20",
-    title: "Unitrader is scanning for your next idea",
-    subtitle: "Fresh signals and briefings appear here as Unitrader finds them.",
+    title: `${botName} is scanning for your next idea`,
+    subtitle: `Fresh signals and briefings appear here as ${botName} finds them.`,
     icon: <SunMedium size={14} />,
   };
 }
@@ -59,9 +59,11 @@ function activityLabel(item: NotificationItem) {
 }
 
 export default function UnitraderActivityStatus({
+  botName,
   mode,
   onOpenTrade,
 }: {
+  botName: string;
   mode: SignalMode;
   onOpenTrade: () => void;
 }) {
@@ -111,7 +113,7 @@ export default function UnitraderActivityStatus({
   );
 
   const topSignal = stackMeta?.signals?.[0] ?? null;
-  const tone = statusTone(mode);
+  const tone = statusTone(botName, mode);
 
   const handleApprove = async (item: NotificationItem) => {
     const token = readString(item.data?.approve_token);
@@ -132,7 +134,7 @@ export default function UnitraderActivityStatus({
         <div>
           <div className="flex items-center gap-2">
             <span className={`h-2.5 w-2.5 rounded-full ${tone.dot} animate-pulse`} />
-            <p className="text-sm font-semibold text-white">Unitrader is working</p>
+            <p className="text-sm font-semibold text-white">{botName} is working</p>
           </div>
           <p className="mt-1 text-xs text-dark-400">{tone.subtitle}</p>
         </div>
@@ -165,7 +167,7 @@ export default function UnitraderActivityStatus({
                 </div>
               )) : (
                 <div className="rounded-xl border border-dark-800 bg-dark-900/50 p-3 text-xs text-dark-400">
-                  Unitrader has not placed or managed a trade yet today.
+                  {botName} has not placed or managed a trade yet today.
                 </div>
               )}
             </>
@@ -198,7 +200,7 @@ export default function UnitraderActivityStatus({
 
           {mode === "apex_selects" && !pendingApproval && (
             <div className="rounded-xl border border-dark-800 bg-dark-900/50 p-3 text-xs text-dark-400">
-              Unitrader is monitoring your thresholds and will ask for approval when a shortlist is ready.
+              {botName} is monitoring your thresholds and will ask for approval when a shortlist is ready.
             </div>
           )}
 
@@ -217,7 +219,7 @@ export default function UnitraderActivityStatus({
                         <p className="mt-1 text-[11px] text-dark-400">{topSignal.symbol} · {Math.round(topSignal.confidence)}% confidence</p>
                       </>
                     ) : (
-                      <p className="mt-1 text-sm text-dark-300">Unitrader is reviewing the market for your next setup.</p>
+                      <p className="mt-1 text-sm text-dark-300">{botName} is reviewing the market for your next setup.</p>
                     )}
                   </div>
                   <button

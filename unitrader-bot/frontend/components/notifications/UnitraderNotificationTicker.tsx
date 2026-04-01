@@ -34,7 +34,7 @@ function tickerIcon(item: NotificationItem) {
   }
 }
 
-export default function UnitraderNotificationTicker() {
+export default function UnitraderNotificationTicker({ botName }: { botName: string }) {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);

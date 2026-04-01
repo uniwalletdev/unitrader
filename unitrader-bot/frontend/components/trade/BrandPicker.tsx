@@ -256,6 +256,12 @@ export default function BrandPicker({
     onChangeSelectedSymbols?.(next);
   };
 
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H2',location:'BrandPicker.tsx:259',message:'brand-picker prop types',data:{selectedSymbolsIsArray:Array.isArray(selectedSymbols),selectedSymbolsType:typeof selectedSymbols,selectedSymbolsLength:Array.isArray(selectedSymbols)?selectedSymbols.length:null,favouritesIsArray:Array.isArray(favouritesProp),favouritesType:typeof favouritesProp},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+  }, [favouritesProp, selectedSymbols]);
+
   const firstTip = useFirstOpenTooltip("unitrader_brandpicker_first_open_v1");
   const didLockCryptoTab = useRef(false);
 

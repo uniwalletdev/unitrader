@@ -22,6 +22,7 @@ interface UserSettings {
 }
 
 interface FullAutoPanelProps {
+  botName: string;
   userSettings: UserSettings;
   trustLadderStage: number;
   onSettingsUpdate: (updates: object) => void;
@@ -42,14 +43,14 @@ interface ActivityEntry {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function lockProgressText(stage: number): string {
-  if (stage <= 1) return "Complete stage 2 to unlock Apex Selects";
+  if (stage <= 1) return "Complete stage 2 to unlock curated selects";
   return "Complete stage 3 to unlock Full Auto";
 }
 
-function thresholdNote(threshold: number): string {
+function thresholdNote(botName: string, threshold: number): string {
   if (threshold >= 95) return "Very rare — only the strongest signals";
-  if (threshold >= 80) return "Apex trades roughly 2–3 times per week at this level";
-  if (threshold <= 65) return "More frequent — Apex takes more opportunities";
+  if (threshold >= 80) return `${botName} trades roughly 2–3 times per week at this level`;
+  if (threshold <= 65) return `More frequent — ${botName} takes more opportunities`;
   return "";
 }
 
@@ -74,6 +75,7 @@ function ActivityDot({ type }: { type: ActivityEntry["type"] }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function FullAutoPanel({
+  botName,
   userSettings,
   trustLadderStage,
   onSettingsUpdate,
@@ -88,6 +90,12 @@ export default function FullAutoPanel({
 
   const sliderDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  useEffect(() => {
+    // #region agent log
+    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H2',location:'FullAutoPanel.tsx:91',message:'full-auto input types',data:{watchlistIsArray:Array.isArray(userSettings.watchlist),watchlistType:typeof userSettings.watchlist,watchlistLength:Array.isArray(userSettings.watchlist)?userSettings.watchlist.length:null,autoEnabled:userSettings.auto_trade_enabled ?? false,trustLadderStage},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+  }, [trustLadderStage, userSettings.auto_trade_enabled, userSettings.watchlist]);
+
   // ── Stats derived from activity ───────────────────────────────────────────
   const tradesToday = activity.filter((a) => a.type === "trade").length;
   const signalsSkipped = activity.filter((a) => a.type === "skipped").length;
@@ -99,7 +107,13 @@ export default function FullAutoPanel({
     setActivityLoading(true);
     try {
       const res = await api.get("/api/trading/history?hours=24");
-      const raw: ActivityEntry[] = res.data?.trades ?? res.data ?? [];
+      const raw: ActivityEntry[] =
+        res.data?.data?.trades ??
+        res.data?.trades ??
+        (Array.isArray(res.data) ? res.data : []);
+      // #region agent log
+      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H1',location:'FullAutoPanel.tsx:114',message:'history response shape',data:{responseKeys:res?.data&&typeof res.data==='object'?Object.keys(res.data).slice(0,8):[],rawIsArray:Array.isArray(raw),rawType:typeof raw,rawLength:Array.isArray(raw)?raw.length:null,dataHasNestedTrades:Boolean(res?.data?.data?.trades),nestedTradesIsArray:Array.isArray(res?.data?.data?.trades)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setActivity(raw);
     } catch {
       setActivity([]);
@@ -120,8 +134,14 @@ export default function FullAutoPanel({
     try {
       await signalApi.updateSettings({ signal_stack_mode: userSettings.signal_stack_mode ?? "full_auto" });
       await api.patch("/api/signals/settings", { auto_trade_enabled: next });
+      // #region agent log
+      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H4',location:'FullAutoPanel.tsx:139',message:'auto-toggle persisted',data:{next},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       onSettingsUpdate({ auto_trade_enabled: next });
-    } catch {
+    } catch (error: any) {
+      // #region agent log
+      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H3',location:'FullAutoPanel.tsx:143',message:'auto-toggle persist failed',data:{status:error?.response?.status ?? null,detail:error?.response?.data?.detail ?? null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       setAutoEnabled(!next); // rollback
     } finally {
       setToggling(false);
@@ -170,7 +190,7 @@ export default function FullAutoPanel({
         <div>
           <p className="text-base font-semibold text-white">Full Auto is locked</p>
           <p className="text-sm text-dark-400 mt-1 max-w-xs mx-auto">
-            Complete the Trust Ladder first. Apex needs to prove itself with your money before
+            Complete the Trust Ladder first. {botName} needs to prove itself with your money before
             trading solo.
           </p>
         </div>
@@ -197,7 +217,7 @@ export default function FullAutoPanel({
   // UNLOCKED STATE
   // ─────────────────────────────────────────────────────────────────────────
 
-  const note = thresholdNote(threshold);
+  const note = thresholdNote(botName, threshold);
 
   return (
     <div className="flex flex-col gap-4">
@@ -215,8 +235,8 @@ export default function FullAutoPanel({
             <Bot className={`w-5 h-5 ${autoEnabled ? "text-emerald-400" : "text-dark-400"}`} />
           </div>
           <div>
-            <p className="text-sm font-semibold text-white">Apex Autopilot</p>
-            <p className="text-xs text-dark-400">Apex scans every 30 min and trades automatically</p>
+            <p className="text-sm font-semibold text-white">{botName} Autopilot</p>
+            <p className="text-xs text-dark-400">{botName} scans every 30 min and trades automatically</p>
           </div>
         </div>
 
@@ -274,7 +294,7 @@ export default function FullAutoPanel({
               </p>
             )}
             <p className="text-[11px] text-dark-500">
-              Only trade when Apex is at least {threshold}% confident
+              Only trade when {botName} is at least {threshold}% confident
             </p>
           </div>
 
@@ -298,7 +318,7 @@ export default function FullAutoPanel({
           {/* Watchlist */}
           <div className="flex flex-col gap-2">
             <label className="text-xs text-dark-300 font-medium">Watchlist</label>
-            <p className="text-[11px] text-dark-500">Symbols Apex monitors in Full Auto mode</p>
+            <p className="text-[11px] text-dark-500">Symbols {botName} monitors in Full Auto mode</p>
             <BrandPicker
               exchange="alpaca"
               traderClass={
@@ -322,7 +342,7 @@ export default function FullAutoPanel({
 
       {/* ── Activity log ────────────────────────────────────────────────────── */}
       <div className="rounded-2xl border border-dark-700 bg-dark-900 p-4 flex flex-col gap-3">
-        <p className="text-sm font-semibold text-white">Apex activity log</p>
+        <p className="text-sm font-semibold text-white">{botName} activity log</p>
         <p className="text-xs text-dark-500 -mt-1">Today only</p>
 
         {activityLoading ? (
@@ -331,7 +351,7 @@ export default function FullAutoPanel({
           </div>
         ) : activity.length === 0 ? (
           <div className="rounded-xl border border-dark-700 bg-dark-800 px-4 py-5 text-center">
-            <p className="text-sm text-dark-300">Apex is watching your watchlist.</p>
+            <p className="text-sm text-dark-300">{botName} is watching your watchlist.</p>
             <p className="text-xs text-dark-500 mt-1">
               The next scan runs in a few minutes.
             </p>

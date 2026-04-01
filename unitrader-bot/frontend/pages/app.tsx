@@ -1674,7 +1674,11 @@ export default function AppPage() {
             )}
             {activeTab === "dashboard" && (
               <>
-                <UnitraderActivityStatus mode={dashboardSignalMode} onOpenTrade={() => setActiveTab("trade")} />
+                <UnitraderActivityStatus
+                  botName={user?.ai_name || "Unitrader"}
+                  mode={dashboardSignalMode}
+                  onOpenTrade={() => setActiveTab("trade")}
+                />
                 <AccountDashboard />
               </>
             )}
@@ -1687,7 +1691,13 @@ export default function AppPage() {
             {activeTab === "positions" && <PositionsPanel onNavigate={setActiveTab} />}
             {activeTab === "history" && <History />}
             {activeTab === "performance" && <Performance />}
-            {activeTab === "notifications" && user && <UnitraderNotificationFeed userId={user.id} maxItems={20} />}
+            {activeTab === "notifications" && user && (
+              <UnitraderNotificationFeed
+                botName={user.ai_name || "Unitrader"}
+                userId={user.id}
+                maxItems={20}
+              />
+            )}
             {activeTab === "learning" && <LearningPanel user={user} />}
             {activeTab === "settings" && (
               <SettingsPanel

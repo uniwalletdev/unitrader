@@ -7,7 +7,7 @@ import { CheckCircle } from "lucide-react";
 import GalaxyLoader from "@/components/layout/GalaxyLoader";
 import { api, authApi, signalApi, tradingApi } from "@/lib/api";
 
-import ApexOnboardingChat from "@/components/onboarding/ApexOnboardingChat";
+import BotOnboardingChat from "@/components/onboarding/ApexOnboardingChat";
 import WhatIfSimulator from "@/components/onboarding/WhatIfSimulator";
 import MarketStatusBar, { MarketStatus } from "@/components/trade/MarketStatusBar";
 import TrustLadderBanner from "@/components/trade/TrustLadderBanner";
@@ -20,7 +20,7 @@ import RiskWarning from "@/components/layout/RiskWarning";
 import NeverHoldBanner from "@/components/layout/NeverHoldBanner";
 import UnitraderNotificationTicker from "@/components/notifications/UnitraderNotificationTicker";
 import BrowseStack from "@/components/signals/BrowseStack";
-import ApexSelectsPanel from "@/components/signals/ApexSelectsPanel";
+import BotSelectsPanel from "@/components/signals/ApexSelectsPanel";
 import FullAutoPanel from "@/components/signals/FullAutoPanel";
 import { useSignalStack } from "@/hooks/useSignalStack";
 
@@ -33,6 +33,7 @@ type TraderClass =
   | "crypto_native";
 
 type UserSettings = {
+  ai_name?: string;
   trader_class?: TraderClass;
   explanation_level?: string;
   approved_assets?: string[];
@@ -244,10 +245,12 @@ function TradePage() {
   const trace = dbg("trace");
 
   const [settings, setSettings] = useState<UserSettings | null>(null);
+  const [botName, setBotName] = useState("");
   const [trust, setTrust] = useState<TrustLadder | null>(null);
   const [loading, setLoading] = useState(() => !bare);
 
   const traderClass: TraderClass = settings?.trader_class ?? "complete_novice";
+  const resolvedBotName = botName || settings?.ai_name || "Unitrader";
 
   const [exchange, setExchange] = useState("alpaca");
   const [symbol, setSymbol] = useState("");
@@ -324,13 +327,15 @@ function TradePage() {
           return;
         }
 
-        const [sRes, tRes] = await Promise.all([
+        const [sRes, tRes, meRes] = await Promise.all([
           authApi.getSettings(),
           api.get("/api/onboarding/trust-ladder"),
+          authApi.me(),
         ]);
         if (!mounted) return;
         setSettings(sRes.data);
         setTrust(tRes.data?.data ?? tRes.data);
+        setBotName(meRes.data?.ai_name ?? "");
       } catch {
         if (!mounted) return;
         setSettings({ trader_class: "complete_novice", trading_paused: false, max_daily_loss: 10 });
@@ -398,11 +403,11 @@ function TradePage() {
   // Fully onboarded users belong on the main dashboard — no reason to stay here
   // NOTE: We intentionally keep onboarded users on /trade now (Signal Stack is primary).
 
-  // onboarding_complete gate: only render Apex wizard full-screen
+  // onboarding_complete gate: only render the onboarding wizard full-screen
   if (!loading && settings?.onboarding_complete === false) {
     return (
       <div className="relative">
-        <ApexOnboardingChat />
+        <BotOnboardingChat />
         {/* "Skip onboarding" escape hatch for impatient traders */}
         <div className="absolute bottom-4 right-4 z-50">
           <button
@@ -508,13 +513,13 @@ function TradePage() {
 
   const modeDescription = useMemo(() => {
     if (signalMode === "browse") {
-      return "Apex has pre-analysed assets. Best opportunities ranked below.";
+      return `${resolvedBotName} has pre-analysed assets. Best opportunities ranked below.`;
     }
     if (signalMode === "apex_selects") {
-      return "Set your parameters. Apex finds the best match.";
+      return `Set your parameters. ${resolvedBotName} finds the best match.`;
     }
-    return "Apex is trading automatically on your schedule.";
-  }, [signalMode]);
+    return `${resolvedBotName} is trading automatically on your schedule.`;
+  }, [resolvedBotName, signalMode]);
 
   const { signals, isLoading: signalsLoading, isRefreshing, lastScanAt, nextScanInMinutes, assetsScanned, error: signalsError, acceptSignal, skipSignal, refresh } =
     useSignalStack({ signal_stack_mode: signalMode });
@@ -538,7 +543,13 @@ function TradePage() {
     setModeSaving(true);
     try {
       await signalApi.updateSettings({ signal_stack_mode: mode });
-    } catch {
+      // #region agent log
+      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H3',location:'page.tsx:541',message:'signal mode persisted',data:{mode},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    } catch (error: any) {
+      // #region agent log
+      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H3',location:'page.tsx:544',message:'signal mode persist failed',data:{mode,status:error?.response?.status ?? null,detail:error?.response?.data?.detail ?? null},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
       // non-fatal: keep optimistic UI
     } finally {
       setModeSaving(false);
@@ -550,7 +561,7 @@ function TradePage() {
     try {
       const ok = await acceptSignal(signalId);
       if (ok) {
-        setToast(`Apex is buying ${sig?.asset_name ?? "this asset"}`);
+        setToast(`${resolvedBotName} is buying ${sig?.asset_name ?? "this asset"}`);
       }
       return ok;
     } catch (e: any) {
@@ -678,7 +689,7 @@ function TradePage() {
         <NeverHoldBanner />
       </div>
 
-      <UnitraderNotificationTicker />
+      <UnitraderNotificationTicker botName={resolvedBotName} />
 
       {/* ── Signal Stack: primary interface ─────────────────────────────────── */}
       {settings?.onboarding_complete === true && (
@@ -704,7 +715,7 @@ function TradePage() {
                   signalMode === "apex_selects" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white",
                 )}
               >
-                Apex selects · AI curates
+                {resolvedBotName} selects · AI curates
               </button>
               <button
                 type="button"
@@ -717,7 +728,7 @@ function TradePage() {
                 )}
                 disabled={fullAutoLocked}
               >
-                Full auto · Apex acts alone
+                Full auto · {resolvedBotName} acts alone
               </button>
             </div>
             <div className="mt-2 flex items-center justify-between text-[11px] text-dark-400">
@@ -729,6 +740,7 @@ function TradePage() {
           {/* Panel */} 
           {signalMode === "browse" && (
             <BrowseStack
+              botName={resolvedBotName}
               signals={browseSignals}
               isRefreshing={isRefreshing || signalsLoading}
               lastScanAt={lastScanAt}
@@ -742,7 +754,8 @@ function TradePage() {
             />
           )}
           {signalMode === "apex_selects" && (
-            <ApexSelectsPanel
+            <BotSelectsPanel
+              botName={resolvedBotName}
               userSettings={settings ?? {}}
               onExecute={async (ids) => {
                 for (const id of ids) {
@@ -753,6 +766,7 @@ function TradePage() {
           )}
           {signalMode === "full_auto" && (
             <FullAutoPanel
+              botName={resolvedBotName}
               userSettings={settings ?? {}}
               trustLadderStage={trust?.stage ?? 1}
               onSettingsUpdate={(updates) => setSettings((prev) => (prev ? { ...prev, ...(updates as any) } : prev))}

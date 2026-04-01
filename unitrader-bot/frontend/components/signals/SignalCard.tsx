@@ -11,6 +11,7 @@ import { Signal } from "@/hooks/useSignalStack";
 type ExplanationLevel = "expert" | "simple" | "metaphor";
 
 interface SignalCardProps {
+  botName: string;
   signal: Signal;
   traderClass: string;
   explanationLevel: ExplanationLevel;
@@ -96,6 +97,7 @@ function formatPrice(price: number): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function SignalCard({
+  botName,
   signal,
   explanationLevel,
   onAccept,
@@ -242,13 +244,13 @@ export default function SignalCard({
         <div className="flex items-center gap-2 rounded-xl bg-emerald-500/10 border border-emerald-500/20 px-3 py-2.5">
           <CheckCircle className="w-4 h-4 text-emerald-400 flex-shrink-0" />
           <span className="text-sm text-emerald-300 font-medium">
-            Trade executed — Apex is watching
+            Trade executed — {botName} is watching
           </span>
         </div>
       ) : signal.signal === "watch" ? (
         <div className="flex items-center gap-2 rounded-xl bg-amber-500/10 border border-amber-500/20 px-3 py-2.5">
           <Minus className="w-4 h-4 text-amber-400 flex-shrink-0" />
-          <span className="text-sm text-amber-300">Below threshold — Apex is watching only</span>
+          <span className="text-sm text-amber-300">Below threshold — {botName} is watching only</span>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
@@ -273,7 +275,7 @@ export default function SignalCard({
               {executing || isExecuting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : null}
-              Let Apex trade this
+              Let {botName} trade this
             </button>
           </div>
         </div>

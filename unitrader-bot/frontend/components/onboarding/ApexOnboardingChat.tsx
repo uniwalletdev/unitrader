@@ -274,7 +274,7 @@ const CLASS_LABEL: Record<TraderClass, string> = {
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function ApexOnboardingChat() {
+export default function BotOnboardingChat() {
   const navigate = (href: string) => {
     if (typeof window === "undefined") return;
     window.location.href = href;
