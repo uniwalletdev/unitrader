@@ -39,6 +39,7 @@ from models import (
     AuditLog,
     ApexNotification,
     ExchangeAPIKey,
+    TradingAccount,
     Trade,
     TradeFeedback,
     TradeUndoToken,
@@ -89,6 +90,8 @@ def _human_account_type(trader_class: str) -> str:
 class ExecuteTradeRequest(BaseModel):
     symbol: str
     exchange: str  # binance | alpaca | oanda | coinbase
+    trading_account_id: str | None = None
+    is_paper: bool | None = None
 
 
 class AnalyzeTradeRequest(BaseModel):
@@ -115,6 +118,102 @@ class ConnectExchangeRequest(BaseModel):
 
 
 VALID_EXCHANGES = {"alpaca", "binance", "oanda", "coinbase"}
+
+
+def _account_label(exchange: str, is_paper: bool) -> str:
+    suffix = "Paper" if is_paper else "Live"
+    return f"{exchange.title()} {suffix}"
+
+
+async def _ensure_trading_account(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    exchange: str,
+    is_paper: bool,
+    external_account_id: str | None = None,
+) -> TradingAccount:
+    result = await db.execute(
+        select(TradingAccount).where(
+            TradingAccount.user_id == user_id,
+            TradingAccount.exchange == exchange,
+            TradingAccount.is_paper == is_paper,
+            TradingAccount.is_active == True,  # noqa: E712
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account:
+        if external_account_id and not account.external_account_id:
+            account.external_account_id = external_account_id
+        account.account_label = _account_label(exchange, is_paper)
+        return account
+
+    account = TradingAccount(
+        user_id=user_id,
+        exchange=exchange,
+        is_paper=is_paper,
+        account_label=_account_label(exchange, is_paper),
+        external_account_id=external_account_id,
+        is_active=True,
+    )
+    db.add(account)
+    await db.flush()
+    return account
+
+
+async def _resolve_trading_account_for_user(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    exchange: str,
+    trading_account_id: str | None = None,
+    is_paper: bool | None = None,
+    allow_fallback_preferred: bool = True,
+) -> TradingAccount | None:
+    if trading_account_id:
+        result = await db.execute(
+            select(TradingAccount).where(
+                TradingAccount.id == trading_account_id,
+                TradingAccount.user_id == user_id,
+                TradingAccount.exchange == exchange,
+                TradingAccount.is_active == True,  # noqa: E712
+            )
+        )
+        return result.scalar_one_or_none()
+
+    filters = [
+        TradingAccount.user_id == user_id,
+        TradingAccount.exchange == exchange,
+        TradingAccount.is_active == True,  # noqa: E712
+    ]
+    if is_paper is not None:
+        filters.append(TradingAccount.is_paper == is_paper)
+    result = await db.execute(
+        select(TradingAccount)
+        .where(and_(*filters))
+        .order_by(TradingAccount.is_paper.desc(), TradingAccount.created_at.desc())
+    )
+    accounts = result.scalars().all()
+    if not accounts:
+        return None
+    if len(accounts) == 1:
+        return accounts[0]
+
+    if allow_fallback_preferred:
+        settings_result = await db.execute(
+            select(UserSettings).where(UserSettings.user_id == user_id)
+        )
+        user_settings = settings_result.scalar_one_or_none()
+        preferred_id = getattr(user_settings, "preferred_trading_account_id", None)
+        if preferred_id:
+            for account in accounts:
+                if account.id == preferred_id:
+                    return account
+
+    paper_accounts = [account for account in accounts if account.is_paper]
+    if len(paper_accounts) == 1:
+        return paper_accounts[0]
+    return None
 
 
 # ─────────────────────────────────────────────
@@ -219,10 +318,18 @@ async def connect_exchange(
         enc_key, enc_secret = encrypt_api_key(body.api_key, body.api_secret)
         key_hash_val = hash_api_key(body.api_key)
 
+        account = await _ensure_trading_account(
+            db,
+            user_id=current_user.id,
+            exchange=exchange,
+            is_paper=body.is_paper,
+        )
+
         existing = await db.execute(
             select(ExchangeAPIKey).where(
                 ExchangeAPIKey.user_id == current_user.id,
                 ExchangeAPIKey.exchange == exchange,
+                ExchangeAPIKey.is_paper == body.is_paper,
                 ExchangeAPIKey.is_active == True,  # noqa: E712
             )
         )
@@ -234,6 +341,7 @@ async def connect_exchange(
         now = datetime.now(timezone.utc)
         new_key = ExchangeAPIKey(
             user_id=current_user.id,
+            trading_account_id=account.id,
             exchange=exchange,
             encrypted_api_key=enc_key,
             encrypted_api_secret=enc_secret,
@@ -258,6 +366,8 @@ async def connect_exchange(
         "status": "success",
         "data": {
             "exchange": exchange,
+            "trading_account_id": account.id,
+            "account_label": account.account_label,
             "connected_at": new_key.created_at.isoformat() if new_key.created_at else now.isoformat(),
             "is_paper": body.is_paper,
             "balance_usd": round(balance, 2),
@@ -287,7 +397,9 @@ async def list_exchange_keys(
         "status": "success",
         "data": [
             {
+                "trading_account_id": k.trading_account_id,
                 "exchange": k.exchange,
+                "account_label": k.trading_account.account_label if k.trading_account else _account_label(k.exchange, k.is_paper),
                 "connected_at": k.created_at.isoformat() if k.created_at else None,
                 "is_paper": k.is_paper,
                 "last_used": k.last_used_at.isoformat() if k.last_used_at else None,
@@ -304,6 +416,8 @@ async def list_exchange_keys(
 @router.delete("/exchange-keys/{exchange}")
 async def disconnect_exchange(
     exchange: str = Path(..., pattern="^(alpaca|binance|oanda|coinbase)$"),
+    trading_account_id: str | None = Query(None),
+    is_paper: bool | None = Query(None),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -312,19 +426,37 @@ async def disconnect_exchange(
         select(ExchangeAPIKey).where(
             ExchangeAPIKey.user_id == current_user.id,
             ExchangeAPIKey.exchange == exchange.lower(),
+            *((
+                (ExchangeAPIKey.trading_account_id == trading_account_id,)
+                if trading_account_id
+                else ()
+            )),
+            *((
+                (ExchangeAPIKey.is_paper == is_paper,)
+                if is_paper is not None
+                else ()
+            )),
             ExchangeAPIKey.is_active == True,  # noqa: E712
         )
     )
-    key_row = result.scalar_one_or_none()
-    if not key_row:
+    key_rows = result.scalars().all()
+    if not key_rows:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"No active {exchange} connection found",
         )
+    if len(key_rows) > 1 and not trading_account_id and is_paper is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="multiple_accounts_found",
+        )
 
     try:
-        key_row.is_active = False
-        key_row.rotated_at = datetime.now(timezone.utc)
+        for key_row in key_rows:
+            key_row.is_active = False
+            key_row.rotated_at = datetime.now(timezone.utc)
+            if key_row.trading_account:
+                key_row.trading_account.is_active = False
         await db.commit()
     except Exception as exc:
         await db.rollback()
@@ -361,7 +493,9 @@ async def get_account_balances(
 
     async def _fetch_one(k: ExchangeAPIKey) -> dict:
         entry = {
+            "trading_account_id": k.trading_account_id,
             "exchange": k.exchange,
+            "account_label": k.trading_account.account_label if k.trading_account else _account_label(k.exchange, k.is_paper),
             "is_paper": k.is_paper,
             "connected_at": k.created_at.isoformat() if k.created_at else None,
             "last_used": k.last_used_at.isoformat() if k.last_used_at else None,
@@ -683,6 +817,8 @@ async def execute_trade(
         result = await agent.run_cycle(
             symbol=body.symbol.upper(),
             exchange_name=body.exchange.lower(),
+            trading_account_id=body.trading_account_id,
+            is_paper=body.is_paper,
         )
 
         if result is None:
@@ -753,11 +889,21 @@ async def analyze_trade(
 async def get_open_positions(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    trading_account_id: str | None = Query(None),
+    exchange: str | None = Query(None),
+    is_paper: bool | None = Query(None),
 ):
     """Return all currently open positions for the authenticated user."""
+    filters = [Trade.user_id == current_user.id, Trade.status == "open"]
+    if trading_account_id:
+        filters.append(Trade.trading_account_id == trading_account_id)
+    if exchange:
+        filters.append(Trade.exchange == exchange.lower())
+    if is_paper is not None:
+        filters.append(Trade.is_paper == is_paper)
     result = await db.execute(
         select(Trade)
-        .where(Trade.user_id == current_user.id, Trade.status == "open")
+        .where(and_(*filters))
         .order_by(Trade.created_at.desc())
     )
     trades = result.scalars().all()
@@ -782,6 +928,9 @@ async def get_trade_history(
     from_date: datetime | None = Query(None, description="Start date (ISO 8601)"),
     to_date: datetime | None = Query(None, description="End date (ISO 8601)"),
     outcome: str | None = Query(None, description="profit | loss"),
+    trading_account_id: str | None = Query(None),
+    exchange: str | None = Query(None),
+    is_paper: bool | None = Query(None),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
@@ -798,6 +947,12 @@ async def get_trade_history(
         filters.append(Trade.profit.isnot(None))
     elif outcome == "loss":
         filters.append(Trade.loss.isnot(None))
+    if trading_account_id:
+        filters.append(Trade.trading_account_id == trading_account_id)
+    if exchange:
+        filters.append(Trade.exchange == exchange.lower())
+    if is_paper is not None:
+        filters.append(Trade.is_paper == is_paper)
 
     result = await db.execute(
         select(Trade)
@@ -834,6 +989,9 @@ async def get_performance(
     db: AsyncSession = Depends(get_db),
     symbol: str | None = Query(None),
     market_condition: str | None = Query(None),
+    trading_account_id: str | None = Query(None),
+    exchange: str | None = Query(None),
+    is_paper: bool | None = Query(None),
 ):
     """Return aggregated performance statistics.
 
@@ -847,6 +1005,12 @@ async def get_performance(
         base_filter.append(Trade.symbol == symbol.upper())
     if market_condition:
         base_filter.append(Trade.market_condition == market_condition)
+    if trading_account_id:
+        base_filter.append(Trade.trading_account_id == trading_account_id)
+    if exchange:
+        base_filter.append(Trade.exchange == exchange.lower())
+    if is_paper is not None:
+        base_filter.append(Trade.is_paper == is_paper)
 
     result = await db.execute(select(Trade).where(and_(*base_filter)))
     trades = result.scalars().all()
@@ -1271,8 +1435,14 @@ async def simulate_history(
 # ─────────────────────────────────────────────
 
 def _trade_to_dict(trade: Trade) -> dict:
+    trading_account = getattr(trade, "trading_account", None)
     return {
         "id": trade.id,
+        "trading_account_id": trade.trading_account_id,
+        "exchange": trade.exchange,
+        "is_paper": trade.is_paper,
+        "account_scope": trade.account_scope,
+        "account_label": trading_account.account_label if trading_account else None,
         "symbol": trade.symbol,
         "side": trade.side,
         "quantity": trade.quantity,
@@ -1301,6 +1471,9 @@ async def performance_summary(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     days: int = Query(30, ge=1, le=365),
+    trading_account_id: str | None = Query(None),
+    exchange: str | None = Query(None),
+    is_paper: bool | None = Query(None),
 ):
     """Trader-class-aware performance summary.
 
@@ -1319,6 +1492,21 @@ async def performance_summary(
             Trade.status == "closed",
             Trade.closed_at.isnot(None),
             Trade.closed_at >= since,
+            *((
+                (Trade.trading_account_id == trading_account_id,)
+                if trading_account_id
+                else ()
+            )),
+            *((
+                (Trade.exchange == exchange.lower(),)
+                if exchange
+                else ()
+            )),
+            *((
+                (Trade.is_paper == is_paper,)
+                if is_paper is not None
+                else ()
+            )),
         )
     )
     trades = result.scalars().all()

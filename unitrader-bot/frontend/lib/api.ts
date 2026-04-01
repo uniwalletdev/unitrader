@@ -118,17 +118,18 @@ export const authApi = {
 
 // ── Trading ──────────────────────────────────────────────────────────────────
 export const tradingApi = {
-  openPositions: () => api.get("/api/trading/open-positions"),
+  openPositions: (params?: { trading_account_id?: string; exchange?: string; is_paper?: boolean }) =>
+    api.get("/api/trading/open-positions", { params }),
   history: (params?: object) => api.get("/api/trading/history", { params }),
-  performance: (params?: { symbol?: string; market_condition?: string }) =>
+  performance: (params?: { symbol?: string; market_condition?: string; trading_account_id?: string; exchange?: string; is_paper?: boolean }) =>
     api.get("/api/trading/performance", { params }),
   riskAnalysis: () => api.get("/api/trading/risk-analysis"),
   /** Pure analysis — returns signal/confidence/explanations. No order placed. */
   analyze: (symbol: string, exchange: string, trader_class?: string) =>
     api.post("/api/trading/analyze", { symbol, exchange, trader_class }, { timeout: 90000 }),
   /** Full cycle — analyse + place real/paper order on exchange. */
-  execute: (symbol: string, exchange: string) =>
-    api.post("/api/trading/execute", { symbol, exchange }, { timeout: 90000 }),
+  execute: (symbol: string, exchange: string, opts?: { trading_account_id?: string; is_paper?: boolean }) =>
+    api.post("/api/trading/execute", { symbol, exchange, ...opts }, { timeout: 90000 }),
   closePosition: (trade_id: string) =>
     api.post("/api/trading/close-position", { trade_id }),
   submitFeedback: (trade_id: string, payload: { rating: 1 | -1; comment: string | null; is_paper: boolean }) =>
@@ -138,7 +139,9 @@ export const tradingApi = {
 // ── Exchange Keys ────────────────────────────────────────────────────────────
 
 export interface ConnectedExchange {
+  trading_account_id?: string | null;
   exchange: string;
+  account_label?: string | null;
   connected_at: string | null;
   is_paper: boolean;
   last_used: string | null;
@@ -146,6 +149,8 @@ export interface ConnectedExchange {
 
 export interface ConnectExchangeResponse {
   exchange: string;
+  trading_account_id?: string | null;
+  account_label?: string | null;
   connected_at: string;
   is_paper: boolean;
   balance_usd: number;
@@ -153,7 +158,9 @@ export interface ConnectExchangeResponse {
 }
 
 export interface AccountBalance {
+  trading_account_id?: string | null;
   exchange: string;
+  account_label?: string | null;
   is_paper: boolean;
   connected_at: string | null;
   last_used: string | null;
@@ -187,9 +194,10 @@ export const exchangeApi = {
       is_paper: isPaper,
     }),
 
-  disconnect: (exchange: string) =>
+  disconnect: (exchange: string, opts?: { trading_account_id?: string; is_paper?: boolean }) =>
     api.delete<{ status: string; data: { exchange: string; message: string } }>(
-      `/api/trading/exchange-keys/${exchange}`
+      `/api/trading/exchange-keys/${exchange}`,
+      { params: opts }
     ),
 };
 
@@ -271,9 +279,10 @@ export const learningApi = {
 // Endpoints: execute, open-positions, history, performance, close-position, risk-analysis, exchange-keys
 
 export const tradingAPI = {
-  getOpenPositions: () =>
+  getOpenPositions: (params?: { trading_account_id?: string; exchange?: string; is_paper?: boolean }) =>
     api.get<{ status: string; data: { positions: BackendTrade[]; count: number } }>(
       "/api/trading/open-positions",
+      { params }
     ),
 
   getTradeHistory: (params?: {
@@ -281,6 +290,9 @@ export const tradingAPI = {
     from_date?: string;
     to_date?: string;
     outcome?: "profit" | "loss";
+    trading_account_id?: string;
+    exchange?: string;
+    is_paper?: boolean;
     limit?: number;
     offset?: number;
   }) =>
@@ -289,7 +301,7 @@ export const tradingAPI = {
       data: { trades: BackendTrade[]; total: number; limit: number; offset: number };
     }>("/api/trading/history", { params }),
 
-  getPerformance: (params?: { symbol?: string; market_condition?: string }) =>
+  getPerformance: (params?: { symbol?: string; market_condition?: string; trading_account_id?: string; exchange?: string; is_paper?: boolean }) =>
     api.get<{
       status: string;
       data: PerformanceData;
@@ -302,6 +314,11 @@ export const tradingAPI = {
 /** Backend trade shape from routers/trading._trade_to_dict */
 export interface BackendTrade {
   id: string;
+  trading_account_id?: string | null;
+  exchange?: string | null;
+  is_paper?: boolean | null;
+  account_scope?: string | null;
+  account_label?: string | null;
   symbol: string;
   side: string;
   quantity: number;

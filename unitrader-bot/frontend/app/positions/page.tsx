@@ -16,7 +16,7 @@ import {
   TrendingUp,
   X,
 } from "lucide-react";
-import { api, authApi, tradingApi } from "@/lib/api";
+import { api, authApi, exchangeApi, tradingApi, type AccountBalance } from "@/lib/api";
 import RiskWarning from "@/components/layout/RiskWarning";
 import { useLivePrice } from "@/hooks/useLivePrice";
 import { formatPrice } from "@/utils/formatPrice";
@@ -213,6 +213,8 @@ export default function PositionsPage() {
   const { isLoaded: authLoaded, isSignedIn, getToken } = useAuth();
   const [traderClass, setTraderClass] = useState<TraderClass>("complete_novice");
   const [positions, setPositions] = useState<Position[]>([]);
+  const [accounts, setAccounts] = useState<AccountBalance[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [closing, setClosing] = useState<{ open: boolean; id: string; symbol: string }>({
@@ -235,10 +237,16 @@ export default function PositionsPage() {
       const token = await getToken();
       if (token) api.defaults.headers.common.Authorization = `Bearer ${token}`;
 
-      const [settingsRes, posRes] = await Promise.all([
+      const [balancesRes, settingsRes, posRes] = await Promise.all([
+        exchangeApi.balances(),
         authApi.getSettings(),
-        tradingApi.openPositions(),
+        tradingApi.openPositions(
+          selectedAccountId !== "all"
+            ? { trading_account_id: selectedAccountId }
+            : undefined,
+        ),
       ]);
+      setAccounts(balancesRes.data?.data ?? []);
       setTraderClass((settingsRes.data?.trader_class as TraderClass) || "complete_novice");
 
       const d = posRes.data?.data ?? posRes.data;
@@ -264,7 +272,7 @@ export default function PositionsPage() {
     }
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authLoaded, isSignedIn]);
+  }, [authLoaded, isSignedIn, selectedAccountId]);
 
   const [livePositions, paperPositions] = useMemo(() => {
     const live: Position[] = [];
@@ -359,6 +367,40 @@ export default function PositionsPage() {
             </button>
           </div>
         </div>
+        {accounts.length > 0 && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedAccountId("all")}
+              className={clsx(
+                "rounded-lg border px-3 py-1.5 text-xs",
+                selectedAccountId === "all"
+                  ? "border-brand-500/40 bg-brand-500/10 text-brand-300"
+                  : "border-dark-800 bg-dark-950 text-dark-300",
+              )}
+            >
+              All accounts
+            </button>
+            {accounts.map((account) => {
+              const accountId = account.trading_account_id ?? `${account.exchange}-${account.is_paper ? "paper" : "live"}`;
+              return (
+                <button
+                  key={accountId}
+                  type="button"
+                  onClick={() => setSelectedAccountId(accountId)}
+                  className={clsx(
+                    "rounded-lg border px-3 py-1.5 text-xs",
+                    selectedAccountId === accountId
+                      ? "border-brand-500/40 bg-brand-500/10 text-brand-300"
+                      : "border-dark-800 bg-dark-950 text-dark-300",
+                  )}
+                >
+                  {account.account_label || `${account.exchange} ${account.is_paper ? "paper" : "live"}`}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 md:px-6">

@@ -167,6 +167,9 @@ class User(TimestampMixin, Base):
     api_keys: Mapped[list["ExchangeAPIKey"]] = relationship(
         "ExchangeAPIKey", back_populates="user", cascade="all, delete-orphan"
     )
+    trading_accounts: Mapped[list["TradingAccount"]] = relationship(
+        "TradingAccount", back_populates="user", cascade="all, delete-orphan"
+    )
     settings: Mapped["UserSettings | None"] = relationship(
         "UserSettings",
         back_populates="user",
@@ -204,11 +207,21 @@ class Trade(Base):
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
+    trading_account_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("trading_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # Trade details
     exchange: Mapped[str] = mapped_column(
         String(20), nullable=False, default="alpaca"  # alpaca | binance | oanda
     )
+    is_paper: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    account_scope: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="legacy_unscoped"
+    )
+    external_order_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)  # e.g. BTC/USD
     side: Mapped[str] = mapped_column(String(4), nullable=False)      # BUY | SELL
     quantity: Mapped[float] = mapped_column(Float, nullable=False)
@@ -243,12 +256,16 @@ class Trade(Base):
 
     # ── Relationships ──────────────────────────────────────────────────────
     user: Mapped["User"] = relationship("User", back_populates="trades")
+    trading_account: Mapped["TradingAccount | None"] = relationship(
+        "TradingAccount", back_populates="trades"
+    )
 
     # ── Indexes ───────────────────────────────────────────────────────────
     __table_args__ = (
         Index("ix_trades_user_status", "user_id", "status"),
         Index("ix_trades_user_created", "user_id", "created_at"),
         Index("ix_trades_user_symbol", "user_id", "symbol"),
+        Index("ix_trades_account_status", "trading_account_id", "status"),
     )
 
     def __repr__(self) -> str:
@@ -299,6 +316,48 @@ class Conversation(Base):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TRADING ACCOUNT
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TradingAccount(TimestampMixin, Base):
+    """Stable account identity used to scope balances, trades, and automation."""
+
+    __tablename__ = "trading_accounts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    exchange: Mapped[str] = mapped_column(String(20), nullable=False)
+    is_paper: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    account_label: Mapped[str] = mapped_column(String(80), nullable=False)
+    external_account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="trading_accounts")
+    api_keys: Mapped[list["ExchangeAPIKey"]] = relationship(
+        "ExchangeAPIKey", back_populates="trading_account"
+    )
+    trades: Mapped[list["Trade"]] = relationship(
+        "Trade", back_populates="trading_account"
+    )
+
+    __table_args__ = (
+        Index("ix_trading_accounts_user_exchange_mode", "user_id", "exchange", "is_paper"),
+        Index("ix_trading_accounts_user_active", "user_id", "is_active"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<TradingAccount id={self.id} user_id={self.user_id} "
+            f"exchange={self.exchange} paper={self.is_paper}>"
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # EXCHANGE API KEY
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -314,6 +373,11 @@ class ExchangeAPIKey(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    trading_account_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("trading_accounts.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     exchange: Mapped[str] = mapped_column(
@@ -339,6 +403,9 @@ class ExchangeAPIKey(Base):
 
     # ── Relationships ──────────────────────────────────────────────────────
     user: Mapped["User"] = relationship("User", back_populates="api_keys")
+    trading_account: Mapped["TradingAccount | None"] = relationship(
+        "TradingAccount", back_populates="api_keys"
+    )
 
     def __repr__(self) -> str:
         return f"<ExchangeAPIKey id={self.id} exchange={self.exchange} user_id={self.user_id}>"
@@ -425,6 +492,11 @@ class UserSettings(Base):
     )
     daily_digest_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False
+    )
+    preferred_trading_account_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("trading_accounts.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     # Trader profiling (auto-detected from onboarding)

@@ -156,8 +156,14 @@ async def create_tables() -> None:
             ("user_settings", "morning_briefing_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
             ("user_settings", "morning_briefing_time", "VARCHAR(5) NOT NULL DEFAULT '08:00'"),
             ("user_settings", "daily_digest_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("user_settings", "preferred_trading_account_id", "VARCHAR(36)"),
             ("trade_undo_tokens", "attempts_count", "INTEGER NOT NULL DEFAULT 0"),
             ("exchange_api_keys", "is_paper", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("exchange_api_keys", "trading_account_id", "VARCHAR(36)"),
+            ("trades", "trading_account_id", "VARCHAR(36)"),
+            ("trades", "is_paper", "BOOLEAN"),
+            ("trades", "account_scope", "VARCHAR(30) NOT NULL DEFAULT 'legacy_unscoped'"),
+            ("trades", "external_order_id", "VARCHAR(128)"),
         ]
         async with engine.begin() as conn:
             for table, col, col_def in pg_new_columns:
@@ -165,6 +171,10 @@ async def create_tables() -> None:
                     f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {col_def}"
                 )
                 logger.info("PG migration: ensured column %s.%s exists", table, col)
+            await conn.exec_driver_sql(
+                "UPDATE trades SET account_scope = 'legacy_unscoped' "
+                "WHERE account_scope IS NULL OR account_scope = ''"
+            )
 
     # SQLite doesn't support IF NOT EXISTS on ADD COLUMN — use try/except per column
     if _is_sqlite:
@@ -188,7 +198,14 @@ async def create_tables() -> None:
             ("user_settings", "morning_briefing_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
             ("user_settings", "morning_briefing_time", "VARCHAR(5) NOT NULL DEFAULT '08:00'"),
             ("user_settings", "daily_digest_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("user_settings", "preferred_trading_account_id", "VARCHAR(36)"),
             ("trade_undo_tokens", "attempts_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("exchange_api_keys", "is_paper", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("exchange_api_keys", "trading_account_id", "VARCHAR(36)"),
+            ("trades", "trading_account_id", "VARCHAR(36)"),
+            ("trades", "is_paper", "BOOLEAN"),
+            ("trades", "account_scope", "VARCHAR(30) NOT NULL DEFAULT 'legacy_unscoped'"),
+            ("trades", "external_order_id", "VARCHAR(128)"),
         ]
         # user_external_accounts, bot_messages, telegram_linking_codes are new tables
         # and are fully created by create_all above — only need column migrations for
@@ -202,6 +219,13 @@ async def create_tables() -> None:
                     logger.info("Migration: added column %s.%s", table, col)
                 except Exception:
                     pass  # column already exists — safe to ignore
+            try:
+                await conn.exec_driver_sql(
+                    "UPDATE trades SET account_scope = 'legacy_unscoped' "
+                    "WHERE account_scope IS NULL OR account_scope = ''"
+                )
+            except Exception:
+                pass
 
     logger.info("Database tables initialised")
 

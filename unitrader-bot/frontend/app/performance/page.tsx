@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { api, authApi, tradingApi } from "@/lib/api";
+import { api, authApi, exchangeApi, tradingApi, type AccountBalance } from "@/lib/api";
 import { useAuth } from "@clerk/nextjs";
 import {
   BarChart3,
@@ -167,6 +167,8 @@ export default function PerformancePage() {
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<PerfSummary | null>(null);
   const [trades, setTrades] = useState<TradeRow[]>([]);
+  const [accounts, setAccounts] = useState<AccountBalance[]>([]);
+  const [selectedAccountId, setSelectedAccountId] = useState<string>("all");
   const [error, setError] = useState<string | null>(null);
   const [taxOpen, setTaxOpen] = useState(false);
   const [feedbackStats, setFeedbackStats] = useState<{
@@ -184,12 +186,14 @@ export default function PerformancePage() {
       const token = await getToken();
       if (token) api.defaults.headers.common.Authorization = `Bearer ${token}`;
 
-      const [settingsRes, summaryRes, histRes] = await Promise.all([
+      const [balancesRes, settingsRes, summaryRes, histRes] = await Promise.all([
+        exchangeApi.balances(),
         authApi.getSettings(),
-        api.get("/api/performance/summary", { params: { days } }),
-        tradingApi.history({ limit: 200, offset: 0 }),
+        api.get("/api/performance/summary", { params: { days, ...(selectedAccountId !== "all" ? { trading_account_id: selectedAccountId } : {}) } }),
+        tradingApi.history({ limit: 200, offset: 0, ...(selectedAccountId !== "all" ? { trading_account_id: selectedAccountId } : {}) }),
       ]);
 
+      setAccounts(balancesRes.data?.data ?? []);
       setTraderClass((settingsRes.data?.trader_class as TraderClass) || "complete_novice");
 
       const sumData = summaryRes.data?.data ?? summaryRes.data;
@@ -216,7 +220,7 @@ export default function PerformancePage() {
     }
     load(period);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [period, authLoaded, isSignedIn]);
+  }, [period, authLoaded, isSignedIn, selectedAccountId]);
 
   useEffect(() => {
     api
@@ -259,6 +263,40 @@ export default function PerformancePage() {
             <div className="mt-1 text-xs text-dark-400">
               Period: {periodLabel} · Trades: {summary?.total_trades ?? 0}
             </div>
+            {accounts.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedAccountId("all")}
+                  className={clsx(
+                    "rounded-lg border px-3 py-1.5 text-xs",
+                    selectedAccountId === "all"
+                      ? "border-brand-500/40 bg-brand-500/10 text-brand-300"
+                      : "border-dark-800 bg-dark-950 text-dark-300",
+                  )}
+                >
+                  All accounts
+                </button>
+                {accounts.map((account) => {
+                  const accountId = account.trading_account_id ?? `${account.exchange}-${account.is_paper ? "paper" : "live"}`;
+                  return (
+                    <button
+                      key={accountId}
+                      type="button"
+                      onClick={() => setSelectedAccountId(accountId)}
+                      className={clsx(
+                        "rounded-lg border px-3 py-1.5 text-xs",
+                        selectedAccountId === accountId
+                          ? "border-brand-500/40 bg-brand-500/10 text-brand-300"
+                          : "border-dark-800 bg-dark-950 text-dark-300",
+                      )}
+                    >
+                      {account.account_label || `${account.exchange} ${account.is_paper ? "paper" : "live"}`}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap items-center gap-2">

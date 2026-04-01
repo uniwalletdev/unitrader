@@ -192,6 +192,11 @@ class TradeResponse(BaseModel):
     """Trade record returned from the API."""
 
     id: str
+    trading_account_id: str | None = None
+    exchange: str | None = None
+    is_paper: bool | None = None
+    account_scope: str | None = None
+    account_label: str | None = None
     symbol: str
     side: str
     quantity: float
@@ -275,6 +280,7 @@ class UserSettingsResponse(BaseModel):
     morning_briefing_enabled: bool = True
     morning_briefing_time: str = "08:00"
     daily_digest_enabled: bool = True
+    preferred_trading_account_id: str | None = None
     trader_class: str | None = None
     updated_at: datetime
     # Onboarding state — used by /trade gate and dashboard chat routing
@@ -315,6 +321,7 @@ class UpdateUserSettingsRequest(BaseModel):
     morning_briefing_enabled: bool | None = None
     morning_briefing_time: str | None = None
     daily_digest_enabled: bool | None = None
+    preferred_trading_account_id: str | None = None
     trader_class: str | None = None
     # Onboarding fields
     onboarding_complete: bool | None = None

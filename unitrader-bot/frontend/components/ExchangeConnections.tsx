@@ -6,8 +6,11 @@ import {
 import { exchangeApi } from "@/lib/api";
 
 interface ConnectedExchange {
+  trading_account_id?: string | null;
   exchange: string;
+  account_label?: string | null;
   connected_at: string | null;
+  is_paper: boolean;
   last_used: string | null;
 }
 
@@ -116,6 +119,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [formValues, setFormValues] = useState<Record<string, string>>({});
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
+  const [connectModes, setConnectModes] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -154,8 +158,11 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
 
   useEffect(() => { loadConnected(); }, []);
 
+  const connectionsForExchange = (exchangeId: string) =>
+    connected.filter((c) => c.exchange === exchangeId);
+
   const isConnected = (exchangeId: string) =>
-    connected.some((c) => c.exchange === exchangeId);
+    connectionsForExchange(exchangeId).length > 0;
 
   const handleConnect = async (exchangeId: string) => {
     const apiKey = formValues[`${exchangeId}_api_key`]?.trim();
@@ -169,11 +176,12 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
     setSubmitting(true);
     setMessage(null);
     try {
-      const res = await exchangeApi.connect(exchangeId, apiKey, apiSecret);
+      const isPaper = connectModes[exchangeId] ?? true;
+      const res = await exchangeApi.connect(exchangeId, apiKey, apiSecret, isPaper);
       const balance = res.data.data?.balance_usd;
       setMessage({
         type: "success",
-        text: `${exchangeId.charAt(0).toUpperCase() + exchangeId.slice(1)} connected! Balance: $${balance?.toLocaleString() ?? "—"}`,
+        text: `${exchangeId.charAt(0).toUpperCase() + exchangeId.slice(1)} ${isPaper ? "paper" : "live"} account connected. Balance: $${balance?.toLocaleString() ?? "—"}`,
       });
       setFormValues((v) => ({ ...v, [`${exchangeId}_api_key`]: "", [`${exchangeId}_api_secret`]: "" }));
       if (exchangeId === "coinbase") {
@@ -191,13 +199,17 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
     }
   };
 
-  const handleDisconnect = async (exchangeId: string) => {
-    if (!confirm(`Disconnect ${exchangeId}? You can reconnect later.`)) return;
-    setDisconnecting(exchangeId);
+  const handleDisconnect = async (connection: ConnectedExchange) => {
+    if (!confirm(`Disconnect ${connection.account_label || `${connection.exchange} ${connection.is_paper ? "paper" : "live"}`}? You can reconnect later.`)) return;
+    const targetId = connection.trading_account_id || `${connection.exchange}-${connection.is_paper ? "paper" : "live"}`;
+    setDisconnecting(targetId);
     setMessage(null);
     try {
-      await exchangeApi.disconnect(exchangeId);
-      setMessage({ type: "success", text: `${exchangeId.charAt(0).toUpperCase() + exchangeId.slice(1)} disconnected.` });
+      await exchangeApi.disconnect(connection.exchange, {
+        trading_account_id: connection.trading_account_id || undefined,
+        is_paper: connection.is_paper,
+      });
+      setMessage({ type: "success", text: `${connection.account_label || `${connection.exchange} ${connection.is_paper ? "paper" : "live"}`} disconnected.` });
       await loadConnected();
     } catch {
       setMessage({ type: "error", text: "Failed to disconnect. Please try again." });
@@ -237,7 +249,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
 
       {EXCHANGES.map((exchange) => {
         const active = isConnected(exchange.id);
-        const connInfo = connected.find((c) => c.exchange === exchange.id);
+        const connInfo = connectionsForExchange(exchange.id);
         const expanded = expandedId === exchange.id;
         const disabled = exchange.comingSoon && !active;
 
@@ -262,7 +274,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                     {active && (
                       <span className="flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-[10px] font-medium text-brand-400">
                         <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
-                        Connected
+                        {connInfo.length} connected
                       </span>
                     )}
                     {disabled && (
@@ -275,20 +287,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {active ? (
-                  <button
-                    onClick={() => handleDisconnect(exchange.id)}
-                    disabled={disconnecting === exchange.id}
-                    className="flex items-center gap-1.5 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
-                  >
-                    {disconnecting === exchange.id ? (
-                      <Loader2 size={12} className="animate-spin" />
-                    ) : (
-                      <Unlink size={12} />
-                    )}
-                    Disconnect
-                  </button>
-                ) : disabled ? null : (
+                {disabled ? null : (
                   <button
                     onClick={() => {
                       setExpandedId(expanded ? null : exchange.id);
@@ -297,7 +296,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                     className="flex items-center gap-1.5 rounded-lg border border-brand-500/30 px-3 py-1.5 text-xs text-brand-400 transition hover:bg-brand-500/10"
                   >
                     <Link2 size={12} />
-                    Connect
+                    {active ? "Manage" : "Connect"}
                     {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                   </button>
                 )}
@@ -305,16 +304,55 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
             </div>
 
             {/* Connected info */}
-            {active && connInfo && (
-              <div className="border-t border-dark-800 px-4 py-2 text-[10px] text-dark-500">
-                Connected {connInfo.connected_at ? new Date(connInfo.connected_at).toLocaleDateString() : ""}
-                {connInfo.last_used && ` · Last used ${new Date(connInfo.last_used).toLocaleDateString()}`}
+            {active && connInfo.length > 0 && (
+              <div className="border-t border-dark-800 px-4 py-2">
+                <div className="space-y-2 text-[10px] text-dark-500">
+                  {connInfo.map((connection) => {
+                    const targetId = connection.trading_account_id || `${connection.exchange}-${connection.is_paper ? "paper" : "live"}`;
+                    return (
+                      <div key={targetId} className="flex items-center justify-between gap-3 rounded-lg border border-dark-800 bg-dark-900/40 px-2.5 py-2">
+                        <div>
+                          <div className="text-dark-300">
+                            {connection.account_label || `${exchange.name} ${connection.is_paper ? "paper" : "live"}`}
+                          </div>
+                          <div>
+                            Connected {connection.connected_at ? new Date(connection.connected_at).toLocaleDateString() : ""}
+                            {connection.last_used && ` · Last used ${new Date(connection.last_used).toLocaleDateString()}`}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => handleDisconnect(connection)}
+                          disabled={disconnecting === targetId}
+                          className="flex items-center gap-1 rounded-lg border border-red-500/30 px-2.5 py-1 text-[10px] text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                          {disconnecting === targetId ? <Loader2 size={11} className="animate-spin" /> : <Unlink size={11} />}
+                          Disconnect
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             )}
 
             {/* Expansion form */}
-            {expanded && !active && !disabled && (
+            {expanded && !disabled && (
               <div className="border-t border-dark-800 p-3 sm:p-4">
+                <div className="mb-4 flex items-center justify-between rounded-lg border border-dark-800 bg-dark-900/40 px-3 py-2">
+                  <div>
+                    <div className="text-xs font-medium text-white">Connection mode</div>
+                    <div className="text-[10px] text-dark-500">Keep paper and live accounts separate per exchange.</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setConnectModes((prev) => ({ ...prev, [exchange.id]: !(prev[exchange.id] ?? true) }))
+                    }
+                    className="rounded-lg border border-dark-700 px-2.5 py-1 text-[11px] text-dark-200"
+                  >
+                    {(connectModes[exchange.id] ?? true) ? "Paper" : "Live"}
+                  </button>
+                </div>
                 {exchange.id === "coinbase" ? (
                   <>
                     {/* Smart paste box */}

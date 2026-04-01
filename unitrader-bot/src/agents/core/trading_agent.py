@@ -24,7 +24,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import AsyncSessionLocal
-from models import AuditLog, ExchangeAPIKey, Trade, User, UserExternalAccount, UserSettings
+from models import (
+    AuditLog,
+    ExchangeAPIKey,
+    Trade,
+    TradingAccount,
+    User,
+    UserExternalAccount,
+    UserSettings,
+)
 from security import decrypt_api_key
 from src.agents.shared_memory import SharedContext
 from src.integrations.exchange_client import get_exchange_client
@@ -1053,6 +1061,8 @@ Provide your detailed technical analysis with the specified JSON format."""
         symbol: str,
         exchange_name: str,
         ai_name: str = "Claude",
+        trading_account_id: str | None = None,
+        is_paper: bool | None = None,
     ) -> dict:
         """Orchestrate the full trade lifecycle: safety -> order -> DB -> notify.
 
@@ -1083,14 +1093,51 @@ Provide your detailed technical analysis with the specified JSON format."""
                 if not user_settings:
                     user_settings = UserSettings(user_id=self.user_id)
 
-                key_result = await db.execute(
-                    select(ExchangeAPIKey).where(
-                        ExchangeAPIKey.user_id == self.user_id,
-                        ExchangeAPIKey.exchange == exchange_name,
-                        ExchangeAPIKey.is_active == True,  # noqa: E712
+                account = None
+                if trading_account_id:
+                    account_result = await db.execute(
+                        select(TradingAccount).where(
+                            TradingAccount.id == trading_account_id,
+                            TradingAccount.user_id == self.user_id,
+                            TradingAccount.exchange == exchange_name,
+                            TradingAccount.is_active == True,  # noqa: E712
+                        )
                     )
-                )
-                api_key_row = key_result.scalar_one_or_none()
+                    account = account_result.scalar_one_or_none()
+                if account is None:
+                    account_filters = [
+                        TradingAccount.user_id == self.user_id,
+                        TradingAccount.exchange == exchange_name,
+                        TradingAccount.is_active == True,  # noqa: E712
+                    ]
+                    if is_paper is not None:
+                        account_filters.append(TradingAccount.is_paper == is_paper)
+                    account_result = await db.execute(
+                        select(TradingAccount)
+                        .where(*account_filters)
+                        .order_by(TradingAccount.is_paper.desc(), TradingAccount.created_at.desc())
+                    )
+                    accounts = account_result.scalars().all()
+                    if len(accounts) == 1:
+                        account = accounts[0]
+                    elif user_settings and getattr(user_settings, "preferred_trading_account_id", None):
+                        preferred_id = user_settings.preferred_trading_account_id
+                        account = next((item for item in accounts if item.id == preferred_id), None)
+                    elif len(accounts) > 1:
+                        account = next((item for item in accounts if item.is_paper), None)
+
+                key_filters = [
+                    ExchangeAPIKey.user_id == self.user_id,
+                    ExchangeAPIKey.exchange == exchange_name,
+                    ExchangeAPIKey.is_active == True,  # noqa: E712
+                ]
+                if account is not None:
+                    key_filters.append(ExchangeAPIKey.trading_account_id == account.id)
+                elif is_paper is not None:
+                    key_filters.append(ExchangeAPIKey.is_paper == is_paper)
+
+                key_result = await db.execute(select(ExchangeAPIKey).where(*key_filters))
+                api_key_row = key_result.scalars().first()
                 if not api_key_row:
                     logger.warning(
                         "No active %s API key for user %s — cannot execute trade",
@@ -1149,7 +1196,11 @@ Provide your detailed technical analysis with the specified JSON format."""
 
                 trade = Trade(
                     user_id=self.user_id,
+                    trading_account_id=getattr(api_key_row, "trading_account_id", None),
                     exchange=exchange_name,
+                    is_paper=is_paper,
+                    account_scope="account_scoped" if getattr(api_key_row, "trading_account_id", None) else "legacy_unscoped",
+                    external_order_id=str(order_id),
                     symbol=symbol,
                     side=decision["decision"],
                     quantity=params["quantity"],
@@ -1190,6 +1241,8 @@ Provide your detailed technical analysis with the specified JSON format."""
             "position_size_usd": params["size_amount"],
             "confidence": decision["confidence"],
             "reasoning": decision.get("reasoning", ""),
+            "trading_account_id": getattr(api_key_row, "trading_account_id", None),
+            "is_paper": is_paper,
             "message": (
                 f"{ai_name} executed {decision['decision']} on {symbol} "
                 f"@ ${decision['entry_price']:,.4f} "
@@ -1206,6 +1259,8 @@ Provide your detailed technical analysis with the specified JSON format."""
         symbol: str,
         exchange_name: str,
         orchestrator_context: str = "",
+        trading_account_id: str | None = None,
+        is_paper: bool | None = None,
     ) -> dict:
         """Run a complete analysis → decision → execution cycle.
 
@@ -1345,7 +1400,14 @@ Provide your detailed technical analysis with the specified JSON format."""
             }
 
         # ── Step 5: Execute ───────────────────────────────────────────────
-        result = await self.execute_trade(decision, symbol, exchange_name, ai_name)
+        result = await self.execute_trade(
+            decision,
+            symbol,
+            exchange_name,
+            ai_name,
+            trading_account_id=trading_account_id,
+            is_paper=is_paper,
+        )
 
         # ── Step 5b: Notify connected messaging platforms ─────────────────
         if result.get("status") == "executed":
@@ -1412,6 +1474,16 @@ Provide your detailed technical analysis with the specified JSON format."""
                         ExchangeAPIKey.user_id == self.user_id,
                         ExchangeAPIKey.exchange == trade.exchange,
                         ExchangeAPIKey.is_active == True,  # noqa: E712
+                        *(
+                            (ExchangeAPIKey.trading_account_id == trade.trading_account_id,)
+                            if trade.trading_account_id
+                            else ()
+                        ),
+                        *(
+                            (ExchangeAPIKey.is_paper == trade.is_paper,)
+                            if trade.is_paper is not None and not trade.trading_account_id
+                            else ()
+                        ),
                     )
                 )
                 key_row = key_result.scalars().first()

@@ -165,6 +165,16 @@ async def _run_position_checks_for_key(key_id: str) -> None:
                 Trade.user_id == key_row.user_id,
                 Trade.status == "open",
                 Trade.exchange == key_row.exchange,
+                *(
+                    (Trade.trading_account_id == key_row.trading_account_id,)
+                    if key_row.trading_account_id
+                    else ()
+                ),
+                *(
+                    (Trade.is_paper == key_row.is_paper,)
+                    if key_row.trading_account_id is None
+                    else ()
+                ),
             )
         )
         trades = trades_result.scalars().all()

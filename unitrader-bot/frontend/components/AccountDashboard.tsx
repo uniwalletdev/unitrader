@@ -29,6 +29,9 @@ type AccountStatus = "connected" | "disconnected" | "error";
 
 type Trade = {
   id: string;
+  trading_account_id?: string | null;
+  exchange?: string | null;
+  is_paper?: boolean | null;
   asset: string;
   direction: "buy" | "sell";
   amount: number;
@@ -41,6 +44,8 @@ type Trade = {
 
 type Account = {
   id: string;
+  tradingAccountId?: string | null;
+  accountLabel?: string | null;
   exchange: Exchange;
   mode: Mode;
   status: AccountStatus;
@@ -69,6 +74,9 @@ function backendTradeToTrade(t: BackendTrade): Trade {
   if (t.status === "closed") outcome = pnl >= 0 ? "win" : "loss";
   return {
     id: t.id,
+    trading_account_id: t.trading_account_id,
+    exchange: t.exchange,
+    is_paper: t.is_paper,
     asset: t.symbol,
     direction: t.side?.toLowerCase() === "sell" ? "sell" : "buy",
     amount: t.quantity,
@@ -142,37 +150,48 @@ export default function AccountDashboard() {
       setLoading(true);
       setError(null);
 
-      const [balancesRes, positionsRes, historyRes, perfRes] = await Promise.all([
+      const [balancesRes, positionsRes, historyRes] = await Promise.all([
         exchangeApi.balances(),
         tradingAPI.getOpenPositions(),
         tradingAPI.getTradeHistory({ limit: 100 }),
-        tradingAPI.getPerformance(),
       ]);
 
       const balances: AccountBalance[] = balancesRes.data?.data ?? [];
       const openPositions: BackendTrade[] = positionsRes.data?.data?.positions ?? [];
       const closedTrades: BackendTrade[] = historyRes.data?.data?.trades ?? [];
-      const perf: PerformanceData = perfRes.data?.data ?? {};
 
       const allTrades = [...openPositions, ...closedTrades].map(backendTradeToTrade);
-      const netPnl = perf.net_pnl_usd ?? 0;
+      const perfResults = await Promise.all(
+        balances.map(async (b) => {
+          const perfRes = await tradingAPI.getPerformance({
+            trading_account_id: b.trading_account_id ?? undefined,
+            exchange: b.exchange,
+            is_paper: b.is_paper,
+          });
+          return perfRes.data?.data ?? {};
+        }),
+      );
 
-      const mapped: Account[] = balances.map((b) => {
+      const mapped: Account[] = balances.map((b, index) => {
         const exchange = mapExchangeName(b.exchange);
         const mode: Mode = b.is_paper ? "paper" : "live";
-        const id = `${b.exchange}-${mode}`;
+        const id = b.trading_account_id ?? `${b.exchange}-${mode}`;
         const currency = b.currency || "USD";
         const balance = b.balance ?? 0;
-
-        // Show all trades; backend groups by user, not per key
-        const accountTrades = allTrades;
-
-        // Use performance data for P&L; distribute across accounts proportionally
-        const accountPnl = balances.length > 0 ? netPnl / balances.length : 0;
+        const perf: PerformanceData = perfResults[index] ?? {};
+        const accountTrades = allTrades.filter((trade) => {
+          if (b.trading_account_id && trade.trading_account_id) {
+            return trade.trading_account_id === b.trading_account_id;
+          }
+          return trade.exchange === b.exchange && trade.is_paper === b.is_paper;
+        });
+        const accountPnl = perf.net_pnl_usd ?? 0;
         const accountPnlPct = balance > 0 ? (accountPnl / balance) * 100 : 0;
 
         return {
           id,
+          tradingAccountId: b.trading_account_id,
+          accountLabel: b.account_label,
           exchange,
           mode,
           status: b.error ? "error" as AccountStatus : "connected" as AccountStatus,
