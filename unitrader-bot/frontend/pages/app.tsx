@@ -14,7 +14,6 @@ import { devLogError } from "@/lib/devLog";
 import ExchangeConnections from "@/components/ExchangeConnections";
 import ExchangeConnectWizard from "@/components/settings/ExchangeConnectWizard";
 import TrustLadderDetail from "@/components/settings/TrustLadderDetail";
-import TradePanel from "@/components/TradePanel";
 import WhatIfSimulator from "@/components/onboarding/WhatIfSimulator";
 import PositionsPanel from "@/components/PositionsPanel";
 import LearningPanel from "@/components/LearningPanel";
@@ -23,6 +22,7 @@ import TrialChoiceModal from "@/components/TrialChoiceModal";
 import AccountDashboard from "@/components/AccountDashboard";
 import UnitraderNotificationFeed from "@/components/notifications/UnitraderNotificationFeed";
 import UnitraderActivityStatus from "@/components/notifications/UnitraderActivityStatus";
+import TradePageWrapper from "@/app/trade/page";
 import { useTrialStatus, clearTrialCache } from "@/hooks/useTrialStatus";
 import MobileNav from "@/components/layout/MobileNav";
 import GalaxyLoader from "@/components/layout/GalaxyLoader";
@@ -1678,7 +1678,7 @@ export default function AppPage() {
                 <AccountDashboard />
               </>
             )}
-            {activeTab === "trade" && <TradePanel onNavigate={setActiveTab} />}
+            {activeTab === "trade" && <TradePageWrapper />}
             {activeTab === "chat" && (
               <div className="flex h-full flex-col">
                 <Chat user={user} />
