@@ -145,6 +145,18 @@ async def create_tables() -> None:
             ("user_settings", "onboarding_complete", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("user_settings", "financial_goal", "VARCHAR(50)"),
             ("user_settings", "risk_level_setting", "VARCHAR(20)"),
+            ("user_settings", "signal_stack_mode", "VARCHAR(20) NOT NULL DEFAULT 'browse'"),
+            ("user_settings", "watchlist", "JSON"),
+            ("user_settings", "auto_trade_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("user_settings", "auto_trade_threshold", "INTEGER NOT NULL DEFAULT 80"),
+            ("user_settings", "auto_trade_max_per_scan", "INTEGER NOT NULL DEFAULT 1"),
+            ("user_settings", "apex_selects_threshold", "INTEGER NOT NULL DEFAULT 75"),
+            ("user_settings", "apex_selects_max_trades", "INTEGER NOT NULL DEFAULT 2"),
+            ("user_settings", "apex_selects_asset_classes", "JSON"),
+            ("user_settings", "morning_briefing_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("user_settings", "morning_briefing_time", "VARCHAR(5) NOT NULL DEFAULT '08:00'"),
+            ("user_settings", "daily_digest_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("trade_undo_tokens", "attempts_count", "INTEGER NOT NULL DEFAULT 0"),
             ("exchange_api_keys", "is_paper", "BOOLEAN NOT NULL DEFAULT TRUE"),
         ]
         async with engine.begin() as conn:
@@ -165,6 +177,18 @@ async def create_tables() -> None:
             # telegram_linking_codes: bot-initiated flow fields
             ("telegram_linking_codes", "telegram_user_id", "VARCHAR(128)"),
             ("telegram_linking_codes", "telegram_username", "VARCHAR(128)"),
+            ("user_settings", "signal_stack_mode", "VARCHAR(20) NOT NULL DEFAULT 'browse'"),
+            ("user_settings", "watchlist", "JSON"),
+            ("user_settings", "auto_trade_enabled", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("user_settings", "auto_trade_threshold", "INTEGER NOT NULL DEFAULT 80"),
+            ("user_settings", "auto_trade_max_per_scan", "INTEGER NOT NULL DEFAULT 1"),
+            ("user_settings", "apex_selects_threshold", "INTEGER NOT NULL DEFAULT 75"),
+            ("user_settings", "apex_selects_max_trades", "INTEGER NOT NULL DEFAULT 2"),
+            ("user_settings", "apex_selects_asset_classes", "JSON"),
+            ("user_settings", "morning_briefing_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("user_settings", "morning_briefing_time", "VARCHAR(5) NOT NULL DEFAULT '08:00'"),
+            ("user_settings", "daily_digest_enabled", "BOOLEAN NOT NULL DEFAULT TRUE"),
+            ("trade_undo_tokens", "attempts_count", "INTEGER NOT NULL DEFAULT 0"),
         ]
         # user_external_accounts, bot_messages, telegram_linking_codes are new tables
         # and are fully created by create_all above — only need column migrations for

@@ -11,6 +11,8 @@ Depth of analysis adapts to trader class:
 """
 
 import asyncio
+import csv
+import io
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -26,6 +28,8 @@ logger = logging.getLogger(__name__)
 # Module-level cache: symbol -> (result_dict, cached_at_timestamp)
 _sentiment_cache: dict[str, tuple[dict, datetime]] = {}
 CACHE_TTL_SECONDS = 30 * 60  # 30 minutes
+_insider_cache: dict[str, tuple[dict, datetime]] = {}
+INSIDER_CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 
 
 class SentimentAgent:
@@ -171,20 +175,60 @@ class SentimentAgent:
     async def _fetch_earnings(self, symbol: str) -> dict | None:
         """Fetch next earnings date for a stock.
 
-        For now, uses a placeholder. In production, integrate with:
-        - Polygon.io earnings calendar
-        - SEC EDGAR filings
-        - Corporate investor relations APIs
-
         Args:
             symbol: Stock symbol (e.g., "AAPL")
 
         Returns:
             dict with "date" (datetime.date) or None if not found
         """
-        # Placeholder: would integrate with real earnings calendar
-        logger.debug(f"Earnings check for {symbol} - placeholder, returning None")
-        return None
+        api_key = settings.alpha_vantage_api_key
+        if not api_key:
+            logger.debug("No Alpha Vantage API key configured — skipping earnings lookup for %s", symbol)
+            return None
+
+        url = "https://www.alphavantage.co/query"
+        params = {
+            "function": "EARNINGS_CALENDAR",
+            "symbol": symbol.upper().strip(),
+            "horizon": "3month",
+            "apikey": api_key,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                text = response.text.strip()
+
+            if not text or "reportDate" not in text:
+                logger.debug("No earnings CSV returned for %s", symbol)
+                return None
+
+            rows = list(csv.DictReader(io.StringIO(text)))
+            if not rows:
+                return None
+
+            today = datetime.now(timezone.utc).date()
+            upcoming_dates = []
+            for row in rows:
+                row_symbol = (row.get("symbol") or "").upper().strip()
+                report_date = (row.get("reportDate") or "").strip()
+                if row_symbol != symbol.upper().strip() or not report_date:
+                    continue
+                try:
+                    parsed = datetime.strptime(report_date, "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+                if parsed >= today:
+                    upcoming_dates.append(parsed)
+
+            if not upcoming_dates:
+                return None
+
+            return {"date": min(upcoming_dates)}
+        except Exception as e:
+            logger.error("Earnings API error for %s: %s", symbol, e)
+            return None
 
     async def _fetch_fear_greed(self) -> int | None:
         """Fetch current crypto Fear & Greed Index.
@@ -207,6 +251,28 @@ class SentimentAgent:
         except Exception as e:
             logger.error(f"Fear & Greed API error: {e}")
             raise
+
+    async def _fetch_insider_activity(self, symbol: str) -> dict:
+        """Phase-2 scaffold for insider Form 4 enrichment.
+
+        Returns a normalized, cached shape so Signal Stack can start consuming
+        insider context later without another refactor.
+        """
+        cached = _insider_cache.get(symbol)
+        now = datetime.utcnow()
+        if cached and (now - cached[1]).total_seconds() < INSIDER_CACHE_TTL_SECONDS:
+            return cached[0]
+
+        normalized = {
+            "insider_signal": "neutral",
+            "insider_summary": "No insider filing signal applied yet.",
+            "recent_insider_buy_value_usd": None,
+            "recent_insider_buy_count": 0,
+        }
+
+        # Phase 2: query SEC EDGAR Form 4 data here, normalize, then cache.
+        _insider_cache[symbol] = (normalized, now)
+        return normalized
 
     async def _analyze_sentiment_with_claude(
         self, symbol: str, headlines: list[str], ctx: SharedContext

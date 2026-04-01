@@ -5,11 +5,11 @@ import { useRouter } from "next/router";
 import {
   TrendingUp, TrendingDown, MessageSquare, BarChart3, LineChart, Settings,
   LogOut, RefreshCw, X, Send, ChevronRight, ChevronDown, AlertTriangle,
-  ChevronUp,
+  ChevronUp, Bell,
   Zap, Shield, Activity, Clock, Crosshair, Brain, Plug,
   ThumbsUp, ThumbsDown, Sparkles, ArrowUpRight, Bot, BookOpen,
 } from "lucide-react";
-import { tradingApi, chatApi, authApi, billingApi, exchangeApi, api } from "@/lib/api";
+import { tradingApi, chatApi, authApi, billingApi, exchangeApi, api, notificationApi } from "@/lib/api";
 import { devLogError } from "@/lib/devLog";
 import ExchangeConnections from "@/components/ExchangeConnections";
 import ExchangeConnectWizard from "@/components/settings/ExchangeConnectWizard";
@@ -21,6 +21,8 @@ import LearningPanel from "@/components/LearningPanel";
 import SecuritySettings from "@/components/SecuritySettings";
 import TrialChoiceModal from "@/components/TrialChoiceModal";
 import AccountDashboard from "@/components/AccountDashboard";
+import ApexNotificationFeed from "@/components/notifications/ApexNotificationFeed";
+import ApexActivityStatus from "@/components/notifications/ApexActivityStatus";
 import { useTrialStatus, clearTrialCache } from "@/hooks/useTrialStatus";
 import MobileNav from "@/components/layout/MobileNav";
 import GalaxyLoader from "@/components/layout/GalaxyLoader";
@@ -40,6 +42,7 @@ interface Trade {
 interface ChatMessage { role: "user" | "assistant"; content: string; context?: string; }
 
 interface User { id: string; email: string; ai_name: string; subscription_tier: string; }
+type SignalStackMode = "browse" | "apex_selects" | "full_auto";
 
 // ─────────────────────────────────────────────
 // Sidebar
@@ -52,6 +55,7 @@ const NAV = [
   { id: "positions", icon: TrendingUp, label: "Positions" },
   { id: "history", icon: Activity, label: "History" },
   { id: "performance", icon: LineChart, label: "Performance" },
+  { id: "notifications", icon: Bell, label: "Notifications" },
   { id: "connect-exchange", icon: Plug, label: "Exchanges" },
   { id: "learning", icon: Brain, label: "Learning" },
   { id: "settings", icon: Settings, label: "Settings" },
@@ -1271,12 +1275,14 @@ export default function AppPage() {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [isMobileView, setIsMobileView] = useState(false);
+  const [unreadNotifications, setUnreadNotifications] = useState(0);
+  const [dashboardSignalMode, setDashboardSignalMode] = useState<SignalStackMode>("browse");
 
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { signOut } = useClerk();
   const router = useRouter();
-  const nativeTabs = new Set(["trade", "positions", "chat", "performance", "settings"]);
-  const mobilePrimaryTabs = new Set(["trade", "positions", "chat", "performance", "settings"]);
+  const nativeTabs = new Set(["trade", "positions", "chat", "performance", "settings", "notifications"]);
+  const mobilePrimaryTabs = new Set(["trade", "positions", "chat", "performance", "settings", "notifications"]);
 
   // Ensure native always lands on a tab supported by MobileNav
   useEffect(() => {
@@ -1326,6 +1332,10 @@ export default function AppPage() {
           // Gate: send users who haven't finished onboarding to /trade
           try {
             const sRes = await authApi.getSettings();
+            const mode = sRes.data?.signal_stack_mode;
+            if (mode === "browse" || mode === "apex_selects" || mode === "full_auto") {
+              setDashboardSignalMode(mode);
+            }
             if (sRes.data?.onboarding_complete === false) {
               syncingRef.current = false;
               router.replace("/trade");
@@ -1356,6 +1366,10 @@ export default function AppPage() {
         // Gate: send users who haven't finished onboarding to /trade
         try {
           const sRes = await authApi.getSettings();
+          const mode = sRes.data?.signal_stack_mode;
+          if (mode === "browse" || mode === "apex_selects" || mode === "full_auto") {
+            setDashboardSignalMode(mode);
+          }
           if (sRes.data?.onboarding_complete === false) {
             redirectedToOnboarding = true;
             router.replace("/trade");
@@ -1377,6 +1391,24 @@ export default function AppPage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoaded, isSignedIn, syncRetry]);
+
+  useEffect(() => {
+    if (!authChecked) return;
+    let cancelled = false;
+    const loadNotifications = async () => {
+      try {
+        const res = await notificationApi.list(5);
+        const count = res.data?.data?.unread_count || 0;
+        if (!cancelled) setUnreadNotifications(count);
+      } catch {}
+    };
+    loadNotifications();
+    const interval = setInterval(loadNotifications, 15000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [authChecked, activeTab]);
 
   // ── Stripe checkout (used by ?checkout=1 redirect from landing page) ────────
   const handleUpgradeFromQuery = async () => {
@@ -1533,18 +1565,33 @@ export default function AppPage() {
                 <span className="text-sm font-semibold text-white tracking-tight">
                   {NAV.find((n) => n.id === activeTab)?.label || "Unitrader"}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setMobileMoreOpen((v) => !v)}
-                  className="rounded-lg border border-dark-800 px-2.5 py-1 text-[11px] text-dark-300 hover:border-dark-700 hover:text-white"
-                >
-                  More
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("notifications")}
+                    className="relative rounded-lg border border-dark-800 p-2 text-dark-300 hover:border-dark-700 hover:text-white"
+                  >
+                    <Bell size={14} />
+                    {unreadNotifications > 0 && (
+                      <span className="absolute -right-1 -top-1 min-w-[16px] rounded-full bg-brand-500 px-1 text-center text-[9px] font-bold text-dark-950">
+                        {unreadNotifications > 9 ? "9+" : unreadNotifications}
+                      </span>
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMobileMoreOpen((v) => !v)}
+                    className="rounded-lg border border-dark-800 px-2.5 py-1 text-[11px] text-dark-300 hover:border-dark-700 hover:text-white"
+                  >
+                    More
+                  </button>
+                </div>
               </div>
               {mobileMoreOpen && (
                 <div className="absolute right-4 top-12 z-20 min-w-[190px] rounded-xl border border-dark-800 bg-dark-950 p-2 shadow-2xl">
                   {[
                     { id: "dashboard", label: "Dashboard" },
+                      { id: "notifications", label: "Notifications" },
                     { id: "history", label: "History" },
                     { id: "learning", label: "Learning" },
                     { id: "connect-exchange", label: "Connect Exchange" },
@@ -1593,14 +1640,44 @@ export default function AppPage() {
               <span className="text-sm font-semibold text-white tracking-tight">
                 {NAV.find(n => n.id === activeTab)?.label || "Unitrader"}
               </span>
-              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-500/10">
-                <TrendingUp size={14} className="text-brand-400" />
-              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("notifications")}
+                className="relative flex h-7 w-7 items-center justify-center rounded-lg bg-brand-500/10"
+              >
+                <Bell size={14} className="text-brand-400" />
+                {unreadNotifications > 0 && (
+                  <span className="absolute -right-1 -top-1 min-w-[14px] rounded-full bg-brand-500 px-1 text-center text-[8px] font-bold text-dark-950">
+                    {unreadNotifications > 9 ? "9+" : unreadNotifications}
+                  </span>
+                )}
+              </button>
             </div>
           )}
 
           <main className={(isNative || isMobileView) ? "mobile-safe flex-1 overflow-y-auto px-3 py-4 pb-24" : "flex-1 overflow-y-auto px-4 md:px-8 py-5 md:py-7"}>
-            {activeTab === "dashboard" && <AccountDashboard />}
+            {!isNative && !isMobileView && (
+              <div className="mb-4 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("notifications")}
+                  className="relative rounded-xl border border-dark-800 bg-[#0d1117] p-2.5 text-dark-300 transition hover:border-dark-700 hover:text-white"
+                >
+                  <Bell size={16} />
+                  {unreadNotifications > 0 && (
+                    <span className="absolute -right-1 -top-1 min-w-[16px] rounded-full bg-brand-500 px-1 text-center text-[9px] font-bold text-dark-950">
+                      {unreadNotifications > 9 ? "9+" : unreadNotifications}
+                    </span>
+                  )}
+                </button>
+              </div>
+            )}
+            {activeTab === "dashboard" && (
+              <>
+                <ApexActivityStatus mode={dashboardSignalMode} onOpenTrade={() => setActiveTab("trade")} />
+                <AccountDashboard />
+              </>
+            )}
             {activeTab === "trade" && <TradePanel onNavigate={setActiveTab} />}
             {activeTab === "chat" && (
               <div className="flex h-full flex-col">
@@ -1610,6 +1687,7 @@ export default function AppPage() {
             {activeTab === "positions" && <PositionsPanel onNavigate={setActiveTab} />}
             {activeTab === "history" && <History />}
             {activeTab === "performance" && <Performance />}
+            {activeTab === "notifications" && user && <ApexNotificationFeed userId={user.id} maxItems={20} />}
             {activeTab === "learning" && <LearningPanel user={user} />}
             {activeTab === "settings" && (
               <SettingsPanel

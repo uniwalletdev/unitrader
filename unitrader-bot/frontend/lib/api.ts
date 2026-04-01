@@ -93,6 +93,17 @@ export const authApi = {
     onboarding_complete?: boolean;
     financial_goal?: string;
     risk_level_setting?: string;
+    signal_stack_mode?: string;
+    watchlist?: string[];
+    auto_trade_enabled?: boolean;
+    auto_trade_threshold?: number;
+    auto_trade_max_per_scan?: number;
+    apex_selects_threshold?: number;
+    apex_selects_max_trades?: number;
+    apex_selects_asset_classes?: string[];
+    morning_briefing_enabled?: boolean;
+    morning_briefing_time?: string;
+    daily_digest_enabled?: boolean;
   }>) => api.patch("/api/auth/settings", data),
   acceptRiskDisclosure: () => api.post("/api/onboarding/accept-risk-disclosure", {}),
   completeWizard: (data?: {
@@ -227,8 +238,22 @@ export const signalApi = {
     api.get("/api/signals/stack"),
   interact: (signalId: string, action: string, tradeId?: string | null) =>
     api.post(`/api/signals/${signalId}/interact`, { action, trade_id: tradeId ?? null }),
-  updateSettings: (signalStackMode: string) =>
-    api.patch("/api/signals/settings", { signal_stack_mode: signalStackMode }),
+  updateSettings: (data: { signal_stack_mode?: string; watchlist?: string[]; auto_trade_enabled?: boolean; auto_trade_threshold?: number; auto_trade_max_per_scan?: number; apex_selects_threshold?: number; apex_selects_max_trades?: number; apex_selects_asset_classes?: string[]; morning_briefing_enabled?: boolean; morning_briefing_time?: string; daily_digest_enabled?: boolean }) =>
+    api.patch("/api/signals/settings", data),
+  apexSelects: () => api.get("/api/signals/apex-selects"),
+  approveApexSelects: (token: string) => api.post(`/api/signals/apex-selects/approve/${token}`),
+};
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+export const notificationApi = {
+  list: (limit = 20, opts?: { type?: string }) =>
+    api.get("/api/notifications", { params: { limit, ...(opts?.type ? { type: opts.type } : {}) } }),
+  markRead: (id: string) => api.post(`/api/notifications/${id}/read`),
+  markAllRead: () => api.post("/api/notifications/read-all"),
+  settings: () => api.get("/api/notifications/settings"),
+  updateSettings: (data: { telegram_notifications_enabled?: boolean; whatsapp_notifications_enabled?: boolean }) =>
+    api.patch("/api/notifications/settings", data),
+  undoTrade: (token: string) => api.post(`/api/trading/undo/${token}`),
 };
 
 // ── Learning ─────────────────────────────────────────────────────────────────

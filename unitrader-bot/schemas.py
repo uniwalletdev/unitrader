@@ -264,6 +264,17 @@ class UserSettingsResponse(BaseModel):
     first_trade_done: bool
     leaderboard_opt_out: bool
     push_token: str | None
+    signal_stack_mode: str = "browse"
+    watchlist: list[str] | None = None
+    auto_trade_enabled: bool = False
+    auto_trade_threshold: int = 80
+    auto_trade_max_per_scan: int = 1
+    apex_selects_threshold: int = 75
+    apex_selects_max_trades: int = 2
+    apex_selects_asset_classes: list[str] | None = None
+    morning_briefing_enabled: bool = True
+    morning_briefing_time: str = "08:00"
+    daily_digest_enabled: bool = True
     trader_class: str | None = None
     updated_at: datetime
     # Onboarding state — used by /trade gate and dashboard chat routing
@@ -293,6 +304,17 @@ class UpdateUserSettingsRequest(BaseModel):
     approved_assets: list[str] | None = None
     first_trade_done: bool | None = None
     push_token: str | None = None
+    signal_stack_mode: str | None = None
+    watchlist: list[str] | None = None
+    auto_trade_enabled: bool | None = None
+    auto_trade_threshold: int | None = None
+    auto_trade_max_per_scan: int | None = None
+    apex_selects_threshold: int | None = None
+    apex_selects_max_trades: int | None = None
+    apex_selects_asset_classes: list[str] | None = None
+    morning_briefing_enabled: bool | None = None
+    morning_briefing_time: str | None = None
+    daily_digest_enabled: bool | None = None
     trader_class: str | None = None
     # Onboarding fields
     onboarding_complete: bool | None = None

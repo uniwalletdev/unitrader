@@ -18,6 +18,7 @@ import TradeConfirmModal from "@/components/trade/TradeConfirmModal";
 import CircuitBreakerAlert from "@/components/trade/CircuitBreakerAlert";
 import RiskWarning from "@/components/layout/RiskWarning";
 import NeverHoldBanner from "@/components/layout/NeverHoldBanner";
+import ApexNotificationTicker from "@/components/notifications/ApexNotificationTicker";
 import BrowseStack from "@/components/signals/BrowseStack";
 import ApexSelectsPanel from "@/components/signals/ApexSelectsPanel";
 import FullAutoPanel from "@/components/signals/FullAutoPanel";
@@ -536,7 +537,7 @@ function TradePage() {
     setSettings((prev) => (prev ? { ...prev, signal_stack_mode: mode } : prev));
     setModeSaving(true);
     try {
-      await signalApi.updateSettings(mode);
+      await signalApi.updateSettings({ signal_stack_mode: mode });
     } catch {
       // non-fatal: keep optimistic UI
     } finally {
@@ -676,6 +677,8 @@ function TradePage() {
       <div className="mb-4">
         <NeverHoldBanner />
       </div>
+
+      <ApexNotificationTicker />
 
       {/* ── Signal Stack: primary interface ─────────────────────────────────── */}
       {settings?.onboarding_complete === true && (

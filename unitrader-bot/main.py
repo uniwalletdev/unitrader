@@ -7,10 +7,11 @@ Run with:  python -m uvicorn main:app --reload
 
 import asyncio
 import logging
+import secrets
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import sentry_sdk
 from fastapi import FastAPI, HTTPException, Request, status
@@ -21,12 +22,21 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import settings
 from database import AsyncSessionLocal, create_tables
-from models import ExchangeAPIKey, User, UserSettings
+from models import (
+    ApexSelectsApprovalToken,
+    ExchangeAPIKey,
+    SignalScanRun,
+    SignalStack,
+    Trade,
+    TradeUndoToken,
+    User,
+    UserSettings,
+)
 from routers import auth, health
 from routers import trading as trading_router
 from routers import chat as chat_router
@@ -35,9 +45,11 @@ from routers import billing as billing_router
 from routers import trial as trial_router
 from routers import learning as learning_router
 from routers import onboarding as onboarding_router
+from routers import notifications as notifications_router
 from routers import ws as ws_router
 from routers import exchanges as exchanges_router
 from routers import goals as goals_router
+from routers import signals as signals_router
 from routers.telegram_webhooks import (
     linking_router as telegram_linking_router,
     set_telegram_bot_service,
@@ -51,11 +63,19 @@ from routers.whatsapp_webhooks import (
 from src.error_handling import configure_third_party_loggers, http_exception_handler
 from src.agents.orchestrator import get_orchestrator
 from src.agents.signal_stack_agent import signal_stack_agent
+from src.agents.shared_memory import SharedContext, SharedMemory
 from src.agents.marketing.content_writer import generate_weekly_posts, generate_monthly_guide
+from src.agents.sentiment_agent import SentimentAgent
 from backend.agents.content_agent import ContentAgent
-from src.services.trade_monitoring import monitor_loop
+from src.integrations.market_data import classify_asset, full_market_analysis
+from src.services.trade_monitoring import is_key_in_backoff, monitor_loop
 from src.services.email_sequences import send_trial_emails_for_all_users
 from src.services.learning_hub import learning_hub
+from src.services.apex_notifications import (
+    ApexNotificationEngine,
+    get_apex_notification_engine,
+    set_apex_notification_engine,
+)
 
 # ─────────────────────────────────────────────
 # Logging
@@ -215,10 +235,13 @@ async def lifespan(app: FastAPI):
     email_task    = asyncio.create_task(_email_scheduler(),          name="email_scheduler")
     learning_task = asyncio.create_task(_learning_scheduler(),       name="learning_scheduler")
     goals_task    = asyncio.create_task(_goals_scheduler(),          name="goals_scheduler")
-    signal_task   = asyncio.create_task(_signal_stack_scheduler(),   name="signal_stack_scheduler")
+    full_auto_task = asyncio.create_task(full_auto_scanner_loop(),   name="full_auto_scanner_loop")
+    apex_selects_task = asyncio.create_task(apex_selects_scanner_loop(), name="apex_selects_scanner_loop")
+    morning_briefing_task = asyncio.create_task(morning_briefing_loop(), name="morning_briefing_loop")
+    daily_digest_task = asyncio.create_task(daily_digest_loop(),     name="daily_digest_loop")
     logger.info(
         "Background loops started "
-        "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly, goals=weekly@8am, signal_stack=30min)"
+        "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly, goals=weekly@8am, full_auto=30min, apex_selects=30min, morning_briefing=hourly, daily_digest=8am)"
     )
 
     # 5. Initialise Telegram bot (optional — disabled if token not set)
@@ -245,6 +268,15 @@ async def lifespan(app: FastAPI):
         _tg_bot = None
         logger.info("Telegram bot disabled (TELEGRAM_BOT_TOKEN not set)")
 
+    # 5b. Initialise Unitrader notifications engine
+    _apex_notifications = ApexNotificationEngine(
+        telegram_bot=_tg_bot,
+        whatsapp_bot=None,
+        claude_client=None,
+    )
+    set_apex_notification_engine(_apex_notifications)
+    logger.info("Unitrader notifications engine initialised")
+
     # 6. Initialise WhatsApp bot (optional — disabled if Twilio creds not set)
     if settings.whatsapp_enabled:
         try:
@@ -255,6 +287,7 @@ async def lifespan(app: FastAPI):
                 twilio_whatsapp_number=settings.twilio_whatsapp_number,
             )
             set_whatsapp_bot_service(_wa_bot)
+            _apex_notifications.whatsapp_bot = _wa_bot
             logger.info(
                 "WhatsApp bot initialised — webhook: %s/webhooks/whatsapp",
                 settings.api_base_url,
@@ -280,11 +313,31 @@ async def lifespan(app: FastAPI):
             pass
 
     # Background tasks
-    for task in (trading_task, monitor_task, content_task, email_task, learning_task, goals_task, signal_task):
+    for task in (
+        trading_task,
+        monitor_task,
+        content_task,
+        email_task,
+        learning_task,
+        goals_task,
+        full_auto_task,
+        apex_selects_task,
+        morning_briefing_task,
+        daily_digest_task,
+    ):
         task.cancel()
     try:
         await asyncio.gather(
-            trading_task, monitor_task, content_task, email_task, learning_task, goals_task, signal_task,
+            trading_task,
+            monitor_task,
+            content_task,
+            email_task,
+            learning_task,
+            goals_task,
+            full_auto_task,
+            apex_selects_task,
+            morning_briefing_task,
+            daily_digest_task,
             return_exceptions=True,
         )
     except Exception:
@@ -464,35 +517,425 @@ async def _trading_loop() -> None:
 
 
 # ─────────────────────────────────────────────
-# Background: Signal Stack Scheduler (every 30 minutes)
+# Background: Signal loops and notifications
 # ─────────────────────────────────────────────
 
-async def _signal_stack_scheduler() -> None:
-    """
-    Runs the Signal Stack scan every 30 minutes.
-    Full scan (all asset classes) Mon-Fri 09:00-22:00 UTC.
-    Crypto-only scan at all other times (crypto trades 24/7).
-    """
-    logger.info("Signal stack scheduler started")
+_signal_sentiment_agent = SentimentAgent()
+
+
+def _is_market_hours(now: datetime) -> bool:
+    return now.weekday() < 5 and 9 <= now.hour < 22
+
+
+def _is_subscription_active(user: User) -> bool:
+    return bool(
+        user.subscription_tier == "pro"
+        or (
+            user.trial_status == "active"
+            and user.trial_end_date
+            and user.trial_end_date > datetime.now(timezone.utc)
+        )
+    )
+
+
+def _exchange_for_symbol(symbol: str, asset_class: str) -> str:
+    if asset_class == "crypto":
+        return "coinbase"
+    if asset_class == "forex":
+        return "oanda"
+    return "alpaca"
+
+
+async def _analyse_symbol_for_mode(symbol: str, db) -> dict:
+    asset_type = classify_asset(symbol)
+    asset_class = "stocks"
+    if asset_type == "crypto":
+        asset_class = "crypto"
+    elif asset_type == "forex":
+        asset_class = "forex"
+
+    exchange = _exchange_for_symbol(symbol, asset_class)
+    market_data = await full_market_analysis(symbol, exchange)
+    indicators = market_data.get("indicators", {}) or {}
+    rsi = indicators.get("rsi")
+    macd = signal_stack_agent._classify_macd(indicators.get("macd", {}) or {})
+    volume_ratio = signal_stack_agent._volume_ratio(market_data.get("volume"))
+
+    ctx = SharedContext.default("signal-loop")
+    if asset_class == "crypto":
+        ctx.trader_class = "crypto_native"
+    sentiment = await _signal_sentiment_agent.get_sentiment(symbol, ctx)
+    convergence = await signal_stack_agent.convergence_engine.score_symbol(
+        symbol=symbol,
+        asset_class=asset_class,
+        existing_market_data=market_data,
+        existing_sentiment=sentiment,
+        db=db,
+    )
+
+    return {
+        "symbol": symbol,
+        "asset_name": signal_stack_agent._get_asset_name(symbol),
+        "asset_class": asset_class,
+        "exchange": exchange,
+        "signal": convergence["signal"],
+        "confidence": convergence["confidence"],
+        "reasoning_expert": convergence["reasoning_expert"],
+        "reasoning_simple": convergence["reasoning_simple"],
+        "reasoning_metaphor": convergence["reasoning_metaphor"],
+        "rsi": rsi,
+        "macd_signal": macd,
+        "volume_ratio": volume_ratio,
+        "sentiment_score": sentiment.get("sentiment_score", "neutral"),
+        "earnings_days": signal_stack_agent._earnings_days(sentiment.get("earnings_date")),
+        "fear_greed_index": sentiment.get("fear_greed_index"),
+        "current_price": market_data.get("price"),
+        "price_change_24h": market_data.get("price_change_pct"),
+        "convergence": convergence,
+    }
+
+
+def _signal_row_from_analysis(analysis: dict, run_id: uuid.UUID) -> SignalStack:
+    return SignalStack(
+        id=uuid.uuid4(),
+        symbol=analysis["symbol"],
+        asset_name=analysis["asset_name"],
+        asset_class=analysis["asset_class"],
+        exchange=analysis["exchange"],
+        signal=analysis["signal"],
+        confidence=analysis["confidence"],
+        reasoning_expert=analysis["reasoning_expert"],
+        reasoning_simple=analysis["reasoning_simple"],
+        reasoning_metaphor=analysis["reasoning_metaphor"],
+        rsi=analysis["rsi"],
+        macd_signal=analysis["macd_signal"],
+        volume_ratio=analysis["volume_ratio"],
+        sentiment_score=analysis["sentiment_score"],
+        earnings_days=analysis["earnings_days"],
+        fear_greed_index=analysis["fear_greed_index"],
+        current_price=analysis["current_price"],
+        price_change_24h=analysis["price_change_24h"],
+        scan_run_id=run_id,
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=35),
+    )
+
+
+async def _build_daily_digest(user_id: str, db, settings_row: UserSettings) -> dict:
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    trades_result = await db.execute(
+        select(Trade).where(Trade.user_id == user_id, Trade.created_at >= since)
+    )
+    trades = trades_result.scalars().all()
+    open_positions_result = await db.execute(
+        select(Trade).where(Trade.user_id == user_id, Trade.status == "open")
+    )
+    open_positions = open_positions_result.scalars().all()
+    pnl = sum((trade.profit or 0) - (trade.loss or 0) for trade in trades)
+    return {
+        "trades_today": len(trades),
+        "pnl_today": round(pnl, 2),
+        "signals_skipped": 0,
+        "open_positions": len(open_positions),
+        "watchlist": settings_row.watchlist or [],
+    }
+
+
+async def full_auto_scanner_loop() -> None:
+    logger.info("Full Auto scanner loop started")
     while True:
         try:
             now = datetime.now(timezone.utc)
-            is_weekday = now.weekday() < 5
-            market_hour = 9 <= now.hour < 22
-
-            if is_weekday and market_hour:
+            if _is_market_hours(now):
                 async with AsyncSessionLocal() as db:
-                    result = await signal_stack_agent.run_scan(db, triggered_by="scheduler")
-                    logger.info("Signal Stack full scan: %s", result)
-            else:
-                async with AsyncSessionLocal() as db:
-                    result = await signal_stack_agent.run_crypto_only_scan(db)
-                    logger.info("Signal Stack crypto scan: %s", result)
+                    result = await db.execute(
+                        select(UserSettings, User)
+                        .join(User, User.id == UserSettings.user_id)
+                        .where(
+                            UserSettings.auto_trade_enabled == True,  # noqa: E712
+                            UserSettings.trading_paused == False,  # noqa: E712
+                            User.is_active == True,  # noqa: E712
+                        )
+                    )
+                    for settings_row, user in result.all():
+                        if not _is_subscription_active(user):
+                            continue
+                        try:
+                            await _run_auto_scan_for_user(settings_row, user, db)
+                        except Exception as exc:
+                            logger.error("Full Auto scan failed for %s: %s", user.id, exc)
+                            sentry_sdk.capture_exception(exc)
         except Exception as exc:
-            logger.error("Signal stack scheduler error: %s", exc)
-            sentry_sdk.capture_exception(exc)
+            logger.error("Full Auto scanner loop error: %s", exc)
+        await asyncio.sleep(30 * 60)
 
-        await asyncio.sleep(1800)  # 30 minutes
+
+async def _run_auto_scan_for_user(settings_row: UserSettings, user: User, db) -> None:
+    watchlist = settings_row.watchlist or ["AAPL", "BTC/USD", "NVDA"]
+    threshold = settings_row.auto_trade_threshold or 80
+    max_per_scan = settings_row.auto_trade_max_per_scan or 1
+    trades_this_scan = 0
+    run_id = uuid.uuid4()
+    orchestrator = get_orchestrator()
+    notification_engine = get_apex_notification_engine()
+
+    for symbol in watchlist:
+        if trades_this_scan >= max_per_scan:
+            break
+        if await is_key_in_backoff(str(user.id), db):
+            logger.info("Full Auto skipping %s for %s due to exchange backoff", symbol, user.id)
+            continue
+
+        analysis = await _analyse_symbol_for_mode(symbol, db)
+        db.add(_signal_row_from_analysis(analysis, run_id))
+        convergence = analysis["convergence"]
+        confidence = convergence["confidence"]
+        signal = convergence["signal"]
+
+        if signal in ("buy", "sell") and confidence >= threshold:
+            ctx = await SharedMemory.load(str(user.id), db)
+            ctx.exchange = analysis["exchange"]
+            result = await orchestrator._trade_execute(  # type: ignore[attr-defined]
+                str(user.id),
+                ctx,
+                {
+                    "symbol": symbol,
+                    "side": signal.upper(),
+                    "amount": settings_row.max_trade_amount or 100,
+                    "source": "full_auto",
+                    "signal_context": convergence,
+                },
+                db,
+            )
+            if result.get("status") == "executed":
+                trades_this_scan += 1
+                undo_token = secrets.token_urlsafe(16)
+                db.add(
+                    TradeUndoToken(
+                        token=undo_token,
+                        user_id=str(user.id),
+                        trade_id=str(result.get("trade_id")),
+                        expires_at=datetime.now(timezone.utc) + timedelta(seconds=60),
+                    )
+                )
+                if notification_engine:
+                    await notification_engine.send_auto_trade_executed(
+                        user_id=str(user.id),
+                        trade={
+                            **result,
+                            "amount": settings_row.max_trade_amount or 100,
+                            "asset_name": analysis["asset_name"],
+                            "stop_loss_pct": 2,
+                            "take_profit_pct": 5,
+                        },
+                        convergence=convergence,
+                        undo_token=undo_token,
+                        db=db,
+                    )
+        else:
+            logger.info(
+                "[Full Auto] Skipped %s for %s: signal=%s confidence=%s threshold=%s",
+                symbol,
+                user.id,
+                signal,
+                confidence,
+                threshold,
+            )
+
+    db.add(
+        SignalScanRun(
+            id=run_id,
+            assets_scanned=len(watchlist),
+            signals_generated=trades_this_scan,
+            triggered_by="full_auto",
+        )
+    )
+    await db.commit()
+
+
+async def apex_selects_scanner_loop() -> None:
+    logger.info("Apex Selects scanner loop started")
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            if _is_market_hours(now):
+                async with AsyncSessionLocal() as db:
+                    result = await db.execute(
+                        select(UserSettings, User)
+                        .join(User, User.id == UserSettings.user_id)
+                        .where(
+                            UserSettings.signal_stack_mode == "apex_selects",
+                            UserSettings.trading_paused == False,  # noqa: E712
+                            User.is_active == True,  # noqa: E712
+                        )
+                    )
+                    for settings_row, user in result.all():
+                        if not _is_subscription_active(user):
+                            continue
+                        try:
+                            await _run_apex_selects_for_user(settings_row, user, db)
+                        except Exception as exc:
+                            logger.error("Apex Selects failed for %s: %s", user.id, exc)
+        except Exception as exc:
+            logger.error("Apex Selects loop error: %s", exc)
+        await asyncio.sleep(30 * 60)
+
+
+async def _run_apex_selects_for_user(settings_row: UserSettings, user: User, db) -> None:
+    threshold = settings_row.apex_selects_threshold or 75
+    max_trades = settings_row.apex_selects_max_trades or 2
+    allowed_classes = settings_row.apex_selects_asset_classes or ["stocks", "crypto"]
+    watchlist = settings_row.watchlist or ["AAPL", "BTC/USD", "NVDA", "TSLA", "ETH/USD"]
+    qualifying = []
+    run_id = uuid.uuid4()
+
+    for symbol in watchlist:
+        analysis = await _analyse_symbol_for_mode(symbol, db)
+        db.add(_signal_row_from_analysis(analysis, run_id))
+        if analysis["asset_class"] not in allowed_classes:
+            continue
+        if (
+            analysis["signal"] in ("buy", "sell")
+            and analysis["confidence"] >= threshold
+        ):
+            qualifying.append(
+                {
+                    "symbol": symbol,
+                    "asset_name": analysis["asset_name"],
+                    "asset_class": analysis["asset_class"],
+                    "exchange": analysis["exchange"],
+                    "signal": analysis["signal"],
+                    "confidence": analysis["confidence"],
+                    "reasoning_expert": analysis["reasoning_expert"],
+                    "reasoning_simple": analysis["reasoning_simple"],
+                    "reasoning_metaphor": analysis["reasoning_metaphor"],
+                    "threshold_used": threshold,
+                }
+            )
+        if len(qualifying) >= max_trades:
+            break
+
+    if qualifying:
+        approve_token = secrets.token_urlsafe(16)
+        db.add(
+            ApexSelectsApprovalToken(
+                token=approve_token,
+                user_id=str(user.id),
+                signals_payload={"signals": qualifying},
+                expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
+            )
+        )
+        notification_engine = get_apex_notification_engine()
+        if notification_engine:
+            await notification_engine.send_apex_selects_ready(
+                user_id=str(user.id),
+                selected_signals=qualifying,
+                total_scanned=len(watchlist),
+                approve_token=approve_token,
+                db=db,
+            )
+
+    db.add(
+        SignalScanRun(
+            id=run_id,
+            assets_scanned=len(watchlist),
+            signals_generated=len(qualifying),
+            triggered_by="apex_selects",
+        )
+    )
+    await db.commit()
+
+
+async def morning_briefing_loop() -> None:
+    logger.info("Morning briefing loop started")
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            current_hour = now.strftime("%H:00")
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(UserSettings, User)
+                    .join(User, User.id == UserSettings.user_id)
+                    .where(
+                        UserSettings.signal_stack_mode == "browse",
+                        UserSettings.morning_briefing_enabled == True,  # noqa: E712
+                        UserSettings.morning_briefing_time == current_hour,
+                        User.is_active == True,  # noqa: E712
+                    )
+                )
+                users = result.all()
+                if users and _is_market_hours(now):
+                    await signal_stack_agent.run_scan(db, triggered_by="morning_briefing")
+
+                signals_result = await db.execute(
+                    select(SignalStack)
+                    .where(
+                        SignalStack.expires_at > now,
+                        SignalStack.signal.in_(["buy", "sell"]),
+                        SignalStack.confidence >= 65,
+                    )
+                    .order_by(SignalStack.confidence.desc())
+                    .limit(5)
+                )
+                top_signals = signals_result.scalars().all()
+                notification_engine = get_apex_notification_engine()
+                for settings_row, user in users:
+                    if not _is_subscription_active(user) or not top_signals or not notification_engine:
+                        continue
+                    await notification_engine.send_browse_morning_briefing(
+                        user_id=str(user.id),
+                        top_signals=[
+                            {
+                                "symbol": signal.symbol,
+                                "asset_name": signal.asset_name,
+                                "signal": signal.signal,
+                                "confidence": signal.confidence,
+                                "reasoning_simple": signal.reasoning_simple,
+                            }
+                            for signal in top_signals[:3]
+                        ],
+                        total_scanned=len(top_signals),
+                        trader_class=settings_row.trader_class or "complete_novice",
+                        db=db,
+                    )
+                await db.commit()
+        except Exception as exc:
+            logger.error("Morning briefing loop error: %s", exc)
+        await asyncio.sleep(60 * 60)
+
+
+async def daily_digest_loop() -> None:
+    logger.info("Daily digest loop started")
+    while True:
+        try:
+            now = datetime.now(timezone.utc)
+            target = now.replace(hour=8, minute=0, second=0, microsecond=0)
+            if now >= target:
+                target += timedelta(days=1)
+            await asyncio.sleep((target - now).total_seconds())
+
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(UserSettings, User)
+                    .join(User, User.id == UserSettings.user_id)
+                    .where(
+                        UserSettings.auto_trade_enabled == True,  # noqa: E712
+                        User.is_active == True,  # noqa: E712
+                    )
+                )
+                notification_engine = get_apex_notification_engine()
+                for settings_row, user in result.all():
+                    if not _is_subscription_active(user) or not notification_engine:
+                        continue
+                    digest = await _build_daily_digest(str(user.id), db, settings_row)
+                    await notification_engine.send_daily_digest(
+                        user_id=str(user.id),
+                        digest=digest,
+                        db=db,
+                    )
+                await db.commit()
+        except Exception as exc:
+            logger.error("Daily digest loop error: %s", exc)
+            await asyncio.sleep(60)
 
 
 # ─────────────────────────────────────────────
@@ -707,16 +1150,18 @@ async def _goals_scheduler() -> None:
                 async with AsyncSessionLocal() as db:
                     from sqlalchemy import select as sa_select
 
-                    settings_rows = (
+                    rows = (
                         await db.execute(
-                            sa_select(UserSettings).where(
-                                UserSettings.subscription_active == True  # noqa: E712
+                            sa_select(UserSettings, User).join(
+                                User, User.id == UserSettings.user_id
                             )
                         )
-                    ).scalars().all()
+                    ).all()
 
                     count = 0
-                    for setting in settings_rows:
+                    for setting, user in rows:
+                        if not _is_subscription_active(user):
+                            continue
                         try:
                             await agent.generate_progress_report(setting.user_id, db)
                             count += 1
@@ -848,8 +1293,10 @@ app.include_router(billing_router.router)
 app.include_router(trial_router.router)
 app.include_router(learning_router.router)
 app.include_router(onboarding_router.router)
+app.include_router(notifications_router.router)
 app.include_router(ws_router.router)
 app.include_router(goals_router.router)
+app.include_router(signals_router.router)
 app.include_router(telegram_webhook_router)
 app.include_router(telegram_linking_router)
 app.include_router(whatsapp_webhook_router)

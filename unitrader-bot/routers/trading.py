@@ -35,7 +35,16 @@ from config import settings
 from database import get_db
 from typing import Literal
 
-from models import AuditLog, ExchangeAPIKey, Trade, TradeFeedback, User, UserSettings
+from models import (
+    AuditLog,
+    ApexNotification,
+    ExchangeAPIKey,
+    Trade,
+    TradeFeedback,
+    TradeUndoToken,
+    User,
+    UserSettings,
+)
 from routers.auth import get_current_user
 from schemas import SuccessResponse, TradeResponse
 from security import encrypt_api_key, hash_api_key, decrypt_api_key
@@ -52,6 +61,7 @@ from src.integrations.exchange_client import (
 )
 from src.services.trade_monitoring import enforce_loss_limits
 from src.services.subscription import check_trade_limit
+from src.services.apex_notifications import get_apex_notification_engine
 
 logger = logging.getLogger(__name__)
 
@@ -912,6 +922,79 @@ async def close_position(
     agent = TradingAgent(current_user.id)
     result = await agent.close_position(body.trade_id)
     return {"status": "success", "data": result}
+
+
+@router.post("/undo/{token}")
+async def undo_trade(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """Undo a recently executed trade using a short-lived token."""
+    token_result = await db.execute(
+        select(TradeUndoToken).where(TradeUndoToken.token == token)
+    )
+    undo_token = token_result.scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+
+    if not undo_token or undo_token.used_at is not None or undo_token.expires_at <= now:
+        raise HTTPException(status_code=410, detail="Undo window has expired")
+    undo_token.attempts_count = int(undo_token.attempts_count or 0) + 1
+    if undo_token.attempts_count > 3:
+        raise HTTPException(status_code=429, detail="Too many undo attempts for this trade")
+
+    trade_result = await db.execute(
+        select(Trade).where(
+            Trade.id == undo_token.trade_id,
+            Trade.user_id == undo_token.user_id,
+        )
+    )
+    trade = trade_result.scalar_one_or_none()
+    if not trade:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    if trade.status != "open":
+        return {"success": False, "message": "Position already closed — cannot undo"}
+
+    agent = TradingAgent(undo_token.user_id)
+    result = await agent.close_position(undo_token.trade_id)
+    if result.get("status") != "success":
+        raise HTTPException(status_code=400, detail=result.get("reason", "Undo failed"))
+
+    undo_token.used_at = now
+    trade.status = "cancelled_by_user"
+    linked_notifications = await db.execute(
+        select(ApexNotification).where(
+            ApexNotification.user_id == undo_token.user_id,
+            ApexNotification.undo_token == token,
+        )
+    )
+    for notification in linked_notifications.scalars().all():
+        notification.actioned_at = now
+        notification.action_taken = "undone"
+    db.add(
+        AuditLog(
+            user_id=undo_token.user_id,
+            event_type="trade_undone_via_notification",
+            event_details={"trade_id": undo_token.trade_id, "token": token},
+        )
+    )
+    notification_engine = get_apex_notification_engine()
+    if notification_engine:
+        await notification_engine._dispatch(  # type: ignore[attr-defined]
+            user_id=undo_token.user_id,
+            notification_type="trade_undo_confirmed",
+            title=f"Done — Apex reversed {trade.symbol}",
+            body=f"Done — Apex's trade on {trade.symbol} has been reversed. No further action needed.",
+            telegram_message=(
+                f"Done — Apex's trade on {trade.symbol} has been reversed.\n"
+                "No further action needed.\n\n"
+                "⚠️ Not financial advice. Capital at risk."
+            ),
+            data={"trade_id": undo_token.trade_id, "symbol": trade.symbol},
+            trade_id=undo_token.trade_id,
+            db=db,
+        )
+    await db.flush()
+    return {"success": True, "message": "Trade reversed successfully"}
 
 
 # ─────────────────────────────────────────────

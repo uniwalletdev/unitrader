@@ -304,6 +304,24 @@ def _clear_key_backoff(key_id: str) -> None:
     _key_backoff[key_id] = {"consecutive_401": 0, "backoff_until": None}
 
 
+async def is_key_in_backoff(user_id: str, db: AsyncSession) -> bool:
+    """Return True if any active exchange key for the user is in backoff."""
+    now = datetime.now(timezone.utc)
+    result = await db.execute(
+        select(ExchangeAPIKey.id).where(
+            ExchangeAPIKey.user_id == user_id,
+            ExchangeAPIKey.is_active == True,  # noqa: E712
+        )
+    )
+    key_ids = [row[0] for row in result.all()]
+    for key_id in key_ids:
+        backoff = _key_backoff.get(key_id, {})
+        backoff_until = backoff.get("backoff_until")
+        if backoff_until and now < backoff_until:
+            return True
+    return False
+
+
 async def _close_position_at_price(
     db: AsyncSession,
     trade: Trade,

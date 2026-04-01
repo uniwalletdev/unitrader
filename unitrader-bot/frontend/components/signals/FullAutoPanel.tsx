@@ -118,7 +118,7 @@ export default function FullAutoPanel({
     setToggling(true);
     setAutoEnabled(next);
     try {
-      await signalApi.updateSettings(userSettings.signal_stack_mode ?? "full_auto");
+      await signalApi.updateSettings({ signal_stack_mode: userSettings.signal_stack_mode ?? "full_auto" });
       await api.patch("/api/signals/settings", { auto_trade_enabled: next });
       onSettingsUpdate({ auto_trade_enabled: next });
     } catch {

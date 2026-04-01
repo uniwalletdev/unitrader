@@ -3,12 +3,10 @@ signal_stack_agent.py — Shared pre-computed signal stack for all users.
 """
 
 import asyncio
-import json
 import logging
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 import anthropic
 from sqlalchemy import case, delete, func, select, update
@@ -17,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from models import SignalInteraction, SignalScanRun, SignalStack
+from src.agents.convergence_engine import ConvergenceEngine
 from src.agents.sentiment_agent import SentimentAgent
 from src.agents.shared_memory import SharedContext
 from src.integrations.market_data import classify_asset, full_market_analysis
@@ -75,6 +74,7 @@ class SignalStackAgent:
     def __init__(self) -> None:
         self.claude_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         self.sentiment_agent = SentimentAgent()
+        self.convergence_engine = ConvergenceEngine(self.claude_client)
 
     async def run_scan(self, db: AsyncSession, triggered_by: str = "scheduler") -> dict:
         """
@@ -205,7 +205,6 @@ class SignalStackAgent:
 
     async def _analyse_symbol(self, symbol: str, run_id: uuid.UUID, db: AsyncSession) -> dict | None:
         """Analyse one symbol and return a signal dict or None."""
-        del db
         try:
             asset_type = classify_asset(symbol)
             if asset_type == "crypto":
@@ -236,24 +235,20 @@ class SignalStackAgent:
             fear_greed_index = sentiment.get("fear_greed_index")
             earnings_days = self._earnings_days(sentiment.get("earnings_date"))
 
-            score = self._calculate_score(rsi, macd, volume_ratio, sentiment_score)
-            signal_direction = self._determine_signal(rsi, macd, sentiment_score, score)
+            convergence = await self.convergence_engine.score_symbol(
+                symbol=symbol,
+                asset_class=asset_class,
+                existing_market_data=market_data,
+                existing_sentiment=sentiment,
+                db=db,
+            )
+            score = convergence["confidence"]
+            signal_direction = convergence["signal"]
 
             if signal_direction == "watch" and score < 50:
                 return None
             if signal_direction in ("buy", "sell") and score < 65:
                 return None
-
-            reasoning = await self._generate_reasoning(
-                symbol=symbol,
-                signal=signal_direction,
-                confidence=score,
-                rsi=rsi,
-                macd=macd,
-                volume_ratio=volume_ratio,
-                sentiment=sentiment_score,
-                asset_class=asset_class,
-            )
 
             return {
                 "id": uuid.uuid4(),
@@ -263,9 +258,9 @@ class SignalStackAgent:
                 "exchange": exchange,
                 "signal": signal_direction,
                 "confidence": score,
-                "reasoning_expert": reasoning["expert"],
-                "reasoning_simple": reasoning["simple"],
-                "reasoning_metaphor": reasoning["metaphor"],
+                "reasoning_expert": convergence["reasoning_expert"],
+                "reasoning_simple": convergence["reasoning_simple"],
+                "reasoning_metaphor": convergence["reasoning_metaphor"],
                 "rsi": rsi,
                 "macd_signal": macd,
                 "volume_ratio": volume_ratio,
@@ -280,121 +275,6 @@ class SignalStackAgent:
         except Exception as exc:
             logger.error("Analysis failed for %s: %s", symbol, exc)
             return None
-
-    def _calculate_score(
-        self,
-        rsi: float | None,
-        macd: str,
-        volume_ratio: float | None,
-        sentiment: str,
-    ) -> int:
-        """Composite confidence score 0-100 based on signal convergence."""
-        score = 50
-
-        if rsi is not None:
-            if rsi < 30:
-                score += 20
-            elif rsi < 40:
-                score += 12
-            elif rsi < 50:
-                score += 5
-            elif rsi > 70:
-                score -= 15
-            elif rsi > 60:
-                score -= 5
-
-        if macd == "bullish":
-            score += 15
-        elif macd == "bearish":
-            score -= 15
-
-        if volume_ratio is not None:
-            if volume_ratio > 2.0:
-                score += 10
-            elif volume_ratio > 1.5:
-                score += 5
-
-        if sentiment == "very_bullish":
-            score += 15
-        elif sentiment == "bullish":
-            score += 8
-        elif sentiment == "very_bearish":
-            score -= 15
-        elif sentiment == "bearish":
-            score -= 8
-
-        return max(0, min(100, int(round(score))))
-
-    def _determine_signal(
-        self,
-        rsi: float | None,
-        macd: str,
-        sentiment: str,
-        score: int,
-    ) -> str:
-        del sentiment
-        if score < 55:
-            return "watch"
-        if macd == "bullish" or (rsi is not None and rsi < 45):
-            return "buy"
-        if macd == "bearish" or (rsi is not None and rsi > 65):
-            return "sell"
-        return "watch"
-
-    async def _generate_reasoning(
-        self,
-        symbol: str,
-        signal: str,
-        confidence: int,
-        rsi: float | None,
-        macd: str,
-        volume_ratio: float | None,
-        sentiment: str,
-        asset_class: str,
-    ) -> dict[str, str]:
-        """Generate expert, simple, and metaphor explanations in one Claude call."""
-        prompt = f"""You are Unitrader's AI trader. Generate 3 reasoning explanations for this signal.
-Be specific. Use the real numbers provided. Never be generic.
-
-Asset: {symbol} ({asset_class})
-Signal: {signal.upper()} — {confidence}% confidence
-RSI: {rsi} | MACD: {macd} | Volume: {volume_ratio}x avg | Sentiment: {sentiment}
-
-Return JSON only:
-{{
-  "expert": "2 sentences. Technical language. Include specific indicator values and what they mean.",
-  "simple": "2 sentences. No jargon. Explain what Unitrader sees in plain English.",
-  "metaphor": "1-2 sentences. Explain with a real-world comparison."
-}}"""
-        try:
-            resp = await self.claude_client.messages.create(
-                model=settings.anthropic_model,
-                max_tokens=300,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            text = resp.content[0].text if resp.content else "{}"
-            return json.loads(text)
-        except Exception:
-            return {
-                "expert": f"{symbol}: {signal.upper()} signal at {confidence}% confidence.",
-                "simple": f"Unitrader sees a possible chance to {signal} {symbol}.",
-                "metaphor": "Think of it like spotting a road that looks clearer than the rest right now.",
-            }
-
-    def _classify_macd(self, macd_info: dict[str, Any]) -> str:
-        histogram = float(macd_info.get("histogram", 0.0) or 0.0)
-        if histogram > 0.01:
-            return "bullish"
-        if histogram < -0.01:
-            return "bearish"
-        return "neutral"
-
-    def _volume_ratio(self, volume: float | None) -> float | None:
-        if volume is None:
-            return None
-        if volume <= 0:
-            return 0.0
-        return 1.0
 
     def _get_asset_name(self, symbol: str) -> str:
         return ASSET_NAMES.get(symbol, symbol)

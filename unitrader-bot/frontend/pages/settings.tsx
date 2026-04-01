@@ -2,8 +2,8 @@ import Head from "next/head";
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/router";
-import { ArrowLeft, AlertCircle, Loader, Check } from "lucide-react";
-import { authApi } from "@/lib/api";
+import { ArrowLeft, AlertCircle, Loader, Check, Bell, Send } from "lucide-react";
+import { authApi, notificationApi } from "@/lib/api";
 import CircuitBreakerAlert from "@/components/trade/CircuitBreakerAlert";
 
 interface UserSettings {
@@ -16,6 +16,10 @@ interface UserSettings {
   approved_assets?: string[];
   first_trade_done?: boolean;
   push_token?: string;
+  signal_stack_mode?: string;
+  morning_briefing_enabled?: boolean;
+  morning_briefing_time?: string;
+  daily_digest_enabled?: boolean;
 }
 
 export default function SettingsPage() {
@@ -28,6 +32,10 @@ export default function SettingsPage() {
   const [dailyLossPct, setDailyLossPct] = useState(10);
   const [portfolioValue, setPortfolioValue] = useState(10000); // Default estimate
   const [isSaving, setIsSaving] = useState(false);
+  const [telegramLinked, setTelegramLinked] = useState(false);
+  const [telegramNotificationsEnabled, setTelegramNotificationsEnabled] = useState(false);
+  const [whatsappLinked, setWhatsappLinked] = useState(false);
+  const [whatsappNotificationsEnabled, setWhatsappNotificationsEnabled] = useState(false);
 
   // Load settings
   useEffect(() => {
@@ -44,6 +52,11 @@ export default function SettingsPage() {
         const data = response.data;
         setSettings(data);
         setDailyLossPct(data.max_daily_loss || 10);
+        const notifRes = await notificationApi.settings();
+        setTelegramLinked(!!notifRes.data?.data?.telegram_linked);
+        setTelegramNotificationsEnabled(!!notifRes.data?.data?.telegram_notifications_enabled);
+        setWhatsappLinked(!!notifRes.data?.data?.whatsapp_linked);
+        setWhatsappNotificationsEnabled(!!notifRes.data?.data?.whatsapp_notifications_enabled);
       } catch (err: any) {
         if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
           setError("Settings took too long to load. Please refresh the page.");
@@ -115,6 +128,7 @@ export default function SettingsPage() {
 
   const calculatedLossAmount = (portfolioValue * dailyLossPct) / 100;
   const isTradingPaused = settings?.trading_paused || false;
+  const signalMode = settings?.signal_stack_mode || "browse";
 
   return (
     <>
@@ -269,6 +283,152 @@ export default function SettingsPage() {
                 <option value="paper">Paper Trading - Simulated</option>
                 <option value="live">Live Trading - Real money</option>
               </select>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-6">
+            <div className="mb-5 flex items-center gap-2">
+              <Bell size={15} className="text-brand-400" />
+              <div>
+                <h2 className="text-lg font-bold tracking-tight text-white">Notifications</h2>
+                <p className="text-sm text-dark-400">How Unitrader should keep you updated.</p>
+              </div>
+            </div>
+
+            <div className="space-y-5">
+              {signalMode === "browse" && (
+                <div className="rounded-xl border border-dark-800 p-4">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-white">Send me a morning briefing</p>
+                      <p className="text-xs text-dark-500">Unitrader sends your top signals before the day starts.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settings?.morning_briefing_enabled ?? true}
+                      onChange={async (e) => {
+                        const next = e.target.checked;
+                        setSettings((prev) => prev ? { ...prev, morning_briefing_enabled: next } : prev);
+                        await authApi.updateSettings({ morning_briefing_enabled: next });
+                      }}
+                    />
+                  </div>
+                  {(settings?.morning_briefing_enabled ?? true) && (
+                    <select
+                      value={settings?.morning_briefing_time || "08:00"}
+                      onChange={async (e) => {
+                        const next = e.target.value;
+                        setSettings((prev) => prev ? { ...prev, morning_briefing_time: next } : prev);
+                        await authApi.updateSettings({ morning_briefing_time: next });
+                      }}
+                      className="input text-sm"
+                    >
+                      <option value="06:00">6am</option>
+                      <option value="07:00">7am</option>
+                      <option value="08:00">8am</option>
+                      <option value="09:00">9am</option>
+                    </select>
+                  )}
+                </div>
+              )}
+
+              <div className="rounded-xl border border-dark-800 p-4">
+                <p className="mb-3 text-sm font-medium text-white">Notification channels</p>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Send size={14} className="text-sky-400" />
+                      <div>
+                        <p className="text-sm text-white">Telegram notifications</p>
+                        <p className="text-xs text-dark-500">{telegramLinked ? "Unitrader can alert you on Telegram." : "Connect Telegram to receive Unitrader alerts."}</p>
+                      </div>
+                    </div>
+                    {telegramLinked ? (
+                      <input
+                        type="checkbox"
+                        checked={telegramNotificationsEnabled}
+                        onChange={async (e) => {
+                          const next = e.target.checked;
+                          setTelegramNotificationsEnabled(next);
+                          await notificationApi.updateSettings({ telegram_notifications_enabled: next });
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => router.push("/app")}
+                        className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400"
+                      >
+                        Connect Telegram
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Send size={14} className="text-emerald-400" />
+                      <div>
+                        <p className="text-sm text-white">WhatsApp notifications</p>
+                        <p className="text-xs text-dark-500">{whatsappLinked ? "Unitrader can alert you on WhatsApp." : "Connect WhatsApp to receive Unitrader alerts."}</p>
+                      </div>
+                    </div>
+                    {whatsappLinked ? (
+                      <input
+                        type="checkbox"
+                        checked={whatsappNotificationsEnabled}
+                        onChange={async (e) => {
+                          const next = e.target.checked;
+                          setWhatsappNotificationsEnabled(next);
+                          await notificationApi.updateSettings({ whatsapp_notifications_enabled: next });
+                        }}
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => router.push("/link-whatsapp")}
+                        className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400"
+                      >
+                        Connect WhatsApp
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm text-white">Push notifications</p>
+                      <p className="text-xs text-dark-500">Coming soon on supported devices.</p>
+                    </div>
+                    <input type="checkbox" disabled checked={!!settings?.push_token} />
+                  </div>
+                </div>
+              </div>
+
+              {signalMode === "full_auto" && (
+                <div className="rounded-xl border border-dark-800 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-white">Daily digest at 8am</p>
+                      <p className="text-xs text-dark-500">Unitrader sends a daily summary of all activity.</p>
+                    </div>
+                    <input
+                      type="checkbox"
+                      checked={settings?.daily_digest_enabled ?? true}
+                      onChange={async (e) => {
+                        const next = e.target.checked;
+                        setSettings((prev) => prev ? { ...prev, daily_digest_enabled: next } : prev);
+                        await authApi.updateSettings({ daily_digest_enabled: next });
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div className="rounded-xl border border-brand-500/20 bg-brand-500/[0.05] p-4">
+                <p className="text-sm font-medium text-white">Trade alerts</p>
+                <p className="mt-1 text-xs leading-relaxed text-dark-400">
+                  Unitrader always notifies you immediately after every trade. This cannot be disabled — it is your safety net.
+                </p>
+              </div>
             </div>
           </div>
         </div>

@@ -396,6 +396,35 @@ class UserSettings(Base):
     # User preferences
     leaderboard_opt_out: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     push_token: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    signal_stack_mode: Mapped[str] = mapped_column(
+        String(20), default="browse", nullable=False
+    )
+    watchlist: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    auto_trade_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    auto_trade_threshold: Mapped[int] = mapped_column(
+        Integer, default=80, nullable=False
+    )
+    auto_trade_max_per_scan: Mapped[int] = mapped_column(
+        Integer, default=1, nullable=False
+    )
+    apex_selects_threshold: Mapped[int] = mapped_column(
+        Integer, default=75, nullable=False
+    )
+    apex_selects_max_trades: Mapped[int] = mapped_column(
+        Integer, default=2, nullable=False
+    )
+    apex_selects_asset_classes: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    morning_briefing_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
+    morning_briefing_time: Mapped[str] = mapped_column(
+        String(5), default="08:00", nullable=False
+    )
+    daily_digest_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
 
     # Trader profiling (auto-detected from onboarding)
     trader_class: Mapped[str] = mapped_column(String(50), default="complete_novice", nullable=False)
@@ -685,6 +714,51 @@ class BotMessage(Base):
         )
 
 
+class ApexNotification(Base):
+    """Outbound Apex notification persisted before channel delivery."""
+
+    __tablename__ = "apex_notifications"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    notification_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    channels: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    actioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    action_taken: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    undo_token: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, index=True
+    )
+    undo_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    trade_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("trades.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship("User")
+    trade: Mapped["Trade | None"] = relationship("Trade")
+
+    __table_args__ = (
+        Index("ix_apex_notifications_user_created", "user_id", "created_at"),
+        Index("ix_apex_notifications_type_created", "notification_type", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ApexNotification user_id={self.user_id} "
+            f"type={self.notification_type} trade_id={self.trade_id}>"
+        )
+
+
 class TelegramLinkingCode(Base):
     """Short-lived 6-digit code used to connect a Telegram account to Unitrader.
 
@@ -749,6 +823,58 @@ class TelegramLinkingCode(Base):
             f"<TelegramLinkingCode code={self.code} used={self.is_used} "
             f"user_id={self.user_id}>"
         )
+
+
+class TradeUndoToken(Base):
+    """Short-lived token that allows a just-opened trade to be undone."""
+
+    __tablename__ = "trade_undo_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    trade_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("trades.id", ondelete="CASCADE"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship("User")
+    trade: Mapped["Trade"] = relationship("Trade")
+
+    __table_args__ = (
+        Index("ix_trade_undo_tokens_user_expires", "user_id", "expires_at"),
+    )
+
+
+class ApexSelectsApprovalToken(Base):
+    """Short-lived token for approving an Apex Selects shortlist."""
+
+    __tablename__ = "apex_selects_approval_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    token: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    signals_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    user: Mapped["User"] = relationship("User")
+
+    __table_args__ = (
+        Index("ix_apex_selects_tokens_user_expires", "user_id", "expires_at"),
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

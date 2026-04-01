@@ -169,7 +169,7 @@ export function useSignalStack(userSettings: { signal_stack_mode?: string }) {
   const setMode = useCallback(async (newMode: SignalMode): Promise<void> => {
     setState((prev) => ({ ...prev, mode: newMode }));
     try {
-      await signalApi.updateSettings(newMode);
+      await signalApi.updateSettings({ signal_stack_mode: newMode });
     } catch {
       // Non-fatal — local mode is still updated; persists on next settings save
     }
