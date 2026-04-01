@@ -52,7 +52,6 @@ export interface TrialState {
   performanceSummary: string;
 }
 
-const CACHE_KEY = "unitrader_trial_status";
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 interface CacheEntry {
@@ -60,18 +59,36 @@ interface CacheEntry {
   fetchedAt: number;
 }
 
+function decodeJwtSub(token: string | null): string | null {
+  if (!token) return null;
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = payload.padEnd(Math.ceil(payload.length / 4) * 4, "=");
+    const decoded = JSON.parse(atob(padded)) as { sub?: unknown };
+    return typeof decoded.sub === "string" && decoded.sub ? decoded.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getTrialCacheKey(userKey: string | null): string {
+  return userKey ? `unitrader_trial_status:${userKey}` : "unitrader_trial_status:anonymous";
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Cache helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function readCache(): TrialState | null {
+function readCache(userKey: string | null): TrialState | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(CACHE_KEY);
+    const raw = localStorage.getItem(getTrialCacheKey(userKey));
     if (!raw) return null;
     const entry: CacheEntry = JSON.parse(raw);
     if (Date.now() - entry.fetchedAt > CACHE_TTL_MS) {
-      localStorage.removeItem(CACHE_KEY);
+      localStorage.removeItem(getTrialCacheKey(userKey));
       return null;
     }
     return entry.data;
@@ -80,16 +97,22 @@ function readCache(): TrialState | null {
   }
 }
 
-function writeCache(data: TrialState): void {
+function writeCache(userKey: string | null, data: TrialState): void {
   if (typeof window === "undefined") return;
   try {
     const entry: CacheEntry = { data, fetchedAt: Date.now() };
-    localStorage.setItem(CACHE_KEY, JSON.stringify(entry));
+    localStorage.setItem(getTrialCacheKey(userKey), JSON.stringify(entry));
   } catch { /* storage full — ignore */ }
 }
 
-export function clearTrialCache(): void {
-  if (typeof window !== "undefined") localStorage.removeItem(CACHE_KEY);
+export function clearTrialCache(userKey?: string | null): void {
+  if (typeof window === "undefined") return;
+  if (userKey !== undefined) {
+    localStorage.removeItem(getTrialCacheKey(userKey));
+    return;
+  }
+  const accessToken = localStorage.getItem("access_token");
+  localStorage.removeItem(getTrialCacheKey(decodeJwtSub(accessToken)));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,8 +151,10 @@ function normalise(raw: any): TrialState {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function useTrialStatus(options: { skip?: boolean } = {}) {
-  const [trial, setTrial]   = useState<TrialState | null>(() => readCache());
-  const [loading, setLoading] = useState(!readCache());
+  const userKey =
+    typeof window !== "undefined" ? decodeJwtSub(localStorage.getItem("access_token")) : null;
+  const [trial, setTrial]   = useState<TrialState | null>(() => readCache(userKey));
+  const [loading, setLoading] = useState(!readCache(userKey));
   const [error, setError]   = useState<string | null>(null);
   const fetchingRef = useRef(false);
 
@@ -142,7 +167,7 @@ export function useTrialStatus(options: { skip?: boolean } = {}) {
 
     // Use cache unless forced
     if (!force) {
-      const cached = readCache();
+      const cached = readCache(userKey);
       if (cached) {
         setTrial(cached);
         setLoading(false);
@@ -163,7 +188,7 @@ export function useTrialStatus(options: { skip?: boolean } = {}) {
     try {
       const res = await trialApi.status();
       const normalised = normalise(res.data);
-      writeCache(normalised);
+      writeCache(userKey, normalised);
       setTrial(normalised);
     } catch (err: unknown) {
       const msg =
@@ -173,7 +198,7 @@ export function useTrialStatus(options: { skip?: boolean } = {}) {
       setLoading(false);
       fetchingRef.current = false;
     }
-  }, [options.skip]);
+  }, [options.skip, userKey]);
 
   // Fetch on mount
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
@@ -183,9 +208,9 @@ export function useTrialStatus(options: { skip?: boolean } = {}) {
    * Call this after the user makes a choice, or after Stripe redirects back.
    */
   const refetch = useCallback(() => {
-    clearTrialCache();
+    clearTrialCache(userKey);
     fetchStatus(true);
-  }, [fetchStatus]);
+  }, [fetchStatus, userKey]);
 
   // ── Derived helpers ──────────────────────────────────────────────────────
 

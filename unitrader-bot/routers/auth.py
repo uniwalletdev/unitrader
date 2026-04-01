@@ -892,14 +892,6 @@ async def clerk_setup(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Check AI name not taken
-    taken = await db.execute(select(User).where(User.ai_name == body.ai_name))
-    if taken.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="That AI name is already taken — try another",
-        )
-
     user.ai_name = body.ai_name
     user.email_verified = True
 

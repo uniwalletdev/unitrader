@@ -102,6 +102,7 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Personalisation
+    # This is a user-owned display/persona name, not a globally unique identity key.
     ai_name: Mapped[str] = mapped_column(String(20), nullable=False, default="Claude")
 
     # Subscription
