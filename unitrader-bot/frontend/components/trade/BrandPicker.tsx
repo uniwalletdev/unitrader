@@ -269,6 +269,26 @@ export default function BrandPicker({
   const didLockCryptoTab = useRef(false);
   const exchangeLower = (exchange || "").toLowerCase();
   const coinbaseMode = exchangeLower === "coinbase";
+  const binanceMode = exchangeLower === "binance";
+  const oandaMode = exchangeLower === "oanda";
+  const cryptoOnly = coinbaseMode || binanceMode;
+  const forexOnly = oandaMode;
+  const stocksOnly = exchangeLower === "alpaca";
+
+  const allowedCategories: Category[] = useMemo(() => {
+    if (cryptoOnly) return ["crypto"];
+    if (forexOnly) return ["stocks"]; // OANDA assets are treated as non-crypto list in this picker
+    if (stocksOnly) return ["stocks"];
+    return ["stocks", "crypto", "all"];
+  }, [cryptoOnly, forexOnly, stocksOnly]);
+
+  // If exchange changes and current category is no longer valid, snap to first allowed.
+  useEffect(() => {
+    if (!allowedCategories.includes(category)) {
+      setCategory(allowedCategories[0] ?? "stocks");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exchangeLower]);
 
   useEffect(() => {
     // If parent already provided settings, skip the extra API call.
@@ -686,40 +706,43 @@ export default function BrandPicker({
 
             <div className="flex items-center gap-2">
               <div className="inline-flex rounded-xl border border-dark-800 bg-dark-900 p-1">
-                <button
-                  type="button"
-                  disabled={
-                    coinbaseMode ||
-                    (traderClass === "crypto_native" && !didLockCryptoTab.current)
-                  }
-                  onClick={() => setCategory("stocks")}
-                  className={clsx(
-                    "rounded-lg px-3 py-1.5 text-xs font-semibold",
-                    category === "stocks" ? "bg-dark-800 text-white" : "text-dark-300 hover:text-white",
-                  )}
-                >
-                  Stocks
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCategory("crypto")}
-                  className={clsx(
-                    "rounded-lg px-3 py-1.5 text-xs font-semibold",
-                    category === "crypto" ? "bg-dark-800 text-white" : "text-dark-300 hover:text-white",
-                  )}
-                >
-                  Crypto
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setCategory("all")}
-                  className={clsx(
-                    "rounded-lg px-3 py-1.5 text-xs font-semibold",
-                    category === "all" ? "bg-dark-800 text-white" : "text-dark-300 hover:text-white",
-                  )}
-                >
-                  All
-                </button>
+                {allowedCategories.includes("stocks") && (
+                  <button
+                    type="button"
+                    disabled={traderClass === "crypto_native" && !didLockCryptoTab.current}
+                    onClick={() => setCategory("stocks")}
+                    className={clsx(
+                      "rounded-lg px-3 py-1.5 text-xs font-semibold",
+                      category === "stocks" ? "bg-dark-800 text-white" : "text-dark-300 hover:text-white",
+                    )}
+                  >
+                    {oandaMode ? "Forex" : "Stocks"}
+                  </button>
+                )}
+                {allowedCategories.includes("crypto") && (
+                  <button
+                    type="button"
+                    onClick={() => setCategory("crypto")}
+                    className={clsx(
+                      "rounded-lg px-3 py-1.5 text-xs font-semibold",
+                      category === "crypto" ? "bg-dark-800 text-white" : "text-dark-300 hover:text-white",
+                    )}
+                  >
+                    Crypto
+                  </button>
+                )}
+                {allowedCategories.includes("all") && (
+                  <button
+                    type="button"
+                    onClick={() => setCategory("all")}
+                    className={clsx(
+                      "rounded-lg px-3 py-1.5 text-xs font-semibold",
+                      category === "all" ? "bg-dark-800 text-white" : "text-dark-300 hover:text-white",
+                    )}
+                  >
+                    All
+                  </button>
+                )}
               </div>
 
               <button

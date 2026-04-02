@@ -125,10 +125,8 @@ async def _validate_token(token: str) -> str:
                 raise ValueError("Missing 'sub' claim")
             return user_id
         except Exception as e:
-            logger.warning(f"JWT validation failed: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
-            )
+            # Clerk validation failed; fall through to internal HS256 validation.
+            logger.debug("Clerk JWT validation failed, trying internal token: %s", e)
 
     # Fallback: internal HS256 token
     try:

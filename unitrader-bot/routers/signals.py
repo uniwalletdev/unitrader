@@ -18,6 +18,7 @@ from models import (
     ApexSelectsApprovalToken,
     SignalScanRun,
     SignalStack,
+    TradingAccount,
     UserSettings,
 )
 from routers.auth import get_current_user
@@ -41,15 +42,31 @@ class SignalInteractionRequest(BaseModel):
 
 class UpdateSignalSettingsRequest(BaseModel):
     signal_stack_mode: str | None = None
-    watchlist: list[str] | None = None
-    auto_trade_enabled: bool | None = None
-    auto_trade_threshold: int | None = None
-    auto_trade_max_per_scan: int | None = None
+    # NOTE: Full Auto settings are per trading_account_id (see /account-settings).
     apex_selects_threshold: int | None = None
     apex_selects_max_trades: int | None = None
     apex_selects_asset_classes: list[str] | None = None
     morning_briefing_enabled: bool | None = None
     morning_briefing_time: str | None = None
+
+
+class TradingAccountSettingsResponse(BaseModel):
+    trading_account_id: str
+    exchange: str
+    is_paper: bool
+    account_label: str
+    watchlist: list[str] = []
+    auto_trade_enabled: bool = False
+    auto_trade_threshold: int = 80
+    auto_trade_max_per_scan: int = 1
+
+
+class UpdateTradingAccountSettingsRequest(BaseModel):
+    trading_account_id: str
+    watchlist: list[str] | None = None
+    auto_trade_enabled: bool | None = None
+    auto_trade_threshold: int | None = None
+    auto_trade_max_per_scan: int | None = None
 
 
 def _to_float(value):
@@ -180,6 +197,72 @@ async def update_signal_settings(
     await db.refresh(settings)
     SharedMemory.invalidate(current_user.id)
     return UserSettingsResponse.model_validate(settings)
+
+
+@router.get("/account-settings", response_model=TradingAccountSettingsResponse)
+async def get_trading_account_settings(
+    trading_account_id: str = Query(...),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    account_result = await db.execute(
+        select(TradingAccount).where(
+            TradingAccount.id == trading_account_id,
+            TradingAccount.user_id == current_user.id,
+        )
+    )
+    account = account_result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="trading_account_not_found")
+
+    return TradingAccountSettingsResponse(
+        trading_account_id=account.id,
+        exchange=account.exchange,
+        is_paper=account.is_paper,
+        account_label=account.account_label,
+        watchlist=list(account.watchlist or []),
+        auto_trade_enabled=bool(getattr(account, "auto_trade_enabled", False)),
+        auto_trade_threshold=int(getattr(account, "auto_trade_threshold", 80) or 80),
+        auto_trade_max_per_scan=int(getattr(account, "auto_trade_max_per_scan", 1) or 1),
+    )
+
+
+@router.patch("/account-settings", response_model=TradingAccountSettingsResponse)
+async def update_trading_account_settings(
+    body: UpdateTradingAccountSettingsRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    account_result = await db.execute(
+        select(TradingAccount).where(
+            TradingAccount.id == body.trading_account_id,
+            TradingAccount.user_id == current_user.id,
+        )
+    )
+    account = account_result.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="trading_account_not_found")
+
+    payload = body.model_dump(exclude_unset=True)
+    payload.pop("trading_account_id", None)
+    for field, value in payload.items():
+        if hasattr(account, field):
+            setattr(account, field, value)
+
+    await db.commit()
+    await db.refresh(account)
+    SharedMemory.invalidate(current_user.id)
+
+    return TradingAccountSettingsResponse(
+        trading_account_id=account.id,
+        exchange=account.exchange,
+        is_paper=account.is_paper,
+        account_label=account.account_label,
+        watchlist=list(account.watchlist or []),
+        auto_trade_enabled=bool(getattr(account, "auto_trade_enabled", False)),
+        auto_trade_threshold=int(getattr(account, "auto_trade_threshold", 80) or 80),
+        auto_trade_max_per_scan=int(getattr(account, "auto_trade_max_per_scan", 1) or 1),
+    )
 
 
 @router.get("/apex-selects")

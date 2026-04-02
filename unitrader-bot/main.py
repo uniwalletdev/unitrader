@@ -23,7 +23,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, func
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from config import settings
@@ -33,6 +33,7 @@ from models import (
     ExchangeAPIKey,
     SignalScanRun,
     SignalStack,
+    TradingAccount,
     Trade,
     TradeUndoToken,
     User,
@@ -583,7 +584,7 @@ def _exchange_for_symbol(symbol: str, asset_class: str) -> str:
     return "alpaca"
 
 
-async def _analyse_symbol_for_mode(symbol: str, db) -> dict:
+async def _analyse_symbol_for_mode(symbol: str, db, exchange_override: str | None = None) -> dict:
     asset_type = classify_asset(symbol)
     asset_class = "stocks"
     if asset_type == "crypto":
@@ -591,7 +592,7 @@ async def _analyse_symbol_for_mode(symbol: str, db) -> dict:
     elif asset_type == "forex":
         asset_class = "forex"
 
-    exchange = _exchange_for_symbol(symbol, asset_class)
+    exchange = (exchange_override or _exchange_for_symbol(symbol, asset_class)).lower()
     market_data = await full_market_analysis(symbol, exchange)
     indicators = market_data.get("indicators", {}) or {}
     rsi = indicators.get("rsi")
@@ -685,19 +686,21 @@ async def full_auto_scanner_loop() -> None:
             if _is_market_hours(now):
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(
-                        select(UserSettings, User)
-                        .join(User, User.id == UserSettings.user_id)
+                        select(TradingAccount, UserSettings, User)
+                        .join(User, User.id == TradingAccount.user_id)
+                        .join(UserSettings, UserSettings.user_id == User.id)
                         .where(
-                            UserSettings.auto_trade_enabled == True,  # noqa: E712
+                            TradingAccount.auto_trade_enabled == True,  # noqa: E712
+                            TradingAccount.is_active == True,  # noqa: E712
                             UserSettings.trading_paused == False,  # noqa: E712
                             User.is_active == True,  # noqa: E712
                         )
                     )
-                    for settings_row, user in result.all():
+                    for trading_account, settings_row, user in result.all():
                         if not _is_subscription_active(user):
                             continue
                         try:
-                            await _run_auto_scan_for_user(settings_row, user, db)
+                            await _run_auto_scan_for_account(trading_account, settings_row, user, db)
                         except Exception as exc:
                             logger.error("Full Auto scan failed for %s: %s", user.id, exc)
                             sentry_sdk.capture_exception(exc)
@@ -706,10 +709,20 @@ async def full_auto_scanner_loop() -> None:
         await asyncio.sleep(30 * 60)
 
 
-async def _run_auto_scan_for_user(settings_row: UserSettings, user: User, db) -> None:
-    watchlist = settings_row.watchlist or ["AAPL", "BTC/USD", "NVDA"]
-    threshold = settings_row.auto_trade_threshold or 80
-    max_per_scan = settings_row.auto_trade_max_per_scan or 1
+async def _run_auto_scan_for_account(trading_account: TradingAccount, settings_row: UserSettings, user: User, db) -> None:
+    # Per-account Full Auto settings (multiple accounts may run concurrently)
+    watchlist = trading_account.watchlist or []
+    if not watchlist:
+        ex = (trading_account.exchange or "").lower()
+        if ex in ("coinbase", "binance"):
+            watchlist = ["BTC/USD", "ETH/USD"]
+        elif ex == "oanda":
+            watchlist = ["EUR_USD", "GBP_USD"]
+        else:
+            watchlist = ["AAPL", "MSFT", "NVDA"]
+
+    threshold = trading_account.auto_trade_threshold or 80
+    max_per_scan = trading_account.auto_trade_max_per_scan or 1
     trades_this_scan = 0
     run_id = uuid.uuid4()
     orchestrator = get_orchestrator()
@@ -722,7 +735,7 @@ async def _run_auto_scan_for_user(settings_row: UserSettings, user: User, db) ->
             logger.info("Full Auto skipping %s for %s due to exchange backoff", symbol, user.id)
             continue
 
-        analysis = await _analyse_symbol_for_mode(symbol, db)
+        analysis = await _analyse_symbol_for_mode(symbol, db, exchange_override=trading_account.exchange)
         db.add(_signal_row_from_analysis(analysis, run_id))
         convergence = analysis["convergence"]
         confidence = convergence["confidence"]
@@ -740,6 +753,8 @@ async def _run_auto_scan_for_user(settings_row: UserSettings, user: User, db) ->
                     "amount": settings_row.max_trade_amount or 100,
                     "source": "full_auto",
                     "signal_context": convergence,
+                    "trading_account_id": trading_account.id,
+                    "is_paper": trading_account.is_paper,
                 },
                 db,
             )
@@ -955,13 +970,24 @@ async def daily_digest_loop() -> None:
                     select(UserSettings, User)
                     .join(User, User.id == UserSettings.user_id)
                     .where(
-                        UserSettings.auto_trade_enabled == True,  # noqa: E712
                         User.is_active == True,  # noqa: E712
                     )
                 )
                 notification_engine = get_unitrader_notification_engine()
                 for settings_row, user in result.all():
                     if not _is_subscription_active(user) or not notification_engine:
+                        continue
+                    # Only send digest if the user has any Full Auto-enabled account.
+                    enabled_count = await db.execute(
+                        select(func.count())
+                        .select_from(TradingAccount)
+                        .where(
+                            TradingAccount.user_id == str(user.id),
+                            TradingAccount.auto_trade_enabled == True,  # noqa: E712
+                            TradingAccount.is_active == True,  # noqa: E712
+                        )
+                    )
+                    if int(enabled_count.scalar() or 0) <= 0:
                         continue
                     digest = await _build_daily_digest(str(user.id), db, settings_row)
                     await notification_engine.send_daily_digest(

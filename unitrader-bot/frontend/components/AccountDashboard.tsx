@@ -17,6 +17,7 @@ import {
 import {
   exchangeApi,
   tradingAPI,
+  authApi,
   type AccountBalance,
   type BackendTrade,
   type PerformanceData,
@@ -139,6 +140,7 @@ function exchangeTone(exchange: Exchange) {
 export default function AccountDashboard() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
+  const [preferredTradingAccountId, setPreferredTradingAccountId] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [liveSwitchTargetId, setLiveSwitchTargetId] = useState<string | null>(null);
   const [confirmLiveText, setConfirmLiveText] = useState("");
@@ -224,8 +226,40 @@ export default function AccountDashboard() {
     fetchAccounts();
   }, [fetchAccounts]);
 
+  // Load preferred trading account so dashboard selection persists across sessions
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await authApi.getSettings();
+        const id = (res.data?.preferred_trading_account_id as string | null | undefined) ?? null;
+        if (!mounted) return;
+        setPreferredTradingAccountId(id);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const selectedAccount =
-    accounts.find((account) => account.id === selectedAccountId) ?? accounts[0] ?? null;
+    accounts.find((account) => account.id === selectedAccountId) ??
+    (preferredTradingAccountId
+      ? accounts.find((a) => a.tradingAccountId === preferredTradingAccountId) ?? null
+      : null) ??
+    accounts[0] ??
+    null;
+
+  // If we have a preferred trading account, align selectedAccountId to it
+  useEffect(() => {
+    if (!preferredTradingAccountId) return;
+    if (!accounts.length) return;
+    const match = accounts.find((a) => a.tradingAccountId === preferredTradingAccountId);
+    if (match && match.id !== selectedAccountId) setSelectedAccountId(match.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferredTradingAccountId, accounts.length]);
 
   const summary = useMemo(() => {
     const liveAccounts = accounts.filter((a) => a.mode === "live");
@@ -428,7 +462,16 @@ export default function AccountDashboard() {
                   <button
                     key={account.id}
                     type="button"
-                    onClick={() => setSelectedAccountId(account.id)}
+                    onClick={async () => {
+                      setSelectedAccountId(account.id);
+                      if (!account.tradingAccountId) return;
+                      setPreferredTradingAccountId(account.tradingAccountId);
+                      try {
+                        await authApi.updateSettings({ preferred_trading_account_id: account.tradingAccountId });
+                      } catch {
+                        // non-fatal: keep local selection, backend will remain unchanged
+                      }
+                    }}
                     className={`w-full rounded-xl border p-3 text-left transition ${
                       active
                         ? "border-sky-400/60 bg-slate-800"

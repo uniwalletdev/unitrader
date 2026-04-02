@@ -1265,6 +1265,7 @@ function SettingsPanel({ user, onExchangeConnected }: { user: User | null; onExc
 export default function AppPage() {
   const [activeTab, setActiveTab] = useState("dashboard");
   const [user, setUser] = useState<User | null>(null);
+  const [preferredTradingAccountId, setPreferredTradingAccountId] = useState<string | null>(null);
   // Bump this to force Dashboard to remount + re-fetch after a key event (e.g. exchange connect)
   const [dashboardKey, setDashboardKey] = useState(0);
   const refreshDashboard = () => setDashboardKey((k) => k + 1);
@@ -1336,6 +1337,9 @@ export default function AppPage() {
             if (mode === "browse" || mode === "apex_selects" || mode === "full_auto") {
               setDashboardSignalMode(mode);
             }
+          setPreferredTradingAccountId(
+            (sRes.data?.preferred_trading_account_id as string | null | undefined) ?? null
+          );
             if (sRes.data?.onboarding_complete === false) {
               syncingRef.current = false;
               router.replace("/trade");
@@ -1370,6 +1374,9 @@ export default function AppPage() {
           if (mode === "browse" || mode === "apex_selects" || mode === "full_auto") {
             setDashboardSignalMode(mode);
           }
+          setPreferredTradingAccountId(
+            (sRes.data?.preferred_trading_account_id as string | null | undefined) ?? null
+          );
           if (sRes.data?.onboarding_complete === false) {
             redirectedToOnboarding = true;
             router.replace("/trade");
@@ -1678,7 +1685,7 @@ export default function AppPage() {
                   botName={user?.ai_name || "Unitrader"}
                   mode={dashboardSignalMode}
                   onOpenTrade={() => setActiveTab("trade")}
-                  tradingAccountId={userSettings?.preferred_trading_account_id ?? null}
+                  tradingAccountId={preferredTradingAccountId}
                 />
                 <AccountDashboard />
               </>

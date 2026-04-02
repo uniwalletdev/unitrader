@@ -337,6 +337,13 @@ class TradingAccount(TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # ── Per-account automation settings (Full Auto) ─────────────────────────
+    # These MUST be per trading_account_id so multiple accounts can run concurrently.
+    watchlist: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    auto_trade_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    auto_trade_threshold: Mapped[int] = mapped_column(Integer, default=80, nullable=False)
+    auto_trade_max_per_scan: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
     user: Mapped["User"] = relationship("User", back_populates="trading_accounts")
     api_keys: Mapped[list["ExchangeAPIKey"]] = relationship(
         "ExchangeAPIKey", back_populates="trading_account"

@@ -84,10 +84,10 @@ export default function FullAutoPanel({
   exchange,
   tradingAccountId,
 }: FullAutoPanelProps) {
-  const [autoEnabled, setAutoEnabled] = useState(userSettings.auto_trade_enabled ?? false);
-  const [threshold, setThreshold] = useState(userSettings.auto_trade_threshold ?? 80);
-  const [maxPerScan, setMaxPerScan] = useState(userSettings.auto_trade_max_per_scan ?? 2);
-  const [watchlist, setWatchlist] = useState<string[]>(userSettings.watchlist ?? []);
+  const [autoEnabled, setAutoEnabled] = useState(false);
+  const [threshold, setThreshold] = useState(80);
+  const [maxPerScan, setMaxPerScan] = useState(2);
+  const [watchlist, setWatchlist] = useState<string[]>([]);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [activityLoading, setActivityLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
@@ -96,9 +96,31 @@ export default function FullAutoPanel({
 
   useEffect(() => {
     // #region agent log
-    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H2',location:'FullAutoPanel.tsx:91',message:'full-auto input types',data:{watchlistIsArray:Array.isArray(userSettings.watchlist),watchlistType:typeof userSettings.watchlist,watchlistLength:Array.isArray(userSettings.watchlist)?userSettings.watchlist.length:null,autoEnabled:userSettings.auto_trade_enabled ?? false,trustLadderStage},timestamp:Date.now()})}).catch(()=>{});
+    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H2',location:'FullAutoPanel.tsx:91',message:'full-auto input types',data:{tradingAccountId:tradingAccountId??null,autoEnabled,trustLadderStage,watchlistLength:watchlist.length},timestamp:Date.now()})}).catch(()=>{});
     // #endregion
-  }, [trustLadderStage, userSettings.auto_trade_enabled, userSettings.watchlist]);
+  }, [trustLadderStage, tradingAccountId, autoEnabled, watchlist.length]);
+
+  // Load per-account Full Auto settings (NOT user-global)
+  useEffect(() => {
+    if (!tradingAccountId) return;
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await signalApi.accountSettings(tradingAccountId);
+        const d = (res.data?.data ?? res.data) as any;
+        if (!mounted) return;
+        setAutoEnabled(Boolean(d?.auto_trade_enabled ?? false));
+        setThreshold(Number(d?.auto_trade_threshold ?? 80));
+        setMaxPerScan(Number(d?.auto_trade_max_per_scan ?? 2));
+        setWatchlist(Array.isArray(d?.watchlist) ? d.watchlist : []);
+      } catch {
+        // non-fatal; keep defaults
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [tradingAccountId]);
 
   // ── Stats derived from activity ───────────────────────────────────────────
   const tradesToday = activity.filter((a) => a.type === "trade").length;
@@ -137,7 +159,9 @@ export default function FullAutoPanel({
     setAutoEnabled(next);
     try {
       await signalApi.updateSettings({ signal_stack_mode: userSettings.signal_stack_mode ?? "full_auto" });
-      await api.patch("/api/signals/settings", { auto_trade_enabled: next });
+      if (tradingAccountId) {
+        await signalApi.updateAccountSettings({ trading_account_id: tradingAccountId, auto_trade_enabled: next });
+      }
       // #region agent log
       fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H4',location:'FullAutoPanel.tsx:139',message:'auto-toggle persisted',data:{next},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
@@ -158,17 +182,20 @@ export default function FullAutoPanel({
       if (sliderDebounce.current) clearTimeout(sliderDebounce.current);
       sliderDebounce.current = setTimeout(async () => {
         try {
-          await api.patch("/api/signals/settings", {
-            auto_trade_threshold: t,
-            auto_trade_max_per_scan: m,
-          });
+          if (tradingAccountId) {
+            await signalApi.updateAccountSettings({
+              trading_account_id: tradingAccountId,
+              auto_trade_threshold: t,
+              auto_trade_max_per_scan: m,
+            });
+          }
           onSettingsUpdate({ auto_trade_threshold: t, auto_trade_max_per_scan: m });
         } catch {
           // non-fatal
         }
       }, 500);
     },
-    [onSettingsUpdate]
+    [onSettingsUpdate, tradingAccountId]
   );
 
   const handleThresholdChange = (val: number) => {
@@ -338,6 +365,9 @@ export default function FullAutoPanel({
               selectedSymbols={watchlist}
               onChangeSelectedSymbols={(symbols) => {
                 setWatchlist(symbols);
+                if (tradingAccountId) {
+                  signalApi.updateAccountSettings({ trading_account_id: tradingAccountId, watchlist: symbols }).catch(() => {});
+                }
                 onSettingsUpdate({ watchlist: symbols });
               }}
             />

@@ -258,6 +258,10 @@ export const signalApi = {
     api.post(`/api/signals/${signalId}/interact`, { action, trade_id: tradeId ?? null }),
   updateSettings: (data: { signal_stack_mode?: string; watchlist?: string[]; auto_trade_enabled?: boolean; auto_trade_threshold?: number; auto_trade_max_per_scan?: number; apex_selects_threshold?: number; apex_selects_max_trades?: number; apex_selects_asset_classes?: string[]; morning_briefing_enabled?: boolean; morning_briefing_time?: string; daily_digest_enabled?: boolean }) =>
     api.patch("/api/signals/settings", data),
+  accountSettings: (trading_account_id: string) =>
+    api.get("/api/signals/account-settings", { params: { trading_account_id } }),
+  updateAccountSettings: (data: { trading_account_id: string; watchlist?: string[]; auto_trade_enabled?: boolean; auto_trade_threshold?: number; auto_trade_max_per_scan?: number }) =>
+    api.patch("/api/signals/account-settings", data),
   apexSelects: () => api.get("/api/signals/apex-selects"),
   approveApexSelects: (token: string) => api.post(`/api/signals/apex-selects/approve/${token}`),
 };
