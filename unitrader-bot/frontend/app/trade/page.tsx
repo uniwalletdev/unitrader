@@ -847,6 +847,7 @@ function TradePage() {
             <BotSelectsPanel
               botName={resolvedBotName}
               userSettings={settings ?? {}}
+              tradingAccountId={selectedTradingAccountId}
               onExecute={async (ids) => {
                 for (const id of ids) {
                   await handleAcceptSignal(id);

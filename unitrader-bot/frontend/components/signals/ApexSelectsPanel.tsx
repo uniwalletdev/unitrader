@@ -20,6 +20,7 @@ interface BotSelectsPanelProps {
   botName: string;
   userSettings: UserSettings;
   onExecute: (signalIds: string[]) => Promise<void>;
+  tradingAccountId?: string | null;
 }
 
 const ALL_ASSET_CLASSES = ["stocks", "crypto", "forex", "commodities"] as const;
@@ -61,7 +62,7 @@ function DirectionBadge({ direction }: { direction: string }) {
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function BotSelectsPanel({ botName, userSettings, onExecute }: BotSelectsPanelProps) {
+export default function BotSelectsPanel({ botName, userSettings, onExecute, tradingAccountId }: BotSelectsPanelProps) {
   const [shortlist, setShortlist] = useState<Signal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -84,6 +85,9 @@ export default function BotSelectsPanel({ botName, userSettings, onExecute }: Bo
         max_trades: String(m),
         asset_classes: ac.join(","),
       });
+      // Backend now scopes Apex Selects to a specific trading account.
+      // If it's missing, the endpoint returns 422.
+      if (tradingAccountId) params.set("trading_account_id", tradingAccountId);
       const res = await api.get(`/api/signals/apex-selects?${params}`);
       setShortlist(res.data?.signals ?? []);
     } catch {
@@ -91,7 +95,7 @@ export default function BotSelectsPanel({ botName, userSettings, onExecute }: Bo
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [tradingAccountId]);
 
   // Debounced reload when settings change
   useEffect(() => {
