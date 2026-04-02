@@ -75,7 +75,11 @@ export function useLivePrice(
     if (!symbol || !mountedRef.current) return;
 
     try {
-      const token = await getToken();
+      // Prefer the same HS256 access_token as REST (`lib/api.ts`). Clerk session
+      // JWTs are RS256 and require JWKS on the API; internal JWT matches `get_current_user`.
+      const stored =
+        typeof window !== "undefined" ? window.localStorage.getItem("access_token") : null;
+      const token = stored?.trim() || (await getToken());
       if (!token) {
         devWarn("useLivePrice: No auth token available");
         return;

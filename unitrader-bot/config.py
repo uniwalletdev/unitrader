@@ -9,7 +9,7 @@ import logging
 from functools import lru_cache
 from typing import List
 
-from pydantic import field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -58,20 +58,36 @@ class Settings(BaseSettings):
     # ─────────────────────────────────────────────
     # Authentication / JWT
     # ─────────────────────────────────────────────
-    clerk_publishable_key: str = ""   # pk_test_... (from .env CLERK_API_KEY)
-    clerk_secret_key: str = ""         # sk_test_... (required for backend JWT verification)
+    clerk_publishable_key: str = ""  # pk_test_... / pk_live_... — required to derive JWKS unless CLERK_JWKS_URL is set
+    clerk_secret_key: str = ""  # sk_test_... — Clerk Backend API / webhooks
+
+    # Full JWKS URL, or Clerk Frontend API origin (https://…clerk.accounts.dev).
+    # Use when the backend cannot rely on CLERK_PUBLISHABLE_KEY (e.g. env only has secret key).
+    clerk_explicit_jwks_url: str = Field(
+        default="",
+        validation_alias=AliasChoices("CLERK_JWKS_URL", "clerk_explicit_jwks_url"),
+    )
+
+    # Comma-separated iss values (https://...) for custom Clerk domains not under *.clerk.accounts.dev.
+    # Used only when deriving JWKS from the session token iss claim.
+    clerk_jwt_iss_allowlist: str = ""
 
     @property
     def clerk_jwks_url(self) -> str:
-        """Derive the Clerk JWKS endpoint from the publishable key."""
-        key = self.clerk_publishable_key or self.clerk_api_key
-        if not key:
+        """Resolve Clerk JWKS URL: explicit env, then publishable key, then empty."""
+        raw = (self.clerk_explicit_jwks_url or "").strip().rstrip("/")
+        if raw:
+            if raw.endswith(".well-known/jwks.json"):
+                return raw
+            return f"{raw}/.well-known/jwks.json"
+        pk = self.clerk_publishable_key
+        if not pk or not pk.startswith("pk_"):
             return ""
         # publishable key = "pk_test_" + base64(domain)
         try:
             import base64
-            suffix = key.split("_", 2)[-1]  # strip pk_test_ or pk_live_
-            # pad base64 if needed
+
+            suffix = pk.split("_", 2)[-1]  # strip pk_test_ or pk_live_
             padded = suffix + "=" * (-len(suffix) % 4)
             domain = base64.b64decode(padded).decode().rstrip("$")
             return f"https://{domain}/.well-known/jwks.json"

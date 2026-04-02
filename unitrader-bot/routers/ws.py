@@ -7,11 +7,14 @@ Endpoints:
 """
 
 import asyncio
+import base64
+import json
 import logging
 import os
 import time
 from datetime import datetime
 from typing import Any, Dict, Set
+from urllib.parse import urlparse
 
 try:
     from alpaca_trade_api import REST as AlpacaREST
@@ -83,34 +86,90 @@ def _get_alpaca_client() -> Any:
 # Token Validation
 # ─────────────────────────────────────────────
 
-# In-memory JWKS cache shared by WebSocket validation
-_ws_jwks_cache: dict = {}
+# In-memory JWKS cache keyed by JWKS URL (per Clerk Frontend API)
+_ws_jwks_cache: dict[str, dict] = {}
 
 
 async def _get_ws_jwks(jwks_url: str) -> dict:
     """Return cached Clerk JWKS, refreshing when older than 1 hour."""
-    if _ws_jwks_cache.get("data") and (time.monotonic() - _ws_jwks_cache.get("ts", 0.0)) < 3600:
-        return _ws_jwks_cache["data"]
+    entry = _ws_jwks_cache.get(jwks_url)
+    if entry and (time.monotonic() - entry.get("ts", 0.0)) < 3600:
+        return entry["data"]
     async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
         resp = await client.get(jwks_url)
         resp.raise_for_status()
         data = resp.json()
-    _ws_jwks_cache["data"] = data
-    _ws_jwks_cache["ts"] = time.monotonic()
+    _ws_jwks_cache[jwks_url] = {"data": data, "ts": time.monotonic()}
     return data
+
+
+def _jwt_header_alg(token: str) -> str | None:
+    try:
+        header_b64 = token.split(".")[0]
+        padded = header_b64 + "=" * (-len(header_b64) % 4)
+        header = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+        alg = header.get("alg")
+        return str(alg) if alg else None
+    except Exception:
+        return None
+
+
+def _clerk_issuer_allowed(iss: str) -> bool:
+    """Allow JWKS fetch from iss only for known Clerk host patterns (plus optional env allowlist)."""
+    iss = (iss or "").strip().rstrip("/")
+    if not iss.startswith("https://"):
+        return False
+    try:
+        host = (urlparse(iss).hostname or "").lower()
+    except Exception:
+        return False
+    if host.endswith(".clerk.accounts.dev"):
+        return True
+    allow = (settings.clerk_jwt_iss_allowlist or "").strip()
+    if not allow:
+        return False
+    allowed = {x.strip().rstrip("/") for x in allow.split(",") if x.strip()}
+    return iss in allowed
+
+
+def _resolve_clerk_jwks_url(token: str) -> str:
+    """Settings-derived JWKS URL, or iss-based URL for allowlisted Clerk Frontends."""
+    url = (settings.clerk_jwks_url or "").strip()
+    if url:
+        return url
+    try:
+        unverified = jose_jwt.get_unverified_claims(token)
+        iss = (unverified.get("iss") or "").strip().rstrip("/")
+        if iss and _clerk_issuer_allowed(iss):
+            return f"{iss}/.well-known/jwks.json"
+    except Exception as exc:
+        logger.debug("Could not derive JWKS URL from Clerk token iss: %s", exc)
+    return ""
 
 
 async def _validate_token(token: str) -> str:
     """
     Validate a JWT token (Clerk RS256 or internal HS256) and return user_id.
 
-    Tries Clerk JWKS first (RS256), then falls back to internal HS256 token.
+    Clerk session tokens (from the browser) use RS256 and require JWKS. REST calls
+    typically use the app's HS256 access token; this path supports both.
 
     Raises:
         HTTPException: If token is invalid
     """
-    # Try Clerk RS256 via JWKS
-    jwks_url = settings.clerk_jwks_url if hasattr(settings, "clerk_jwks_url") else None
+    jwks_url = _resolve_clerk_jwks_url(token)
+
+    if not jwks_url and _jwt_header_alg(token) == "RS256":
+        logger.warning(
+            "WebSocket auth: Clerk RS256 session token but no JWKS URL could be resolved. "
+            "Set CLERK_PUBLISHABLE_KEY or CLERK_JWKS_URL on the API server, or add the token "
+            "issuer to CLERK_JWT_ISS_ALLOWLIST for custom Clerk domains."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Clerk JWKS not configured on server",
+        )
+
     if jwks_url:
         try:
             jwks = await _get_ws_jwks(jwks_url)
@@ -123,25 +182,23 @@ async def _validate_token(token: str) -> str:
             user_id = claims.get("sub")
             if not user_id:
                 raise ValueError("Missing 'sub' claim")
-            return user_id
+            return str(user_id)
         except Exception as e:
-            # Clerk validation failed; fall through to internal HS256 validation.
             logger.debug("Clerk JWT validation failed, trying internal token: %s", e)
 
-    # Fallback: internal HS256 token
     try:
         payload = verify_token(token)
         user_id = payload.get("sub")
         if not user_id:
             raise ValueError("Missing 'sub' claim")
-        return user_id
+        return str(user_id)
     except JWTError as e:
-        logger.warning(f"JWT validation failed: {e}")
+        logger.warning("JWT validation failed: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
         )
     except Exception as e:
-        logger.warning(f"Token validation error: {e}")
+        logger.warning("Token validation error: %s", e)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token"
         )
