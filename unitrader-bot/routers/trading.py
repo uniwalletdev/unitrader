@@ -576,6 +576,8 @@ async def get_market_top(
         if not acct:
             raise HTTPException(status_code=404, detail="trading_account_not_found")
         ex = (acct.exchange or ex).lower()
+    if ex not in {"alpaca", "binance", "oanda", "coinbase"}:
+        raise HTTPException(status_code=400, detail="unsupported_exchange")
 
     # Return cached result if still fresh
     cached = _market_top_cache.get(ex)
@@ -683,7 +685,10 @@ async def get_exchange_assets(
         if not acct:
             raise HTTPException(status_code=404, detail="trading_account_not_found")
         ex = (acct.exchange or ex).lower()
-    universe = SYMBOL_UNIVERSE.get(ex, SYMBOL_UNIVERSE["alpaca"])[:limit]
+    universe_full = SYMBOL_UNIVERSE.get(ex)
+    if not universe_full:
+        raise HTTPException(status_code=400, detail="unsupported_exchange")
+    universe = universe_full[:limit]
     data = [
         {"symbol": sym, "label": SYMBOL_LABELS.get(sym, sym)}
         for sym in universe

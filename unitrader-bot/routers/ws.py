@@ -171,6 +171,59 @@ def _classify_symbol(symbol: str) -> str:
     return "alpaca_stock"
 
 
+def _is_stock_symbol(symbol: str) -> bool:
+    """Best-effort heuristic: treat plain tickers as stocks."""
+    source = _classify_symbol(symbol)
+    return source == "alpaca_stock"
+
+
+def _normalise_symbol_for_exchange(symbol: str, exchange: str) -> str:
+    s = symbol.strip().upper().replace(" ", "")
+    ex = (exchange or "").lower()
+    if ex == "coinbase":
+        # Common UX: user types BTC/ETH instead of BTC-USD.
+        crypto_short = {
+            "BTC",
+            "ETH",
+            "SOL",
+            "XRP",
+            "ADA",
+            "DOGE",
+            "LTC",
+            "DOT",
+            "AVAX",
+            "LINK",
+            "MATIC",
+        }
+        if s in crypto_short:
+            return f"{s}-USD"
+    if ex == "binance":
+        if not s.endswith(("USDT", "BUSD")) and (s.isalpha() and len(s) <= 6):
+            return f"{s}USDT"
+    return s
+
+
+async def _resolve_trading_account(user_id: str, trading_account_id: str) -> dict:
+    """Resolve account context from trading_account_id, enforcing ownership."""
+    from sqlalchemy import select
+
+    from database import AsyncSessionLocal
+    from models import TradingAccount
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(TradingAccount).where(
+                TradingAccount.id == trading_account_id,
+                TradingAccount.user_id == user_id,
+                TradingAccount.is_active == True,  # noqa: E712
+            )
+        )
+        acct = result.scalar_one_or_none()
+        if not acct:
+            raise HTTPException(status_code=404, detail="trading_account_not_found")
+        return {"exchange": (acct.exchange or "").lower(), "is_paper": bool(acct.is_paper)}
+
+
 async def _fetch_coinbase_price(symbol: str) -> Dict[str, Any]:
     """Fetch latest price from Coinbase public spot price API (no auth required)."""
     url = f"https://api.coinbase.com/v2/prices/{symbol.upper()}/spot"
@@ -209,7 +262,7 @@ async def _fetch_binance_price(symbol: str) -> Dict[str, Any]:
     }
 
 
-async def _fetch_latest_quote(symbol: str) -> Dict[str, Any]:
+async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[str, Any]:
     """
     Fetch latest quote, routing to the correct data source based on symbol format:
 
@@ -221,13 +274,31 @@ async def _fetch_latest_quote(symbol: str) -> Dict[str, Any]:
     Returns:
         Dict with symbol, price, bid, ask, bid_size, ask_size, timestamp
     """
-    source = _classify_symbol(symbol)
+    ex = (exchange or "").lower() if exchange else None
+    sym = _normalise_symbol_for_exchange(symbol, ex) if ex else symbol
+
+    # Forced exchange routing (MarketContext-aware)
+    if ex == "coinbase":
+        # Treat plain tickers like AAPL/META as stocks in Coinbase mode.
+        raw = symbol.strip().upper().replace(" ", "")
+        looks_like_plain_ticker = raw.isalpha() and 1 <= len(raw) <= 5 and "-" not in raw and "/" not in raw
+        if looks_like_plain_ticker and sym == raw:
+            raise ValueError("stocks_require_alpaca")
+        if _is_stock_symbol(sym):
+            raise ValueError("stocks_require_alpaca")
+        return await _fetch_coinbase_price(sym)
+    if ex == "binance":
+        if _is_stock_symbol(sym):
+            raise ValueError("stocks_require_alpaca")
+        return await _fetch_binance_price(sym)
+
+    source = _classify_symbol(sym)
 
     if source == "coinbase":
-        return await _fetch_coinbase_price(symbol)
+        return await _fetch_coinbase_price(sym)
 
     if source == "binance":
-        return await _fetch_binance_price(symbol)
+        return await _fetch_binance_price(sym)
 
     # Alpaca (crypto or stock)
     api_key = settings.alpaca_api_key or os.getenv("APCA_API_KEY_ID", "")
@@ -244,16 +315,16 @@ async def _fetch_latest_quote(symbol: str) -> Dict[str, Any]:
     if source == "alpaca_crypto":
         url = "https://data.alpaca.markets/v1beta3/crypto/us/latest/quotes"
         async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
-            resp = await client.get(url, params={"symbols": symbol.upper()})
+            resp = await client.get(url, params={"symbols": sym.upper()})
             resp.raise_for_status()
             payload = resp.json()
         quotes = payload.get("quotes", {}) or {}
-        q = quotes.get(symbol.upper(), {}) or {}
+        q = quotes.get(sym.upper(), {}) or {}
         bid = float(q.get("bp", 0) or 0)
         ask = float(q.get("ap", 0) or 0)
     else:
         # Alpaca stocks endpoint
-        url = f"https://data.alpaca.markets/v2/stocks/{symbol.upper()}/quotes/latest"
+        url = f"https://data.alpaca.markets/v2/stocks/{sym.upper()}/quotes/latest"
         async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
             resp = await client.get(url)
             resp.raise_for_status()
@@ -265,7 +336,7 @@ async def _fetch_latest_quote(symbol: str) -> Dict[str, Any]:
     price = (bid + ask) / 2 if bid and ask else (ask or bid)
 
     return {
-        "symbol": symbol.upper(),
+        "symbol": sym.upper(),
         "price": price,
         "bid": bid,
         "ask": ask,
@@ -309,7 +380,7 @@ async def _broadcast_to_subscribers(symbol: str, message: Dict[str, Any]):
         del _symbol_subscribers[symbol]
 
 
-async def _poll_and_broadcast(symbol: str):
+async def _poll_and_broadcast(symbol: str, exchange: str | None = None):
     """
     Poll Alpaca for price updates and broadcast to all connected clients.
 
@@ -324,7 +395,7 @@ async def _poll_and_broadcast(symbol: str):
         while symbol in _alpaca_subscriptions and error_count < max_errors:
             try:
                 # Fetch latest quote
-                message = await _fetch_latest_quote(symbol)
+                message = await _fetch_latest_quote(symbol, exchange=exchange)
 
                 # Broadcast to all subscribers
                 if symbol in _symbol_subscribers:
@@ -356,7 +427,7 @@ async def _poll_and_broadcast(symbol: str):
         logger.info(f"Stopped price poll for {symbol}")
 
 
-async def _subscribe_to_symbol(symbol: str):
+async def _subscribe_to_symbol(symbol: str, exchange: str | None = None):
     """
     Subscribe to price updates for a symbol.
 
@@ -365,7 +436,7 @@ async def _subscribe_to_symbol(symbol: str):
     async with _subscription_lock:
         if symbol not in _alpaca_subscriptions:
             logger.info(f"Creating new subscription for {symbol}")
-            task = asyncio.create_task(_poll_and_broadcast(symbol))
+            task = asyncio.create_task(_poll_and_broadcast(symbol, exchange=exchange))
             _alpaca_subscriptions[symbol] = task
 
 
@@ -375,7 +446,12 @@ async def _subscribe_to_symbol(symbol: str):
 
 
 @router.websocket("/ws/prices/{symbol:path}")
-async def websocket_price_stream(websocket: WebSocket, symbol: str, token: str = Query(...)):
+async def websocket_price_stream(
+    websocket: WebSocket,
+    symbol: str,
+    token: str = Query(...),
+    trading_account_id: str | None = Query(default=None),
+):
     """
     WebSocket endpoint for live price streaming.
 
@@ -402,6 +478,15 @@ async def websocket_price_stream(websocket: WebSocket, symbol: str, token: str =
         await websocket.close(code=4001, reason="Unauthorized")
         return
 
+    resolved_exchange: str | None = None
+    if trading_account_id:
+        try:
+            ctx = await _resolve_trading_account(user_id, trading_account_id)
+            resolved_exchange = ctx["exchange"]
+        except HTTPException:
+            await websocket.close(code=4004, reason="Trading account not found")
+            return
+
     # Accept the WebSocket connection
     await websocket.accept()
     logger.info(f"User {user_id} connected to price stream for {symbol}")
@@ -413,12 +498,20 @@ async def websocket_price_stream(websocket: WebSocket, symbol: str, token: str =
 
         _symbol_subscribers[symbol].add(websocket)
 
-        # Subscribe to Alpaca stream if not already active
-        await _subscribe_to_symbol(symbol)
+        # Coinbase mode: crypto only (stocks require Alpaca connection)
+        if resolved_exchange == "coinbase" and _is_stock_symbol(symbol):
+            await websocket.send_json(
+                {"symbol": symbol.upper(), "price": None, "error": "stocks_require_alpaca"}
+            )
+            await websocket.close(code=4002, reason="Stocks require Alpaca connection")
+            return
+
+        # Subscribe to polling loop (exchange-aware if trading_account_id provided)
+        await _subscribe_to_symbol(symbol, exchange=resolved_exchange)
 
         # Send initial quote — failure is non-fatal; the poll loop will deliver prices
         try:
-            initial_quote = await _fetch_latest_quote(symbol)
+            initial_quote = await _fetch_latest_quote(symbol, exchange=resolved_exchange)
             await websocket.send_json(initial_quote)
         except Exception as e:
             logger.error(f"Failed to send initial quote for {symbol}: {e}")
@@ -456,7 +549,11 @@ async def websocket_price_stream(websocket: WebSocket, symbol: str, token: str =
 
 
 @router.get("/prices/{symbol}/latest")
-async def get_latest_price(symbol: str, token: str = Query(...)):
+async def get_latest_price(
+    symbol: str,
+    token: str = Query(...),
+    trading_account_id: str | None = Query(default=None),
+):
     """
     Fallback endpoint for environments where WebSocket is blocked.
 
@@ -484,7 +581,11 @@ async def get_latest_price(symbol: str, token: str = Query(...)):
 
     # Fetch latest quote
     try:
-        quote_data = await _fetch_latest_quote(symbol)
+        resolved_exchange: str | None = None
+        if trading_account_id:
+            ctx = await _resolve_trading_account(user_id, trading_account_id)
+            resolved_exchange = ctx["exchange"]
+        quote_data = await _fetch_latest_quote(symbol, exchange=resolved_exchange)
         return quote_data
     except ValueError as e:
         logger.warning(f"Quote fetch failed for {symbol}: {e}")

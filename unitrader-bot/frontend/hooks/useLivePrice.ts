@@ -46,13 +46,17 @@ const INITIAL_STATE: LivePrice = {
 
 const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 16000, 30000]; // ms, max 30s
 
-export function useLivePrice(symbol: string | null): LivePrice {
+export function useLivePrice(
+  symbol: string | null,
+  opts?: { tradingAccountId?: string | null },
+): LivePrice {
   const { getToken } = useAuth();
   const [priceData, setPriceData] = useState<LivePrice>(INITIAL_STATE);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const mountedRef = useRef(true);
+  const tradingAccountId = opts?.tradingAccountId ?? null;
 
   // Cleanup function for WebSocket and timers
   const cleanup = useCallback(() => {
@@ -82,7 +86,9 @@ export function useLivePrice(symbol: string | null): LivePrice {
         .replace(/^https:/, "wss:")
         .replace(/^http:/, "ws:");
 
-      const url = `${wsUrl}/api/ws/prices/${symbol.toUpperCase()}?token=${token}`;
+      const params = new URLSearchParams({ token });
+      if (tradingAccountId) params.set("trading_account_id", tradingAccountId);
+      const url = `${wsUrl}/api/ws/prices/${symbol.toUpperCase()}?${params.toString()}`;
 
       const ws = new WebSocket(url);
 
@@ -154,7 +160,7 @@ export function useLivePrice(symbol: string | null): LivePrice {
         }
       }, delay);
     }
-  }, [symbol, getToken]);
+  }, [symbol, getToken, tradingAccountId]);
 
   // Effect: Connect on mount and symbol change
   useEffect(() => {

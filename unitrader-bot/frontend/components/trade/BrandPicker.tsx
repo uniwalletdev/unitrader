@@ -105,13 +105,14 @@ function BrandCard(props: {
   symbol: string;
   brand: string;
   exchange: string;
+  tradingAccountId?: string | null;
   isSelected: boolean;
   onToggle: () => void;
   rsi?: number | null;
   showVolumeChange?: boolean;
   volumeChangePct?: number | null;
 }) {
-  const live = useLivePrice(props.symbol);
+  const live = useLivePrice(props.symbol, { tradingAccountId: props.tradingAccountId });
   const change = formatChangePct(live.changePct);
 
   const showTicker =
@@ -266,6 +267,8 @@ export default function BrandPicker({
 
   const firstTip = useFirstOpenTooltip("unitrader_brandpicker_first_open_v1");
   const didLockCryptoTab = useRef(false);
+  const exchangeLower = (exchange || "").toLowerCase();
+  const coinbaseMode = exchangeLower === "coinbase";
 
   useEffect(() => {
     // If parent already provided settings, skip the extra API call.
@@ -318,6 +321,12 @@ export default function BrandPicker({
     didLockCryptoTab.current = true;
   }, [traderClass]);
 
+  // Coinbase mode: crypto only (stocks require Alpaca connection)
+  useEffect(() => {
+    if (!coinbaseMode) return;
+    if (category === "stocks") setCategory("crypto");
+  }, [coinbaseMode, category]);
+
   // novice / saver: fetch live AI picks to power the featured row
   useEffect(() => {
     if (traderClass !== "complete_novice" && traderClass !== "curious_saver") return;
@@ -341,7 +350,11 @@ export default function BrandPicker({
       symbol: d.symbol as string,
       brand: (d.label || BRAND_MAP[d.symbol as string] || d.symbol) as string,
     });
-    const ex = (exchange || "alpaca").toLowerCase();
+    const ex = (exchange || "").toLowerCase();
+    if (!ex) return () => { mounted = false; };
+    setTier1Loading(true);
+    setTier1StockItems(null);
+    setTier1CryptoItems(null);
     const limit =
       ex === "alpaca" ? 9 :
       ex === "oanda" ? 8 :
@@ -378,7 +391,7 @@ export default function BrandPicker({
         if (mounted) setTier1Loading(false);
       });
     return () => { mounted = false; };
-  }, []);
+  }, [exchange, tradingAccountId]);
 
   // Tier-2: fetch AI-ranked picks in background — silently enhances the grid
   useEffect(() => {
@@ -665,7 +678,10 @@ export default function BrandPicker({
               <div className="inline-flex rounded-xl border border-dark-800 bg-dark-900 p-1">
                 <button
                   type="button"
-                  disabled={traderClass === "crypto_native" && !didLockCryptoTab.current}
+                  disabled={
+                    coinbaseMode ||
+                    (traderClass === "crypto_native" && !didLockCryptoTab.current)
+                  }
                   onClick={() => setCategory("stocks")}
                   className={clsx(
                     "rounded-lg px-3 py-1.5 text-xs font-semibold",
@@ -738,6 +754,7 @@ export default function BrandPicker({
                     symbol={it.symbol}
                     brand={it.brand}
                     exchange={exchange}
+                    tradingAccountId={tradingAccountId}
                     isSelected={selections.includes(it.symbol)}
                     onToggle={() => handleToggle(it.symbol)}
                     showVolumeChange={traderClass === "crypto_native"}
@@ -772,6 +789,7 @@ export default function BrandPicker({
                 symbol={it.symbol}
                 brand={it.brand}
                 exchange={exchange}
+                tradingAccountId={tradingAccountId}
                 isSelected={selections.includes(it.symbol)}
                 onToggle={() => handleToggle(it.symbol)}
                 rsi={quickStats?.[it.symbol]?.rsi ?? null}
