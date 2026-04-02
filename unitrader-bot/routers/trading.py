@@ -98,6 +98,8 @@ class AnalyzeTradeRequest(BaseModel):
     symbol: str
     exchange: str  # binance | alpaca | oanda | coinbase
     trader_class: str | None = None
+    trading_account_id: str | None = None
+    is_paper: bool | None = None
 
 
 class TradeFeedbackRequest(BaseModel):
@@ -540,6 +542,7 @@ _MARKET_TOP_TTL_MINUTES = 60
 @router.get("/market-top")
 async def get_market_top(
     exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    trading_account_id: str | None = Query(default=None),
     limit: int = Query(default=5, ge=1, le=10),
     refresh: bool = Query(default=False),
     current_user=Depends(get_current_user),
@@ -561,6 +564,18 @@ async def get_market_top(
     from src.watchlists import score_universe, SYMBOL_LABELS
 
     ex = exchange.lower()
+    if trading_account_id:
+        result = await db.execute(
+            select(TradingAccount).where(
+                TradingAccount.id == trading_account_id,
+                TradingAccount.user_id == current_user.id,
+                TradingAccount.is_active == True,  # noqa: E712
+            )
+        )
+        acct = result.scalar_one_or_none()
+        if not acct:
+            raise HTTPException(status_code=404, detail="trading_account_not_found")
+        ex = (acct.exchange or ex).lower()
 
     # Return cached result if still fresh
     cached = _market_top_cache.get(ex)
@@ -639,8 +654,10 @@ async def get_market_top(
 @router.get("/exchange-assets")
 async def get_exchange_assets(
     exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    trading_account_id: str | None = Query(default=None),
     limit: int = Query(default=8, ge=1, le=20),
     current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Return the top N most liquid symbols for a connected exchange — no AI analysis.
 
@@ -654,6 +671,18 @@ async def get_exchange_assets(
     from src.watchlists import SYMBOL_UNIVERSE, SYMBOL_LABELS
 
     ex = exchange.lower()
+    if trading_account_id:
+        result = await db.execute(
+            select(TradingAccount).where(
+                TradingAccount.id == trading_account_id,
+                TradingAccount.user_id == current_user.id,
+                TradingAccount.is_active == True,  # noqa: E712
+            )
+        )
+        acct = result.scalar_one_or_none()
+        if not acct:
+            raise HTTPException(status_code=404, detail="trading_account_not_found")
+        ex = (acct.exchange or ex).lower()
     universe = SYMBOL_UNIVERSE.get(ex, SYMBOL_UNIVERSE["alpaca"])[:limit]
     data = [
         {"symbol": sym, "label": SYMBOL_LABELS.get(sym, sym)}
@@ -870,7 +899,13 @@ async def analyze_trade(
         result = await orchestrator.route(
             user_id=current_user.id,
             action="trade_analyze",
-            payload={"symbol": body.symbol.upper(), "trader_class": body.trader_class},
+            payload={
+                "symbol": body.symbol.upper(),
+                "exchange": body.exchange.lower(),
+                "trader_class": body.trader_class,
+                "trading_account_id": body.trading_account_id,
+                "is_paper": body.is_paper,
+            },
             db=db,
         )
         return {"status": "success", "data": result}

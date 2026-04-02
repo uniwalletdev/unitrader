@@ -24,6 +24,7 @@ type QuickStatsMap = Record<string, { rsi?: number | null }>;
 
 interface BrandPickerProps {
   exchange: string;
+  tradingAccountId?: string | null;
   /** If provided, avoids fetching settings on mount. */
   traderClass?: TraderClass;
   /** If provided, avoids fetching settings on mount. */
@@ -220,6 +221,7 @@ function BrandCard(props: {
 
 export default function BrandPicker({
   exchange,
+  tradingAccountId,
   traderClass: traderClassProp,
   favourites: favouritesProp,
   simulatorMode = false,
@@ -339,14 +341,33 @@ export default function BrandPicker({
       symbol: d.symbol as string,
       brand: (d.label || BRAND_MAP[d.symbol as string] || d.symbol) as string,
     });
-    Promise.all([
-      api.get("/api/trading/exchange-assets", { params: { exchange: "alpaca", limit: 9 } }),
-      api.get("/api/trading/exchange-assets", { params: { exchange: "binance", limit: 6 } }),
-    ])
-      .then(([stockRes, cryptoRes]) => {
+    const ex = (exchange || "alpaca").toLowerCase();
+    const limit =
+      ex === "alpaca" ? 9 :
+      ex === "oanda" ? 8 :
+      12; // crypto exchange (coinbase/binance) default
+
+    api
+      .get("/api/trading/exchange-assets", {
+        params: {
+          exchange: ex,
+          limit,
+          ...(tradingAccountId ? { trading_account_id: tradingAccountId } : {}),
+        },
+      })
+      .then((res) => {
         if (!mounted) return;
-        setTier1StockItems((stockRes.data?.data || []).map(mapItem));
-        setTier1CryptoItems((cryptoRes.data?.data || []).map(mapItem));
+        const items = (res.data?.data || []).map(mapItem);
+        if (ex === "alpaca") {
+          setTier1StockItems(items);
+          setTier1CryptoItems([]);
+        } else if (ex === "oanda") {
+          setTier1StockItems(items);
+          setTier1CryptoItems([]);
+        } else {
+          setTier1CryptoItems(items);
+          setTier1StockItems([]);
+        }
       })
       .catch(() => {
         if (!mounted) return;
@@ -366,14 +387,33 @@ export default function BrandPicker({
       symbol: d.symbol as string,
       brand: (d.label || BRAND_MAP[d.symbol as string] || d.symbol) as string,
     });
-    Promise.all([
-      api.get("/api/trading/market-top", { params: { exchange: "alpaca", limit: 9 } }),
-      api.get("/api/trading/market-top", { params: { exchange: "binance", limit: 6 } }),
-    ])
-      .then(([stockRes, cryptoRes]) => {
+    const ex = (exchange || "alpaca").toLowerCase();
+    const limit =
+      ex === "alpaca" ? 9 :
+      ex === "oanda" ? 8 :
+      12;
+
+    api
+      .get("/api/trading/market-top", {
+        params: {
+          exchange: ex,
+          limit,
+          ...(tradingAccountId ? { trading_account_id: tradingAccountId } : {}),
+        },
+      })
+      .then((res) => {
         if (!mounted) return;
-        setLiveStockItems((stockRes.data?.data || []).map(mapItem));
-        setLiveCryptoItems((cryptoRes.data?.data || []).map(mapItem));
+        const items = (res.data?.data || []).map(mapItem);
+        if (ex === "alpaca") {
+          setLiveStockItems(items);
+          setLiveCryptoItems([]);
+        } else if (ex === "oanda") {
+          setLiveStockItems(items);
+          setLiveCryptoItems([]);
+        } else {
+          setLiveCryptoItems(items);
+          setLiveStockItems([]);
+        }
         setAiEnhanced(true);
       })
       .catch(() => {
@@ -382,7 +422,7 @@ export default function BrandPicker({
       })
       .finally(() => {});
     return () => { mounted = false; };
-  }, []);
+  }, [exchange, tradingAccountId]);
 
   const featuredRow = useMemo(() => {
     if (traderClass === "complete_novice") {

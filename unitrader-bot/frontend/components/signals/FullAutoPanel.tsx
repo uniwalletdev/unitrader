@@ -26,6 +26,8 @@ interface FullAutoPanelProps {
   userSettings: UserSettings;
   trustLadderStage: number;
   onSettingsUpdate: (updates: object) => void;
+  exchange?: string;
+  tradingAccountId?: string | null;
 }
 
 interface ActivityEntry {
@@ -79,6 +81,8 @@ export default function FullAutoPanel({
   userSettings,
   trustLadderStage,
   onSettingsUpdate,
+  exchange,
+  tradingAccountId,
 }: FullAutoPanelProps) {
   const [autoEnabled, setAutoEnabled] = useState(userSettings.auto_trade_enabled ?? false);
   const [threshold, setThreshold] = useState(userSettings.auto_trade_threshold ?? 80);
@@ -320,7 +324,8 @@ export default function FullAutoPanel({
             <label className="text-xs text-dark-300 font-medium">Watchlist</label>
             <p className="text-[11px] text-dark-500">Symbols {botName} monitors in Full Auto mode</p>
             <BrandPicker
-              exchange="alpaca"
+              exchange={exchange || "alpaca"}
+              tradingAccountId={tradingAccountId}
               traderClass={
                 (userSettings.trader_class as
                   | "complete_novice"

@@ -38,13 +38,20 @@ _TestSession = async_sessionmaker(
 
 @pytest_asyncio.fixture(scope="module", autouse=True)
 async def setup_tables():
-    import models  # noqa: F401
-
+    # Create only the tables this test needs.
+    # Some production tables use Postgres-only types (e.g., UUID) and can't be
+    # created under SQLite for unit tests.
     async with _test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(User.__table__.create, checkfirst=True)
+        await conn.run_sync(UserSettings.__table__.create, checkfirst=True)
+        await conn.run_sync(TradingAccount.__table__.create, checkfirst=True)
+        await conn.run_sync(Trade.__table__.create, checkfirst=True)
     yield
     async with _test_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Trade.__table__.drop, checkfirst=True)
+        await conn.run_sync(TradingAccount.__table__.drop, checkfirst=True)
+        await conn.run_sync(UserSettings.__table__.drop, checkfirst=True)
+        await conn.run_sync(User.__table__.drop, checkfirst=True)
 
 
 @pytest_asyncio.fixture

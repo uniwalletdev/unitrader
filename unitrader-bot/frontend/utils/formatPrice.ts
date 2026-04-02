@@ -13,19 +13,16 @@
  * Detect if a symbol is cryptocurrency
  */
 function isCrypto(symbol: string): boolean {
-  const cryptoSymbols = [
-    "BTC",
-    "ETH",
-    "SOL",
-    "BNB",
-    "XRP",
-    "ADA",
-    "DOGE",
-    "MATIC",
-    "LINK",
-    "AVAX",
-  ];
-  return cryptoSymbols.includes(symbol.toUpperCase());
+  const s = symbol.toUpperCase().trim();
+  // Common exchange formats:
+  // - Coinbase: BTC-USD
+  // - Binance: BTCUSDT
+  // - Alpaca crypto: BTC/USD
+  if (s.includes("-") || s.includes("/")) return true;
+  if (s.endsWith("USDT") || s.endsWith("BUSD")) return true;
+  // Fallback: bare asset tickers
+  const cryptoSymbols = ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "DOGE", "MATIC", "LINK", "AVAX"];
+  return cryptoSymbols.includes(s);
 }
 
 /**

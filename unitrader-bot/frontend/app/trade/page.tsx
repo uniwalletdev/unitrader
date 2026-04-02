@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { CheckCircle } from "lucide-react";
 import GalaxyLoader from "@/components/layout/GalaxyLoader";
-import { api, authApi, signalApi, tradingApi } from "@/lib/api";
+import { api, authApi, exchangeApi, signalApi, tradingApi } from "@/lib/api";
 
 import BotOnboardingChat from "@/components/onboarding/ApexOnboardingChat";
 import WhatIfSimulator from "@/components/onboarding/WhatIfSimulator";
@@ -50,6 +50,7 @@ type UserSettings = {
   auto_trade_threshold?: number;
   auto_trade_max_per_scan?: number;
   watchlist?: string[];
+  preferred_trading_account_id?: string | null;
 };
 
 type TrustLadder = {
@@ -253,6 +254,13 @@ function TradePage() {
   const resolvedBotName = botName || settings?.ai_name || "Unitrader";
 
   const [exchange, setExchange] = useState("alpaca");
+  const [selectedTradingAccountId, setSelectedTradingAccountId] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<Array<{
+    trading_account_id: string;
+    exchange: string;
+    is_paper: boolean;
+    account_label?: string | null;
+  }>>([]);
   const [symbol, setSymbol] = useState("");
   const [amount, setAmount] = useState(100);
 
@@ -357,6 +365,70 @@ function TradePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bare, authLoaded, isSignedIn]);
 
+  // Load connected trading accounts (for exchange-aware calls)
+  useEffect(() => {
+    if (bare) return;
+    if (!settings) return;
+    let mounted = true;
+    (async () => {
+      try {
+        const res = await exchangeApi.balances();
+        const rows = (res.data?.data ?? []) as Array<{
+          trading_account_id?: string | null;
+          exchange: string;
+          is_paper: boolean;
+          account_label?: string | null;
+        }>;
+        const connected = rows
+          .filter((r) => !!r.trading_account_id)
+          .map((r) => ({
+            trading_account_id: r.trading_account_id as string,
+            exchange: r.exchange,
+            is_paper: r.is_paper,
+            account_label: r.account_label ?? null,
+          }));
+
+        if (!mounted) return;
+        setAccounts(connected);
+
+        const preferred = settings.preferred_trading_account_id ?? null;
+        const resolved =
+          (preferred && connected.find((a) => a.trading_account_id === preferred)?.trading_account_id) ||
+          connected[0]?.trading_account_id ||
+          null;
+        setSelectedTradingAccountId(resolved);
+
+        // Derive exchange from selected account when connected; otherwise keep current read-only exchange choice.
+        const selected = resolved ? connected.find((a) => a.trading_account_id === resolved) : null;
+        if (selected?.exchange) setExchange(selected.exchange);
+      } catch {
+        if (!mounted) return;
+        setAccounts([]);
+        setSelectedTradingAccountId(null);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, [bare, settings]);
+
+  const selectedAccount = useMemo(() => {
+    if (!selectedTradingAccountId) return null;
+    return accounts.find((a) => a.trading_account_id === selectedTradingAccountId) ?? null;
+  }, [accounts, selectedTradingAccountId]);
+
+  const onSelectTradingAccount = async (id: string | null) => {
+    setSelectedTradingAccountId(id);
+    const acct = id ? accounts.find((a) => a.trading_account_id === id) ?? null : null;
+    if (acct?.exchange) setExchange(acct.exchange);
+    try {
+      await authApi.updateSettings({ preferred_trading_account_id: id });
+      setSettings((prev) => (prev ? { ...prev, preferred_trading_account_id: id } : prev));
+    } catch {
+      // non-blocking; selection stays local for this session
+    }
+  };
+
   useEffect(() => {
     if (!trace) return;
     if (typeof window === "undefined") return;
@@ -436,10 +508,13 @@ function TradePage() {
     setAnalyzing(true);
     setAnalysis(null);
     try {
+      const ex = (selectedAccount?.exchange || exchange || "alpaca").toLowerCase();
       const res = await api.post("/api/trading/analyze", {
         symbol: symbol.trim(),
-        exchange,
+        exchange: ex,
         trader_class: traderClass,
+        trading_account_id: selectedTradingAccountId,
+        is_paper: selectedAccount?.is_paper ?? isPaper,
       });
       setAnalysis(res.data?.data ?? res.data);
     } catch (e: any) {
@@ -454,7 +529,11 @@ function TradePage() {
     if (!sym) throw new Error("Missing symbol");
     let res: Awaited<ReturnType<typeof tradingApi.execute>>;
     try {
-      res = await tradingApi.execute(sym, exchange);
+      const ex = (selectedAccount?.exchange || exchange || "alpaca").toLowerCase();
+      res = await tradingApi.execute(sym, ex, {
+        trading_account_id: selectedTradingAccountId ?? undefined,
+        is_paper: selectedAccount?.is_paper ?? isPaper,
+      });
     } catch (e: any) {
       const detail = e?.response?.data?.detail;
       if (detail === "onboarding_required") {
@@ -769,6 +848,8 @@ function TradePage() {
               botName={resolvedBotName}
               userSettings={settings ?? {}}
               trustLadderStage={trust?.stage ?? 1}
+              exchange={exchange}
+              tradingAccountId={selectedTradingAccountId}
               onSettingsUpdate={(updates) => setSettings((prev) => (prev ? { ...prev, ...(updates as any) } : prev))}
             />
           )}
@@ -801,6 +882,7 @@ function TradePage() {
                   {!dbg("no_picker") && (
                     <BrandPicker
                       exchange={exchange}
+                      tradingAccountId={selectedTradingAccountId}
                       traderClass={traderClass}
                       favourites={settings?.approved_assets ?? []}
                       onManualSymbol={(s) => setSymbol(s.toUpperCase())}
@@ -861,6 +943,7 @@ function TradePage() {
                   {!dbg("no_picker") && (
                     <BrandPicker
                       exchange={exchange}
+                      tradingAccountId={selectedTradingAccountId}
                       traderClass={traderClass}
                       favourites={settings?.approved_assets ?? []}
                       onManualSymbol={(s) => setSymbol(s.toUpperCase())}
@@ -926,16 +1009,35 @@ function TradePage() {
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div className="space-y-4">
                   <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                    <div className="text-xs font-semibold text-white">Exchange</div>
-                    <select
-                      value={exchange}
-                      onChange={(e) => setExchange(e.target.value)}
-                      className="mt-2 w-full rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-sm text-white"
-                    >
-                      <option value="alpaca">Alpaca</option>
-                      <option value="binance">Binance</option>
-                      <option value="oanda">OANDA</option>
-                    </select>
+                    <div className="text-xs font-semibold text-white">Trading account</div>
+                    {accounts.length > 0 ? (
+                      <select
+                        value={selectedTradingAccountId ?? ""}
+                        onChange={(e) => onSelectTradingAccount(e.target.value || null)}
+                        className="mt-2 w-full rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-sm text-white"
+                      >
+                        {accounts.map((a) => (
+                          <option key={a.trading_account_id} value={a.trading_account_id}>
+                            {a.account_label || `${a.exchange} ${a.is_paper ? "Paper" : "Live"}`}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <select
+                        value={exchange}
+                        onChange={(e) => setExchange(e.target.value)}
+                        className="mt-2 w-full rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-sm text-white"
+                      >
+                        <option value="alpaca">Alpaca (stocks)</option>
+                        <option value="coinbase">Coinbase (crypto)</option>
+                        <option value="oanda">OANDA (forex)</option>
+                      </select>
+                    )}
+                    {accounts.length === 0 && (
+                      <div className="mt-2 text-[11px] text-dark-400">
+                        Browse mode only. Connect an exchange to execute trades.
+                      </div>
+                    )}
                   </div>
 
                   <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">

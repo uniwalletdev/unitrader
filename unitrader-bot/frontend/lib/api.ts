@@ -104,6 +104,7 @@ export const authApi = {
     morning_briefing_enabled?: boolean;
     morning_briefing_time?: string;
     daily_digest_enabled?: boolean;
+    preferred_trading_account_id?: string | null;
   }>) => api.patch("/api/auth/settings", data),
   acceptRiskDisclosure: () => api.post("/api/onboarding/accept-risk-disclosure", {}),
   completeWizard: (data?: {
@@ -125,8 +126,17 @@ export const tradingApi = {
     api.get("/api/trading/performance", { params }),
   riskAnalysis: () => api.get("/api/trading/risk-analysis"),
   /** Pure analysis — returns signal/confidence/explanations. No order placed. */
-  analyze: (symbol: string, exchange: string, trader_class?: string) =>
-    api.post("/api/trading/analyze", { symbol, exchange, trader_class }, { timeout: 90000 }),
+  analyze: (
+    symbol: string,
+    exchange: string,
+    trader_class?: string,
+    opts?: { trading_account_id?: string; is_paper?: boolean },
+  ) =>
+    api.post(
+      "/api/trading/analyze",
+      { symbol, exchange, trader_class, ...(opts ?? {}) },
+      { timeout: 90000 },
+    ),
   /** Full cycle — analyse + place real/paper order on exchange. */
   execute: (symbol: string, exchange: string, opts?: { trading_account_id?: string; is_paper?: boolean }) =>
     api.post("/api/trading/execute", { symbol, exchange, ...opts }, { timeout: 90000 }),
