@@ -8,6 +8,7 @@ Run with:  python -m uvicorn main:app --reload
 import asyncio
 import logging
 import secrets
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -81,12 +82,36 @@ from src.services.unitrader_notifications import (
 # Logging
 # ─────────────────────────────────────────────
 
+
+class _MaxLevelFilter(logging.Filter):
+    """Allow records up to and including a maximum level."""
+
+    def __init__(self, max_level: int):
+        super().__init__()
+        self.max_level = max_level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno <= self.max_level
+
+
+_log_format = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+_stdout_handler = logging.StreamHandler(sys.stdout)
+_stdout_handler.setLevel(logging.DEBUG if settings.debug else logging.INFO)
+_stdout_handler.setFormatter(logging.Formatter(_log_format))
+_stdout_handler.addFilter(_MaxLevelFilter(logging.INFO))
+
+_stderr_handler = logging.StreamHandler(sys.stderr)
+_stderr_handler.setLevel(logging.WARNING)
+_stderr_handler.setFormatter(logging.Formatter(_log_format))
+
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    handlers=[_stdout_handler, _stderr_handler],
+    force=True,
 )
 configure_third_party_loggers()
 logger = logging.getLogger(__name__)
+
 
 # ─────────────────────────────────────────────
 # Sentry (production error tracking)
