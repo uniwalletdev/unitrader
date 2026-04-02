@@ -757,6 +757,7 @@ class TradingAgent:
         # Build user prompt with current market data
         user_prompt = self._build_analysis_user_prompt(symbol, market_data)
 
+        raw = ""
         try:
             # Call Claude with new prompt structure
             response = await self._claude.messages.create(
@@ -768,15 +769,26 @@ class TradingAgent:
 
             raw = response.content[0].text.strip()
             analysis_dict = parse_claude_json(raw, context="trade analysis")
+            if not isinstance(analysis_dict, dict):
+                raise json.JSONDecodeError("Expected JSON object", raw, 0)
+
+            def _safe_nonneg_float(v: Any) -> float:
+                try:
+                    f = float(v)
+                except Exception:
+                    return 0.0
+                if not (f == f) or f < 0.0:  # NaN or negative
+                    return 0.0
+                return f
 
             # Validate and construct TradeAnalysis response
             analysis = TradeAnalysis(
                 signal=analysis_dict.get("signal", "wait").lower(),
                 confidence=int(analysis_dict.get("confidence", 0)),
                 explanation_expert=analysis_dict.get("explanation_expert", ""),
-                key_factors=analysis_dict.get("key_factors", []),
-                suggested_stop_loss_pct=float(analysis_dict.get("suggested_stop_loss_pct", 0.0)),
-                suggested_take_profit_pct=float(analysis_dict.get("suggested_take_profit_pct", 0.0)),
+                key_factors=analysis_dict.get("key_factors", []) if isinstance(analysis_dict.get("key_factors"), list) else [],
+                suggested_stop_loss_pct=_safe_nonneg_float(analysis_dict.get("suggested_stop_loss_pct", 0.0)),
+                suggested_take_profit_pct=_safe_nonneg_float(analysis_dict.get("suggested_take_profit_pct", 0.0)),
                 market_data=analysis_dict.get("market_data", {}),
             )
 

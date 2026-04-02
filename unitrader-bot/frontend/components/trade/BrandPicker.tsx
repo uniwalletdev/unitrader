@@ -330,8 +330,13 @@ export default function BrandPicker({
   // novice / saver: fetch live AI picks to power the featured row
   useEffect(() => {
     if (traderClass !== "complete_novice" && traderClass !== "curious_saver") return;
+    // Backend requires trading_account_id; skip until we have it.
+    if (!tradingAccountId) return;
     let mounted = true;
-    api.get("/api/trading/ai-picks", { params: { limit: 4 } })
+    // #region agent log (debug-026d4d)
+    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'pre-fix',hypothesisId:'H2',location:'frontend/components/trade/BrandPicker.tsx:ai-picks',message:'About to GET /api/trading/ai-picks',data:{traderClass,hasTradingAccountId:!!tradingAccountId,tradingAccountIdType:typeof tradingAccountId},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion agent log (debug-026d4d)
+    api.get("/api/trading/ai-picks", { params: { limit: 4, trading_account_id: tradingAccountId } })
       .then((res) => {
         const picks = (res.data?.data || []) as Array<{ symbol: string }>;
         const items = picks
@@ -339,9 +344,13 @@ export default function BrandPicker({
           .filter((x) => x.symbol);
         if (mounted && items.length >= 2) setAiFeatureItems(items);
       })
-      .catch(() => {});
+      .catch((e) => {
+        // #region agent log (debug-026d4d)
+        fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'pre-fix',hypothesisId:'H2',location:'frontend/components/trade/BrandPicker.tsx:ai-picks',message:'GET /api/trading/ai-picks failed',data:{status:(e as any)?.response?.status??null,detail:(e as any)?.response?.data?.detail??(e as any)?.response?.data??null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion agent log (debug-026d4d)
+      });
     return () => { mounted = false; };
-  }, [traderClass]);
+  }, [traderClass, tradingAccountId]);
 
   // Tier-1: fetch instant symbol list (no AI) — populates grid in <100ms
   useEffect(() => {
@@ -400,7 +409,8 @@ export default function BrandPicker({
       symbol: d.symbol as string,
       brand: (d.label || BRAND_MAP[d.symbol as string] || d.symbol) as string,
     });
-    const ex = (exchange || "alpaca").toLowerCase();
+    const ex = (exchange || "").toLowerCase();
+    if (!ex) return () => { mounted = false; };
     const limit =
       ex === "alpaca" ? 9 :
       ex === "oanda" ? 8 :

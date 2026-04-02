@@ -276,12 +276,34 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
         "APCA-API-SECRET-KEY": api_secret,
     }
 
+    async def _alpaca_get_json(url: str, params: dict | None = None) -> dict:
+        # Basic 429 handling (free-tier can throttle aggressively).
+        backoff_s = 1.0
+        last_exc: Exception | None = None
+        for _ in range(3):
+            try:
+                async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
+                    resp = await client.get(url, params=params)
+                if resp.status_code == 429:
+                    retry_after = resp.headers.get("retry-after")
+                    try:
+                        wait_s = float(retry_after) if retry_after else backoff_s
+                    except Exception:
+                        wait_s = backoff_s
+                    await asyncio.sleep(min(10.0, max(0.5, wait_s)))
+                    backoff_s = min(10.0, backoff_s * 2)
+                    continue
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as exc:
+                last_exc = exc
+                await asyncio.sleep(min(10.0, backoff_s))
+                backoff_s = min(10.0, backoff_s * 2)
+        raise last_exc or RuntimeError("Alpaca request failed")
+
     if source == "alpaca_crypto":
         url = "https://data.alpaca.markets/v1beta3/crypto/us/latest/quotes"
-        async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
-            resp = await client.get(url, params={"symbols": sym.upper()})
-            resp.raise_for_status()
-            payload = resp.json()
+        payload = await _alpaca_get_json(url, params={"symbols": sym.upper()})
         quotes = payload.get("quotes", {}) or {}
         q = quotes.get(sym.upper(), {}) or {}
         bid = float(q.get("bp", 0) or 0)
@@ -289,10 +311,7 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
     else:
         # Alpaca stocks endpoint
         url = f"https://data.alpaca.markets/v2/stocks/{sym.upper()}/quotes/latest"
-        async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            payload = resp.json()
+        payload = await _alpaca_get_json(url)
         q = payload.get("quote", {}) or {}
         bid = float(q.get("bp", 0) or 0)
         ask = float(q.get("ap", 0) or 0)

@@ -99,8 +99,17 @@ def _exchange_for_signal(symbol: str, asset_class: str) -> str:
 async def get_signal_stack(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    trading_account_id: str = Query(...),
+    trading_account_id: str | None = Query(default=None),
 ):
+    if trading_account_id is None:
+        settings_result = await db.execute(
+            select(UserSettings).where(UserSettings.user_id == current_user.id)
+        )
+        settings = settings_result.scalar_one_or_none()
+        trading_account_id = getattr(settings, "preferred_trading_account_id", None) if settings else None
+    if trading_account_id is None:
+        raise HTTPException(status_code=400, detail="trading_account_id_required")
+
     market_ctx = await resolve_market_context(
         db=db, user_id=current_user.id, trading_account_id=trading_account_id
     )

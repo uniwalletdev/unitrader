@@ -65,7 +65,10 @@ export interface SignalStackState {
 // Hook
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function useSignalStack(userSettings: { signal_stack_mode?: string }) {
+export function useSignalStack(
+  userSettings: { signal_stack_mode?: string },
+  opts?: { tradingAccountId?: string | null },
+) {
   const [state, setState] = useState<SignalStackState>({
     signals: [],
     isLoading: true,
@@ -86,7 +89,7 @@ export function useSignalStack(userSettings: { signal_stack_mode?: string }) {
       isRefreshing: !prev.isLoading,
     }));
     try {
-      const res = await signalApi.stack();
+      const res = await signalApi.stack({ trading_account_id: opts?.tradingAccountId ?? undefined });
       const data = res.data as any;
       // Backend may return either:
       //  - { signals, last_scan_at, ... }
@@ -112,7 +115,7 @@ export function useSignalStack(userSettings: { signal_stack_mode?: string }) {
         error: "Could not load signals. Retrying soon.",
       }));
     }
-  }, [mode]); // re-create when mode changes so mode-filtered results are re-fetched
+  }, [mode, opts?.tradingAccountId]); // re-create when mode changes so mode-filtered results are re-fetched
 
   // Load on mount and every 5 minutes; also re-loads when mode changes
   useEffect(() => {

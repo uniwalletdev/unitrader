@@ -253,7 +253,7 @@ function TradePage() {
   const traderClass: TraderClass = settings?.trader_class ?? "complete_novice";
   const resolvedBotName = botName || settings?.ai_name || "Unitrader";
 
-  const [exchange, setExchange] = useState("alpaca");
+  const [exchange, setExchange] = useState("");
   const [selectedTradingAccountId, setSelectedTradingAccountId] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Array<{
     trading_account_id: string;
@@ -508,7 +508,14 @@ function TradePage() {
     setAnalyzing(true);
     setAnalysis(null);
     try {
-      const ex = (selectedAccount?.exchange || exchange || "alpaca").toLowerCase();
+      const ex = (selectedAccount?.exchange || exchange || "").toLowerCase();
+      if (!ex) {
+        setToast("Select a trading account (or connect an exchange) first");
+        return;
+      }
+      // #region agent log (debug-026d4d)
+      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'pre-fix',hypothesisId:'H1',location:'frontend/app/trade/page.tsx:handleAnalyse',message:'About to POST /api/trading/analyze',data:{hasSelectedTradingAccountId:!!selectedTradingAccountId,selectedTradingAccountIdType:typeof selectedTradingAccountId,exchange:ex,isPaper:selectedAccount?.is_paper ?? isPaper,traderClass:traderClass??null,symbol:symbol.trim().toUpperCase().slice(0,20)},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log (debug-026d4d)
       const res = await api.post("/api/trading/analyze", {
         symbol: symbol.trim(),
         exchange: ex,
@@ -518,6 +525,9 @@ function TradePage() {
       });
       setAnalysis(res.data?.data ?? res.data);
     } catch (e: any) {
+      // #region agent log (debug-026d4d)
+      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'pre-fix',hypothesisId:'H1',location:'frontend/app/trade/page.tsx:handleAnalyse',message:'POST /api/trading/analyze failed',data:{status:e?.response?.status??null,detail:e?.response?.data?.detail??null,hasSelectedTradingAccountId:!!selectedTradingAccountId},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion agent log (debug-026d4d)
       setToast(e?.response?.data?.detail || "Analysis failed");
     } finally {
       setAnalyzing(false);
@@ -529,7 +539,8 @@ function TradePage() {
     if (!sym) throw new Error("Missing symbol");
     let res: Awaited<ReturnType<typeof tradingApi.execute>>;
     try {
-      const ex = (selectedAccount?.exchange || exchange || "alpaca").toLowerCase();
+      const ex = (selectedAccount?.exchange || exchange || "").toLowerCase();
+      if (!ex) throw new Error("Missing exchange");
       res = await tradingApi.execute(sym, ex, {
         trading_account_id: selectedTradingAccountId ?? undefined,
         is_paper: selectedAccount?.is_paper ?? isPaper,
@@ -601,7 +612,7 @@ function TradePage() {
   }, [resolvedBotName, signalMode]);
 
   const { signals, isLoading: signalsLoading, isRefreshing, lastScanAt, nextScanInMinutes, assetsScanned, error: signalsError, acceptSignal, skipSignal, refresh } =
-    useSignalStack({ signal_stack_mode: signalMode });
+    useSignalStack({ signal_stack_mode: signalMode }, { tradingAccountId: selectedTradingAccountId });
 
   const maxSignals = useMemo(() => {
     if (traderClass === "complete_novice") return 3;
@@ -1028,9 +1039,13 @@ function TradePage() {
                         onChange={(e) => setExchange(e.target.value)}
                         className="mt-2 w-full rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-sm text-white"
                       >
-                        <option value="alpaca">Alpaca (stocks)</option>
-                        <option value="coinbase">Coinbase (crypto)</option>
-                        <option value="oanda">OANDA (forex)</option>
+                        <option value="" disabled>
+                          Select exchange…
+                        </option>
+                        <option value="alpaca">Alpaca — Stocks & ETFs</option>
+                        <option value="coinbase">Coinbase — Crypto</option>
+                        <option value="binance">Binance — Crypto</option>
+                        <option value="oanda">OANDA — Forex</option>
                       </select>
                     )}
                     {accounts.length === 0 && (

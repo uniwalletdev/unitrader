@@ -252,8 +252,8 @@ export const contentApi = {
 
 // ── Signals ──────────────────────────────────────────────────────────────────
 export const signalApi = {
-  stack: () =>
-    api.get("/api/signals/stack"),
+  stack: (opts?: { trading_account_id?: string | null }) =>
+    api.get("/api/signals/stack", { params: { trading_account_id: opts?.trading_account_id ?? undefined } }),
   interact: (signalId: string, action: string, tradeId?: string | null) =>
     api.post(`/api/signals/${signalId}/interact`, { action, trade_id: tradeId ?? null }),
   updateSettings: (data: { signal_stack_mode?: string; watchlist?: string[]; auto_trade_enabled?: boolean; auto_trade_threshold?: number; auto_trade_max_per_scan?: number; apex_selects_threshold?: number; apex_selects_max_trades?: number; apex_selects_asset_classes?: string[]; morning_briefing_enabled?: boolean; morning_briefing_time?: string; daily_digest_enabled?: boolean }) =>

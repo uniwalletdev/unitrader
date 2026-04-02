@@ -146,6 +146,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   const [tradingPaused, setTradingPaused]   = useState(false);
   const [maxDailyLoss, setMaxDailyLoss]     = useState(10);
   const [settingsLoading, setSettingsLoading] = useState(true);
+  const [preferredTradingAccountId, setPreferredTradingAccountId] = useState<string | null>(null);
 
   // Trade mode: "auto" = full autopilot, "picks" = AI recommends, user decides
   const [tradeMode, setTradeMode]           = useState<"auto" | "picks">("auto");
@@ -318,6 +319,9 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         setTradingPaused(sRes.data.trading_paused || false);
         setMaxDailyLoss(sRes.data.max_daily_loss || 10);
         setTraderClass(sRes.data.trader_class || "complete_novice");
+        setPreferredTradingAccountId(
+          (sRes.data.preferred_trading_account_id as string | null | undefined) ?? null
+        );
         const rawMode = sRes.data.trade_mode || "auto";
         setTradeMode(rawMode === "auto" ? "auto" : "picks");
         setTrust(tRes.data?.data ?? tRes.data);
@@ -364,6 +368,10 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   // ── On-demand analysis ──
   const handleOnDemandAnalyze = async () => {
     if (!odSymbol.trim() || !selectedExchange) return;
+    if (!preferredTradingAccountId) {
+      setOdError("Connect an exchange to run analysis.");
+      return;
+    }
     setOdAnalyzing(true);
     setOdResult(null);
     setOdError("");
@@ -382,7 +390,10 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
     try {
       const sym = normaliseSymbol(resolvedSymbol, selectedExchange);
       // Analysis only — no order placed here. User confirms trade in the modal.
-      const res = await tradingApi.analyze(sym, selectedExchange);
+      const res = await tradingApi.analyze(sym, selectedExchange, traderClass, {
+        trading_account_id: preferredTradingAccountId,
+        is_paper: isPaper,
+      });
       const data = res.data?.data ?? res.data;
       setOdResult(data);
       if (data?.status === "rejected" || data?.status === "error") {
@@ -402,7 +413,11 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   const handleConfirmedTrade = async () => {
     const sym = normaliseSymbol(odSymbol.trim(), selectedExchange);
     if (!sym) throw new Error("Missing symbol");
-    const res = await tradingApi.execute(sym, selectedExchange);
+    if (!preferredTradingAccountId) throw new Error("Missing trading account");
+    const res = await tradingApi.execute(sym, selectedExchange, {
+      trading_account_id: preferredTradingAccountId,
+      is_paper: isPaper,
+    });
     setToast("Trade submitted");
     return res.data?.data ?? res.data;
   };
@@ -566,6 +581,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
       {tradeMode === "picks" ? (
         <AIPicksPanel
           exchange={selectedExchange}
+          tradingAccountId={preferredTradingAccountId}
           isPaper={isPaper}
           traderClass={traderClass}
         />

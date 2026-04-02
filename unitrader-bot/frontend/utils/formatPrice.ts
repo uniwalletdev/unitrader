@@ -32,15 +32,6 @@ function isForex(symbol: string): boolean {
   return symbol.includes("_");
 }
 
-/**
- * Get exchange from symbol context (simplified; could be enhanced with DB lookup)
- */
-function detectExchange(symbol: string): "alpaca" | "binance" | "oanda" | null {
-  if (isCrypto(symbol)) return "binance";
-  if (isForex(symbol)) return "oanda";
-  return "alpaca"; // Assume stocks default to Alpaca
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Price Formatting
 // ─────────────────────────────────────────────────────────────────────────────

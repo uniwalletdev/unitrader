@@ -254,10 +254,12 @@ function PickCard({
 
 export default function AIPicksPanel({
   exchange,
+  tradingAccountId,
   isPaper,
   traderClass,
 }: {
   exchange: string;
+  tradingAccountId?: string | null;
   isPaper: boolean;
   traderClass: string;
 }) {
@@ -270,8 +272,13 @@ export default function AIPicksPanel({
     setLoading(true);
     setError("");
     try {
+      if (!tradingAccountId) {
+        setPicks([]);
+        setError("Connect an exchange to see AI picks.");
+        return;
+      }
       const res = await api.get("/api/trading/ai-picks", {
-        params: { exchange, limit: 3 },
+        params: { exchange, limit: 3, trading_account_id: tradingAccountId },
       });
       const data: Pick[] = res.data?.data || [];
       setPicks(data);
@@ -281,7 +288,7 @@ export default function AIPicksPanel({
     } finally {
       setLoading(false);
     }
-  }, [exchange]);
+  }, [exchange, tradingAccountId]);
 
   useEffect(() => { load(); }, [load]);
 

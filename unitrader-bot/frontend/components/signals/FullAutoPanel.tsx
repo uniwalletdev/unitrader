@@ -324,7 +324,7 @@ export default function FullAutoPanel({
             <label className="text-xs text-dark-300 font-medium">Watchlist</label>
             <p className="text-[11px] text-dark-500">Symbols {botName} monitors in Full Auto mode</p>
             <BrandPicker
-              exchange={exchange || "alpaca"}
+              exchange={exchange || ""}
               tradingAccountId={tradingAccountId}
               traderClass={
                 (userSettings.trader_class as

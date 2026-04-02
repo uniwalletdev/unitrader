@@ -1678,6 +1678,7 @@ export default function AppPage() {
                   botName={user?.ai_name || "Unitrader"}
                   mode={dashboardSignalMode}
                   onOpenTrade={() => setActiveTab("trade")}
+                  tradingAccountId={userSettings?.preferred_trading_account_id ?? null}
                 />
                 <AccountDashboard />
               </>

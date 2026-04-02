@@ -1290,6 +1290,16 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
         {"field": ".".join(str(loc) for loc in e["loc"]), "message": e["msg"]}
         for e in exc.errors()
     ]
+    # Always emit to normal logs so Railway/Sentry captures it even if file write fails.
+    try:
+        logger.warning(
+            "RequestValidationError on %s %s fields=%s",
+            request.method,
+            request.url.path,
+            [e.get("field") for e in errors],
+        )
+    except Exception:
+        pass
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"status": "error", "error": "Validation failed", "details": errors},

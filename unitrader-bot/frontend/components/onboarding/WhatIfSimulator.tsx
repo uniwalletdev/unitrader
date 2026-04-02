@@ -93,6 +93,7 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
   };
   const [traderClass, setTraderClass] = useState<TraderClass | null>(null);
   const [approvedAssets, setApprovedAssets] = useState<string[]>([]);
+  const [preferredTradingAccountId, setPreferredTradingAccountId] = useState<string | null>(null);
 
   const [timeDays, setTimeDays] = useState(30);
   const [amount, setAmount] = useState(100);
@@ -116,16 +117,6 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
   }, [mode]);
 
   useEffect(() => {
-    api.get("/api/trading/ai-picks", { params: { limit: 4 } })
-      .then((res) => {
-        const picks = (res.data?.data || []) as Array<{ symbol: string }>;
-        const syms = picks.map((p) => p.symbol).filter(Boolean);
-        if (syms.length >= 2) setAiPickSymbols(syms);
-      })
-      .catch(() => {}); // silently keep hardcoded fallback
-  }, []);
-
-  useEffect(() => {
     let mounted = true;
     (async () => {
       try {
@@ -137,6 +128,7 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
         if (!mounted) return;
         setTraderClass(tc);
         setApprovedAssets(assets);
+        setPreferredTradingAccountId((res.data?.preferred_trading_account_id as string | null | undefined) ?? null);
 
         if (tc === "complete_novice" || tc === "curious_saver") {
           setAmount(100);
@@ -162,6 +154,20 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (!preferredTradingAccountId) return;
+    api
+      .get("/api/trading/ai-picks", {
+        params: { limit: 4, trading_account_id: preferredTradingAccountId },
+      })
+      .then((res) => {
+        const picks = (res.data?.data || []) as Array<{ symbol: string }>;
+        const syms = picks.map((p) => p.symbol).filter(Boolean);
+        if (syms.length >= 2) setAiPickSymbols(syms);
+      })
+      .catch(() => {});
+  }, [preferredTradingAccountId]);
 
   const shouldShowWelcomeModal = useMemo(() => {
     if (!welcomeRequested) return false;

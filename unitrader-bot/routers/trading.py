@@ -30,6 +30,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from config import settings
 from database import get_db
@@ -485,19 +486,23 @@ async def get_account_balances(
     Returns per-key data:  exchange, is_paper, balance, currency.
     Errors on individual exchanges are returned as balance=None.
     """
+    # IMPORTANT: avoid async lazy-loading relationships inside this endpoint.
+    # MissingGreenlet happens when any code path triggers a relationship load.
     result = await db.execute(
-        select(ExchangeAPIKey).where(
+        select(ExchangeAPIKey, TradingAccount.account_label)
+        .outerjoin(TradingAccount, ExchangeAPIKey.trading_account_id == TradingAccount.id)
+        .where(
             ExchangeAPIKey.user_id == current_user.id,
             ExchangeAPIKey.is_active == True,  # noqa: E712
         )
     )
-    keys = result.scalars().all()
+    key_rows: list[tuple[ExchangeAPIKey, str | None]] = list(result.all())
 
-    async def _fetch_one(k: ExchangeAPIKey) -> dict:
+    async def _fetch_one(k: ExchangeAPIKey, account_label: str | None) -> dict:
         entry = {
             "trading_account_id": k.trading_account_id,
             "exchange": k.exchange,
-            "account_label": k.trading_account.account_label if k.trading_account else _account_label(k.exchange, k.is_paper),
+            "account_label": account_label or _account_label(k.exchange, k.is_paper),
             "is_paper": k.is_paper,
             "connected_at": k.created_at.isoformat() if k.created_at else None,
             "last_used": k.last_used_at.isoformat() if k.last_used_at else None,
@@ -525,7 +530,7 @@ async def get_account_balances(
             entry["error"] = str(exc)
         return entry
 
-    items = await asyncio.gather(*[_fetch_one(k) for k in keys])
+    items = await asyncio.gather(*[_fetch_one(k, label) for (k, label) in key_rows])
 
     return {"status": "success", "data": list(items)}
 

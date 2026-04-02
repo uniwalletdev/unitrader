@@ -62,10 +62,12 @@ export default function UnitraderActivityStatus({
   botName,
   mode,
   onOpenTrade,
+  tradingAccountId,
 }: {
   botName: string;
   mode: SignalMode;
   onOpenTrade: () => void;
+  tradingAccountId?: string | null;
 }) {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [stackMeta, setStackMeta] = useState<SignalStackResponse | null>(null);
@@ -84,7 +86,7 @@ export default function UnitraderActivityStatus({
 
       const [notifRes, stackRes] = await Promise.all([
         notificationApi.list(mode === "full_auto" ? 3 : 5, { type: typeFilter }),
-        signalApi.stack(),
+        signalApi.stack({ trading_account_id: tradingAccountId ?? undefined }),
       ]);
 
       setItems(notifRes.data?.data?.items ?? []);
