@@ -513,22 +513,18 @@ function TradePage() {
         setToast("Select a trading account (or connect an exchange) first");
         return;
       }
-      // #region agent log (debug-026d4d)
-      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'pre-fix',hypothesisId:'H1',location:'frontend/app/trade/page.tsx:handleAnalyse',message:'About to POST /api/trading/analyze',data:{hasSelectedTradingAccountId:!!selectedTradingAccountId,selectedTradingAccountIdType:typeof selectedTradingAccountId,exchange:ex,isPaper:selectedAccount?.is_paper ?? isPaper,traderClass:traderClass??null,symbol:symbol.trim().toUpperCase().slice(0,20)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log (debug-026d4d)
-      const res = await api.post("/api/trading/analyze", {
-        symbol: symbol.trim(),
-        exchange: ex,
-        trader_class: traderClass,
-        trading_account_id: selectedTradingAccountId,
+      // tradingApi.analyze uses 90s timeout — default api client is 8s (too short for Claude + market data).
+      const res = await tradingApi.analyze(symbol.trim(), ex, traderClass ?? undefined, {
+        trading_account_id: selectedTradingAccountId ?? undefined,
         is_paper: selectedAccount?.is_paper ?? isPaper,
       });
       setAnalysis(res.data?.data ?? res.data);
     } catch (e: any) {
-      // #region agent log (debug-026d4d)
-      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'pre-fix',hypothesisId:'H1',location:'frontend/app/trade/page.tsx:handleAnalyse',message:'POST /api/trading/analyze failed',data:{status:e?.response?.status??null,detail:e?.response?.data?.detail??null,hasSelectedTradingAccountId:!!selectedTradingAccountId},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log (debug-026d4d)
-      setToast(e?.response?.data?.detail || "Analysis failed");
+      const msg =
+        e?.code === "ECONNABORTED"
+          ? "Analysis timed out — try again in a moment"
+          : e?.response?.data?.detail || "Analysis failed";
+      setToast(typeof msg === "string" ? msg : "Analysis failed");
     } finally {
       setAnalyzing(false);
     }
