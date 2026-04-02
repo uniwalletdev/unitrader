@@ -6,7 +6,7 @@ import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -26,6 +26,7 @@ from src.agents.orchestrator import get_orchestrator
 from src.agents.shared_memory import SharedMemory
 from src.agents.signal_stack_agent import signal_stack_agent
 from src.integrations.market_data import classify_asset
+from src.market_context import resolve_market_context
 from src.services.unitrader_notifications import get_unitrader_notification_engine
 
 logger = logging.getLogger(__name__)
@@ -98,11 +99,16 @@ def _exchange_for_signal(symbol: str, asset_class: str) -> str:
 async def get_signal_stack(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    trading_account_id: str = Query(...),
 ):
+    market_ctx = await resolve_market_context(
+        db=db, user_id=current_user.id, trading_account_id=trading_account_id
+    )
     now = datetime.now(timezone.utc)
     signals_result = await db.execute(
         select(SignalStack)
         .where(SignalStack.expires_at > now)
+        .where(SignalStack.exchange == market_ctx.exchange.value)
         .order_by(SignalStack.confidence.desc(), SignalStack.created_at.desc())
     )
     signals = signals_result.scalars().all()
@@ -171,7 +177,11 @@ async def update_signal_settings(
 async def get_apex_selects_shortlist(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
+    trading_account_id: str = Query(...),
 ):
+    market_ctx = await resolve_market_context(
+        db=db, user_id=current_user.id, trading_account_id=trading_account_id
+    )
     settings_result = await db.execute(
         select(UserSettings).where(UserSettings.user_id == current_user.id)
     )
@@ -187,6 +197,7 @@ async def get_apex_selects_shortlist(
             SignalStack.expires_at > datetime.now(timezone.utc),
             SignalStack.signal.in_(["buy", "sell"]),
             SignalStack.confidence >= threshold,
+            SignalStack.exchange == market_ctx.exchange.value,
         )
         .order_by(SignalStack.confidence.desc(), SignalStack.created_at.desc())
     )

@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from models import Conversation, Trade, User, UserSettings
+from src.market_context import MarketContext, resolve_market_context
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ class SharedContext:
     avg_confidence: float = 0.0            # 0–100
     last_signal: Optional[str] = None      # Latest signal from trading agent
     recent_onboarding_messages: list[dict] = field(default_factory=list)
+    market_context: Optional[MarketContext] = None
 
     @classmethod
     def default(cls, user_id: str) -> "SharedContext":
@@ -89,6 +91,7 @@ class SharedContext:
             avg_confidence=0.0,
             last_signal=None,
             recent_onboarding_messages=[],
+            market_context=None,
         )
 
     def is_novice(self) -> bool:
@@ -147,7 +150,11 @@ class SharedMemory:
     CACHE_TTL_SECONDS = 60
 
     @staticmethod
-    async def load(user_id: str, db: AsyncSession) -> SharedContext:
+    async def load(
+        user_id: str,
+        db: AsyncSession,
+        trading_account_id: str | None = None,
+    ) -> SharedContext:
         """Load user's full context from database with caching.
 
         Cache hit: returns cached context if < 60 seconds old
@@ -173,7 +180,7 @@ class SharedMemory:
 
             # Cache miss or expired — load from DB
             logger.debug(f"SharedMemory cache miss for user {user_id}, querying DB")
-            context = await SharedMemory._load_from_db(user_id, db)
+            context = await SharedMemory._load_from_db(user_id, db, trading_account_id=trading_account_id)
 
             # Store in cache
             _cache[user_id] = (context, datetime.now(timezone.utc))
@@ -196,7 +203,11 @@ class SharedMemory:
             logger.debug(f"SharedMemory cache invalidated for user {user_id}")
 
     @staticmethod
-    async def _load_from_db(user_id: str, db: AsyncSession) -> SharedContext:
+    async def _load_from_db(
+        user_id: str,
+        db: AsyncSession,
+        trading_account_id: str | None = None,
+    ) -> SharedContext:
         """Load full user context from database.
 
         Queries:
@@ -275,6 +286,14 @@ class SharedMemory:
                 last_signal=None,  # Could query from Conversation.response where context_type="trading"
                 recent_onboarding_messages=onboarding_messages,
             )
+
+            if trading_account_id:
+                try:
+                    context.market_context = await resolve_market_context(
+                        db=db, user_id=user_id, trading_account_id=trading_account_id
+                    )
+                except Exception:
+                    context.market_context = None
 
             return context
 

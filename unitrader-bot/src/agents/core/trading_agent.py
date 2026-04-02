@@ -36,7 +36,13 @@ from models import (
 from security import decrypt_api_key
 from src.agents.shared_memory import SharedContext
 from src.integrations.exchange_client import get_exchange_client
-from src.integrations.market_data import full_market_analysis, normalise_symbol
+from src.integrations.market_data import full_market_analysis, normalise_symbol as legacy_normalise_symbol
+from src.market_context import (
+    Exchange,
+    ExchangeAssetClassError,
+    MarketContext,
+    normalize_symbol,
+)
 from src.services.trade_execution import build_trade_parameters
 from src.utils.json_parser import parse_claude_json
 from src.services.learning_hub import (
@@ -257,25 +263,64 @@ class TradingAgent:
     # Market Analysis
     # ─────────────────────────────────────────────
 
-    async def analyze_market(self, symbol: str, exchange: str) -> dict | None:
+    async def analyze_market(
+        self,
+        symbol: str,
+        market_context: MarketContext | None = None,
+        explanation_level: str = "simple",
+        **kwargs,
+    ) -> dict | None:
         """Fetch live data and compute technical indicators.
 
         Returns the full market snapshot dict, or None if market data
         is unavailable or routing/exchange errors occur. Never raises.
         """
         try:
-            clean_symbol = symbol
-            if "/" in symbol:
-                parts = symbol.split("/")
-                if len(parts) == 3:
-                    clean_symbol = f"{parts[0]}/{parts[1]}"
-            
-            # Log the request details for debugging
-            logger.debug("Market analysis request: symbol=%s, exchange=%s, cleaned=%s", 
-                        symbol, exchange, clean_symbol)
-            
-            data = await full_market_analysis(clean_symbol, exchange)
-            logger.info("Market analysis complete: %s/%s @ %.4f", clean_symbol, exchange, data.get("price", 0))
+            # Backwards compatibility: callers may still pass `exchange="coinbase"` etc.
+            legacy_exchange = (
+                kwargs.get("exchange")
+                or kwargs.get("exchange_name")
+                or kwargs.get("resolved_exchange")
+                or kwargs.get("ex")
+            )
+
+            if market_context is None:
+                logger.warning(
+                    "analyze_market called without MarketContext for %s — defaulting to %s",
+                    symbol,
+                    legacy_exchange or Exchange.ALPACA.value,
+                )
+                try:
+                    exchange = Exchange(str(legacy_exchange).lower()) if legacy_exchange else Exchange.ALPACA
+                except Exception:
+                    exchange = Exchange.ALPACA
+            else:
+                exchange = market_context.exchange
+                try:
+                    market_context.assert_supports(symbol)
+                except ExchangeAssetClassError as e:
+                    return {"error": e.error_code, "symbol": symbol, "exchange": exchange.value}
+
+            canonical = normalize_symbol(symbol, exchange)
+
+            # explanation_level is accepted for future prompts; market data snapshot remains identical.
+            _ = explanation_level
+
+            logger.debug(
+                "Market analysis request: symbol=%s canonical=%s exchange=%s account=%s",
+                symbol,
+                canonical,
+                exchange.value,
+                getattr(market_context, "trading_account_id", None),
+            )
+
+            data = await full_market_analysis(canonical, exchange.value)
+            logger.info(
+                "Market analysis complete: %s/%s @ %.4f",
+                canonical,
+                exchange.value,
+                data.get("price", 0),
+            )
             return data
         except httpx.HTTPStatusError as exc:
             status_code = getattr(exc.response, "status_code", None)
@@ -295,17 +340,28 @@ class TradingAgent:
             logger.error(
                 "analyze_market HTTP error for %s/%s (status=%s): %s%s",
                 symbol,
-                exchange,
+                kwargs.get("exchange") or kwargs.get("exchange_name") or "unknown",
                 status_code,
                 exc,
                 error_detail,
             )
             return None
         except ValueError as exc:
-            logger.error("analyze_market routing error for %s/%s: %s", symbol, exchange, exc)
+            logger.error(
+                "analyze_market routing error for %s/%s: %s",
+                symbol,
+                kwargs.get("exchange") or kwargs.get("exchange_name") or "unknown",
+                exc,
+            )
             return None
         except Exception as exc:
-            logger.error("analyze_market failed for %s/%s: %s", symbol, exchange, exc, exc_info=True)
+            logger.error(
+                "analyze_market failed for %s/%s: %s",
+                symbol,
+                kwargs.get("exchange") or kwargs.get("exchange_name") or "unknown",
+                exc,
+                exc_info=True,
+            )
             return None
 
     # ─────────────────────────────────────────────
@@ -652,7 +708,12 @@ class TradingAgent:
                 )
             else:
                 # Live mode: fetch full market analysis
-                market_data = await self.analyze_market(symbol, exchange)
+                market_data = await self.analyze_market(
+                    symbol,
+                    market_context=getattr(context, "market_context", None),
+                    explanation_level=getattr(context, "explanation_level", "simple") or "simple",
+                    exchange=exchange,
+                )
                 if market_data is None:
                     # Fallback on data failure
                     return TradeAnalysis(
@@ -1073,7 +1134,7 @@ Provide your detailed technical analysis with the specified JSON format."""
             {"status": "rejected", "reason": "..."}
         """
         try:
-            symbol = normalise_symbol(symbol, exchange_name)
+            symbol = legacy_normalise_symbol(symbol, exchange_name)
         except ValueError as exc:
             return {"status": "rejected", "reason": str(exc)}
 
@@ -1360,7 +1421,7 @@ Provide your detailed technical analysis with the specified JSON format."""
             return {"status": "error", "reason": str(exc)}
 
         # ── Step 2: Market analysis ───────────────────────────────────────
-        market_data = await self.analyze_market(symbol, exchange_name)
+        market_data = await self.analyze_market(symbol, exchange=exchange_name)
         if market_data is None:
             logger.warning(f"run_cycle aborting — no market data for {symbol}")
             return {

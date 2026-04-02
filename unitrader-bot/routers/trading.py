@@ -98,7 +98,7 @@ class AnalyzeTradeRequest(BaseModel):
     symbol: str
     exchange: str  # binance | alpaca | oanda | coinbase
     trader_class: str | None = None
-    trading_account_id: str | None = None
+    trading_account_id: str
     is_paper: bool | None = None
 
 
@@ -562,20 +562,15 @@ async def get_market_top(
     from src.agents.core.trading_agent import TradingAgent
     from src.agents.shared_memory import SharedContext, SharedMemory
     from src.watchlists import score_universe, SYMBOL_LABELS
+    from src.market_context import Exchange, MarketContext, resolve_market_context
 
     ex = exchange.lower()
+    req_market_context: MarketContext | None = None
     if trading_account_id:
-        result = await db.execute(
-            select(TradingAccount).where(
-                TradingAccount.id == trading_account_id,
-                TradingAccount.user_id == current_user.id,
-                TradingAccount.is_active == True,  # noqa: E712
-            )
+        req_market_context = await resolve_market_context(
+            db=db, user_id=current_user.id, trading_account_id=trading_account_id
         )
-        acct = result.scalar_one_or_none()
-        if not acct:
-            raise HTTPException(status_code=404, detail="trading_account_not_found")
-        ex = (acct.exchange or ex).lower()
+        ex = req_market_context.exchange.value
     if ex not in {"alpaca", "binance", "oanda", "coinbase"}:
         raise HTTPException(status_code=400, detail="unsupported_exchange")
 
@@ -588,10 +583,22 @@ async def get_market_top(
 
     try:
         # Step 1: fast momentum pre-filter — no Claude, just market data
-        candidates = await score_universe(ex, top_n=15)
+        if req_market_context is None:
+            # Browsing mode (no connected account): use the requested exchange for universe selection.
+            try:
+                req_market_context = MarketContext(
+                    exchange=Exchange(ex),
+                    is_paper=True,
+                    trading_account_id="legacy_unscoped",
+                    user_id=current_user.id,
+                )
+            except Exception:
+                req_market_context = None
+
+        candidates = (await score_universe(market_context=req_market_context))[:15]
 
         # Step 2: AI analysis of candidates only
-        ctx = await SharedMemory.load(current_user.id, db)
+        ctx = await SharedMemory.load(current_user.id, db, trading_account_id=trading_account_id)
         if ctx is None:
             ctx = SharedContext.default(current_user.id)
         ctx.exchange = ex
@@ -671,20 +678,14 @@ async def get_exchange_assets(
     are added when /market-top completes (tier-2 enhancement).
     """
     from src.watchlists import SYMBOL_UNIVERSE, SYMBOL_LABELS
+    from src.market_context import resolve_market_context
 
     ex = exchange.lower()
     if trading_account_id:
-        result = await db.execute(
-            select(TradingAccount).where(
-                TradingAccount.id == trading_account_id,
-                TradingAccount.user_id == current_user.id,
-                TradingAccount.is_active == True,  # noqa: E712
-            )
+        ctx = await resolve_market_context(
+            db=db, user_id=current_user.id, trading_account_id=trading_account_id
         )
-        acct = result.scalar_one_or_none()
-        if not acct:
-            raise HTTPException(status_code=404, detail="trading_account_not_found")
-        ex = (acct.exchange or ex).lower()
+        ex = ctx.exchange.value
     universe_full = SYMBOL_UNIVERSE.get(ex)
     if not universe_full:
         raise HTTPException(status_code=400, detail="unsupported_exchange")
@@ -729,6 +730,7 @@ async def search_symbols(
 @router.get("/ai-picks")
 async def get_ai_picks(
     exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    trading_account_id: str = Query(...),
     limit: int = Query(default=3, ge=1, le=10),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -741,16 +743,23 @@ async def get_ai_picks(
     """
     from src.agents.core.trading_agent import TradingAgent
     from src.agents.shared_memory import SharedContext, SharedMemory
+    from src.market_context import resolve_market_context
     from src.watchlists import score_universe, SYMBOL_LABELS
 
     try:
-        ctx = await SharedMemory.load(current_user.id, db)
+        market_ctx = await resolve_market_context(
+            db=db, user_id=current_user.id, trading_account_id=trading_account_id
+        )
+
+        ctx = await SharedMemory.load(
+            current_user.id, db, trading_account_id=trading_account_id
+        )
         if ctx is None:
             ctx = SharedContext.default(current_user.id)
-        ctx.exchange = exchange.lower()
+        ctx.exchange = market_ctx.exchange.value
 
         # Dynamic candidates instead of fixed watchlist
-        symbols = await score_universe(exchange.lower(), top_n=15)
+        symbols = (await score_universe(market_context=market_ctx))[:15]
 
         agent = TradingAgent(user_id=current_user.id)
         semaphore = asyncio.Semaphore(5)
@@ -758,7 +767,7 @@ async def get_ai_picks(
         async def _analyse_one(sym: str) -> dict | None:
             async with semaphore:
                 try:
-                    result = await agent.analyze(symbol=sym, exchange=exchange.lower(), context=ctx)
+                    result = await agent.analyze(symbol=sym, exchange=market_ctx.exchange.value, context=ctx)
                     if result is None:
                         return None
                     entry = result.market_data.get("price", 0) if result.market_data else 0
@@ -900,6 +909,11 @@ async def analyze_trade(
 ):
     """Run analysis only (no execution)."""
     try:
+        from src.market_context import resolve_market_context
+
+        _ = await resolve_market_context(
+            db=db, user_id=current_user.id, trading_account_id=body.trading_account_id
+        )
         orchestrator = get_orchestrator()
         result = await orchestrator.route(
             user_id=current_user.id,

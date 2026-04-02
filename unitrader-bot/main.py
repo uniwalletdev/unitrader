@@ -69,6 +69,7 @@ from src.agents.marketing.content_writer import generate_weekly_posts, generate_
 from src.agents.sentiment_agent import SentimentAgent
 from backend.agents.content_agent import ContentAgent
 from src.integrations.market_data import classify_asset, full_market_analysis
+from src.market_context import ExchangeAssetClassError
 from src.services.trade_monitoring import is_key_in_backoff, monitor_loop
 from src.services.email_sequences import send_trial_emails_for_all_users
 from src.services.learning_hub import learning_hub
@@ -459,11 +460,22 @@ async def _trading_loop() -> None:
                         from routers.telegram_webhooks import get_telegram_bot_service
                         from routers.whatsapp_webhooks import get_whatsapp_bot_service
                         from src.agents.shared_memory import SharedMemory
+                        from src.market_context import Exchange, MarketContext
                         from src.watchlists import score_universe
                         from sqlalchemy import select as _select
 
                         for exchange in connected_exchanges:
-                            symbols = await score_universe(exchange, top_n=10)
+                            try:
+                                market_ctx = MarketContext(
+                                    exchange=Exchange(exchange),
+                                    is_paper=True,
+                                    trading_account_id="system_picks",
+                                    user_id=user.id,
+                                )
+                            except Exception:
+                                market_ctx = None
+
+                            symbols = (await score_universe(market_context=market_ctx))[:10]
                             if not symbols:
                                 continue
 
@@ -1281,6 +1293,19 @@ async def validation_error_handler(request: Request, exc: RequestValidationError
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"status": "error", "error": "Validation failed", "details": errors},
+    )
+
+
+@app.exception_handler(ExchangeAssetClassError)
+async def exchange_asset_class_error_handler(request: Request, exc: ExchangeAssetClassError):
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "code": exc.error_code,
+            "exchange": exc.exchange.value,
+            "symbol": exc.symbol,
+            "asset_class": exc.asset_class.value,
+        },
     )
 
 

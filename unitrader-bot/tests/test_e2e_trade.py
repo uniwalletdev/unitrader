@@ -381,7 +381,13 @@ class TestStage4PaperTradeExecution:
             # execute() loads user, settings, api key in sequence
             def mock_execute_side_effect(query):
                 result = MagicMock()
-                result.scalar_one_or_none.return_value = mock_user
+                # TradingAgent.execute_trade() issues multiple selects (User, UserSettings, ExchangeAPIKey, etc).
+                # Return the appropriate object based on which table is being selected.
+                q = str(query)
+                if "user_settings" in q:
+                    result.scalar_one_or_none.return_value = mock_settings
+                else:
+                    result.scalar_one_or_none.return_value = mock_user
                 result.scalars.return_value.first.return_value = SimpleNamespace(
                     encrypted_api_key="enc_key",
                     encrypted_api_secret="enc_sec",

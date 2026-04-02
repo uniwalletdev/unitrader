@@ -13,6 +13,8 @@ import asyncio
 import logging
 from typing import Any
 
+from src.market_context import Exchange, MarketContext
+
 logger = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
@@ -55,6 +57,23 @@ SYMBOL_UNIVERSE: dict[str, list[str]] = {
         "NZD_USD", "USD_CHF", "EUR_GBP", "EUR_JPY", "GBP_JPY",
     ],
 }
+
+# Explicit stock/crypto universes for the new MarketContext-aware scorer.
+# These mirror the exchange-specific universes above, but keep the branching logic
+# simple and auditable.
+STOCK_UNIVERSE: list[str] = list(SYMBOL_UNIVERSE["alpaca"])
+CRYPTO_UNIVERSE: list[str] = [
+    "BTC-USD",
+    "ETH-USD",
+    "SOL-USD",
+    "DOGE-USD",
+    "ADA-USD",
+    "AVAX-USD",
+    "LINK-USD",
+    "MATIC-USD",
+    "DOT-USD",
+    "UNI-USD",
+]
 
 # ─────────────────────────────────────────────
 # Human-readable labels (ticker → name)
@@ -113,8 +132,30 @@ SYMBOL_LABELS: dict[str, str] = {
 # Fast momentum pre-scorer
 # ─────────────────────────────────────────────
 
-async def score_universe(exchange: str, top_n: int = 15) -> list[str]:
-    """Quickly score the full universe using only raw market data (no Claude).
+async def score_universe(market_context: MarketContext | None = None) -> list[str]:
+    """
+    Returns top symbols for the given exchange/asset class.
+    Falls back to Alpaca stocks if no context provided (backwards compat).
+    """
+    if market_context is None:
+        logger.warning("score_universe called without MarketContext — defaulting to Alpaca")
+        return await _score_stocks_alpaca(STOCK_UNIVERSE)
+
+    if market_context.exchange == Exchange.ALPACA:
+        return await _score_stocks_alpaca(STOCK_UNIVERSE)
+
+    if market_context.exchange == Exchange.COINBASE:
+        return await _score_crypto_coinbase(CRYPTO_UNIVERSE)
+
+    if market_context.exchange == Exchange.BINANCE:
+        return await _score_crypto_binance([s.replace("-USD", "USDT") for s in CRYPTO_UNIVERSE])
+
+    # No universe scoring for OANDA yet.
+    return []
+
+
+async def _score_stocks_alpaca(universe: list[str], top_n: int = 15) -> list[str]:
+    """Quickly score a stock universe using only raw market data (no Claude).
 
     Fetches price_change_pct and volume concurrently for every symbol in the
     universe, computes a simple momentum score, and returns the top_n tickers
@@ -125,14 +166,14 @@ async def score_universe(exchange: str, top_n: int = 15) -> list[str]:
     """
     from src.integrations.market_data import fetch_market_data
 
-    symbols = SYMBOL_UNIVERSE.get(exchange, SYMBOL_UNIVERSE["alpaca"])
+    symbols = list(universe or [])
 
     semaphore = asyncio.Semaphore(8)
 
-    async def _fetch_one(sym: str) -> tuple[str, float]:
+    async def _fetch_one(sym: str) -> tuple[str, float, float]:
         async with semaphore:
             try:
-                data = await fetch_market_data(sym, exchange)
+                data = await fetch_market_data(sym, "alpaca")
                 change_pct = abs(float(data.get("price_change_pct") or 0))
                 volume = float(data.get("volume") or 0)
                 return sym, change_pct, volume
@@ -154,8 +195,18 @@ async def score_universe(exchange: str, top_n: int = 15) -> list[str]:
     scored.sort(key=lambda x: x[1], reverse=True)
     top = [sym for sym, _ in scored[:top_n]]
 
-    logger.info("score_universe(%s): top %d from %d — %s", exchange, top_n, len(symbols), top)
+    logger.info("score_universe(alpaca): top %d from %d — %s", top_n, len(symbols), top)
     return top
+
+
+async def _score_crypto_coinbase(universe: list[str]) -> list[str]:
+    # TODO Phase 11: score by Signal Convergence Engine
+    # For now return full list — Apex will rank from these
+    return universe
+
+
+async def _score_crypto_binance(universe: list[str]) -> list[str]:
+    return universe
 
 
 def symbol_search(query: str, exchange: str | None = None, limit: int = 8) -> list[dict]:

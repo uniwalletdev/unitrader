@@ -22,6 +22,7 @@ import httpx
 
 from config import settings
 from src.agents.shared_memory import SharedContext
+from src.market_context import Exchange, MarketContext
 
 logger = logging.getLogger(__name__)
 
@@ -90,10 +91,16 @@ class SentimentAgent:
             "fear_greed_index": None,
         }
 
-        # 1. Fetch news from Alpaca
+        # 1. Fetch news (exchange-aware)
         try:
-            news_items = await self._fetch_news(symbol)
-            headlines = [item.get("headline", "") for item in news_items[:10]]
+            news_items = await self.fetch_news(
+                symbol, market_context=getattr(ctx, "market_context", None)
+            )
+            headlines = [
+                (item.get("headline") or item.get("title") or "")
+                for item in news_items[:10]
+                if (item.get("headline") or item.get("title"))
+            ]
             result["headlines"] = headlines[:3]
         except Exception as e:
             logger.warning(f"Failed to fetch news for {symbol}: {e}")
@@ -134,7 +141,43 @@ class SentimentAgent:
 
         return result
 
-    async def _fetch_news(self, symbol: str) -> list[dict]:
+    async def fetch_news(
+        self,
+        symbol: str,
+        market_context: MarketContext | None = None,
+    ) -> list[dict]:
+        exchange = market_context.exchange if market_context else Exchange.ALPACA
+
+        if exchange == Exchange.ALPACA:
+            return await self._fetch_alpaca_news(symbol)
+
+        if exchange in (Exchange.COINBASE, Exchange.BINANCE):
+            return await self._fetch_coingecko_news(symbol)
+
+        # No news source for OANDA yet.
+        return []
+
+    async def _fetch_coingecko_news(self, symbol: str) -> list[dict]:
+        """
+        Interim crypto news via CoinGecko /news endpoint (free, no API key needed).
+        Replace with LunarCrush in Phase 11.
+        """
+        url = "https://api.coingecko.com/api/v3/news"
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+                articles = data.get("data", []) or []
+                return [
+                    {"title": a.get("title", "") or "", "url": a.get("url", "") or "", "source": "coingecko"}
+                    for a in articles[:10]
+                ]
+        except Exception as e:
+            logger.warning("CoinGecko news fetch failed for %s: %s", symbol, e)
+            return []
+
+    async def _fetch_alpaca_news(self, symbol: str) -> list[dict]:
         """Fetch recent news headlines from Alpaca API.
 
         Args:

@@ -25,6 +25,7 @@ from jose import JWTError, jwt as jose_jwt
 
 from config import settings
 from security import verify_token
+from src.market_context import Exchange, ExchangeAssetClassError, normalize_symbol, resolve_market_context
 
 logger = logging.getLogger(__name__)
 
@@ -172,56 +173,13 @@ def _classify_symbol(symbol: str) -> str:
 
 
 def _is_stock_symbol(symbol: str) -> bool:
-    """Best-effort heuristic: treat plain tickers as stocks."""
-    source = _classify_symbol(symbol)
-    return source == "alpaca_stock"
+    """
+    Best-effort heuristic: treat plain tickers as stocks.
 
-
-def _normalise_symbol_for_exchange(symbol: str, exchange: str) -> str:
-    s = symbol.strip().upper().replace(" ", "")
-    ex = (exchange or "").lower()
-    if ex == "coinbase":
-        # Common UX: user types BTC/ETH instead of BTC-USD.
-        crypto_short = {
-            "BTC",
-            "ETH",
-            "SOL",
-            "XRP",
-            "ADA",
-            "DOGE",
-            "LTC",
-            "DOT",
-            "AVAX",
-            "LINK",
-            "MATIC",
-        }
-        if s in crypto_short:
-            return f"{s}-USD"
-    if ex == "binance":
-        if not s.endswith(("USDT", "BUSD")) and (s.isalpha() and len(s) <= 6):
-            return f"{s}USDT"
-    return s
-
-
-async def _resolve_trading_account(user_id: str, trading_account_id: str) -> dict:
-    """Resolve account context from trading_account_id, enforcing ownership."""
-    from sqlalchemy import select
-
-    from database import AsyncSessionLocal
-    from models import TradingAccount
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(TradingAccount).where(
-                TradingAccount.id == trading_account_id,
-                TradingAccount.user_id == user_id,
-                TradingAccount.is_active == True,  # noqa: E712
-            )
-        )
-        acct = result.scalar_one_or_none()
-        if not acct:
-            raise HTTPException(status_code=404, detail="trading_account_not_found")
-        return {"exchange": (acct.exchange or "").lower(), "is_paper": bool(acct.is_paper)}
+    Note: this is only a fallback for unauthenticated/unscoped requests.
+    When trading_account_id is provided, `src.market_context` is authoritative.
+    """
+    return _classify_symbol(symbol) == "alpaca_stock"
 
 
 async def _fetch_coinbase_price(symbol: str) -> Dict[str, Any]:
@@ -275,16 +233,22 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
         Dict with symbol, price, bid, ask, bid_size, ask_size, timestamp
     """
     ex = (exchange or "").lower() if exchange else None
-    sym = _normalise_symbol_for_exchange(symbol, ex) if ex else symbol
+    sym = symbol.strip().upper().replace(" ", "")
+
+    if ex:
+        try:
+            sym = normalize_symbol(sym, Exchange(ex))
+        except ExchangeAssetClassError as e:
+            if "not_supported_on_coinbase" in e.error_code and _is_stock_symbol(sym):
+                raise ValueError("stocks_require_alpaca") from e
+            raise
+        except ValueError:
+            # Unknown exchange string; fall back to symbol-only routing below.
+            sym = symbol
 
     # Forced exchange routing (MarketContext-aware)
     if ex == "coinbase":
-        # Treat plain tickers like AAPL/META as stocks in Coinbase mode.
-        raw = symbol.strip().upper().replace(" ", "")
-        looks_like_plain_ticker = raw.isalpha() and 1 <= len(raw) <= 5 and "-" not in raw and "/" not in raw
-        if looks_like_plain_ticker and sym == raw:
-            raise ValueError("stocks_require_alpaca")
-        if _is_stock_symbol(sym):
+        if _is_stock_symbol(symbol):
             raise ValueError("stocks_require_alpaca")
         return await _fetch_coinbase_price(sym)
     if ex == "binance":
@@ -481,8 +445,13 @@ async def websocket_price_stream(
     resolved_exchange: str | None = None
     if trading_account_id:
         try:
-            ctx = await _resolve_trading_account(user_id, trading_account_id)
-            resolved_exchange = ctx["exchange"]
+            from database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as db:
+                ctx = await resolve_market_context(
+                    db=db, user_id=user_id, trading_account_id=trading_account_id
+                )
+            resolved_exchange = ctx.exchange.value
         except HTTPException:
             await websocket.close(code=4004, reason="Trading account not found")
             return
@@ -583,8 +552,13 @@ async def get_latest_price(
     try:
         resolved_exchange: str | None = None
         if trading_account_id:
-            ctx = await _resolve_trading_account(user_id, trading_account_id)
-            resolved_exchange = ctx["exchange"]
+            from database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as db:
+                ctx = await resolve_market_context(
+                    db=db, user_id=user_id, trading_account_id=trading_account_id
+                )
+            resolved_exchange = ctx.exchange.value
         quote_data = await _fetch_latest_quote(symbol, exchange=resolved_exchange)
         return quote_data
     except ValueError as e:

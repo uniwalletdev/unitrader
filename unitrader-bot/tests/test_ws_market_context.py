@@ -23,6 +23,7 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
 from models import TradingAccount, User  # noqa: E402
 from routers import ws as ws_router  # noqa: E402
+from src.market_context import resolve_market_context  # noqa: E402
 
 
 _TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -71,7 +72,7 @@ async def _create_user(session: AsyncSession, user_id: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_trading_account_enforces_ownership(db: AsyncSession, monkeypatch):
+async def test_resolve_market_context_enforces_ownership(db: AsyncSession):
     await _create_user(db, "ws-user-1")
     acct = TradingAccount(
         user_id="ws-user-1",
@@ -83,17 +84,12 @@ async def test_resolve_trading_account_enforces_ownership(db: AsyncSession, monk
     db.add(acct)
     await db.commit()
 
-    # Patch database.AsyncSessionLocal used inside ws_router._resolve_trading_account
-    import database  # noqa: E402
-
-    monkeypatch.setattr(database, "AsyncSessionLocal", _TestSession)
-
-    ctx = await ws_router._resolve_trading_account("ws-user-1", acct.id)  # noqa: SLF001
-    assert ctx["exchange"] == "coinbase"
-    assert ctx["is_paper"] is True
+    ctx = await resolve_market_context(db=db, user_id="ws-user-1", trading_account_id=acct.id)
+    assert ctx.exchange.value == "coinbase"
+    assert ctx.is_paper is True
 
     with pytest.raises(HTTPException) as exc:
-        await ws_router._resolve_trading_account("ws-user-OTHER", acct.id)  # noqa: SLF001
+        await resolve_market_context(db=db, user_id="ws-user-OTHER", trading_account_id=acct.id)
     assert exc.value.status_code == 404
 
 

@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import AuditLog
 from src.agents.shared_memory import SharedContext, SharedMemory
+from src.market_context import MarketContext
 from src.agents.core.trading_agent import TradingAgent, validate_trade_amount
 from src.agents.core.conversation_agent import ConversationAgent
 from src.agents.sentiment_agent import SentimentAgent
@@ -68,6 +69,8 @@ class MasterOrchestrator:
             HTTPException: 500 if audit logging fails
         """
         try:
+            market_context: MarketContext | None = getattr(ctx, "market_context", None)
+            existing_market_snapshot = agent_response.get("market_data", {}) or {}
             audit_log = AuditLog(
                 user_id=user_id,
                 event_type="trade_decision",
@@ -79,7 +82,10 @@ class MasterOrchestrator:
                     "trust_ladder_stage": ctx.trust_ladder_stage,
                     "ai_reasoning": agent_response.get("explanation_expert"),
                     "ai_confidence": agent_response.get("confidence"),
-                    "market_data_snapshot": agent_response.get("market_data", {}),
+                    "market_data_snapshot": {
+                        **existing_market_snapshot,
+                        **(market_context.to_snapshot() if market_context else {}),
+                    },
                     "risk_check_result": {
                         "allowed": risk_result[0],
                         "reason": risk_result[1],
@@ -207,8 +213,12 @@ class MasterOrchestrator:
         Returns:
             dict with action result
         """
-        # Load shared context once for all agents
-        ctx: SharedContext = await SharedMemory.load(user_id, db)
+        # Load shared context once for all agents.
+        # If trading_account_id is provided, SharedMemory will populate ctx.market_context.
+        trading_account_id = payload.get("trading_account_id") if isinstance(payload, dict) else None
+        ctx: SharedContext = await SharedMemory.load(
+            user_id, db, trading_account_id=str(trading_account_id) if trading_account_id else None
+        )
         logger.info(f"Orchestrator route for user {user_id}, action={action}")
 
         try:
