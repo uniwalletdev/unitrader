@@ -186,6 +186,7 @@ ANALYSIS RULES:
 3. For {risk_level} traders: {risk_guidance}
 4. For trust level {trust_ladder_stage}: {trust_guidance}
 5. Return ONLY the specified JSON format. No markdown, no extra text.
+6. Keep "explanation_expert" to one concise paragraph (under 1200 characters). Truncated JSON breaks the response — finish all braces and quotes.
 
 RESPONSE FORMAT (strict JSON, no markdown):
 {{
@@ -762,7 +763,7 @@ class TradingAgent:
             # Call Claude with new prompt structure
             response = await self._claude.messages.create(
                 model=_CLAUDE_MODEL,
-                max_tokens=1024,
+                max_tokens=3072,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}],
             )

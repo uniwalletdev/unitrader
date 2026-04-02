@@ -71,6 +71,27 @@ def _strip_markdown_fences(raw: str) -> str:
     return raw.strip()
 
 
+def _normalize_unicode_quotes(raw: str) -> str:
+    """Replace curly quotes often emitted by LLMs (invalid in JSON string delimiters)."""
+    return (
+        raw.replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+    )
+
+
+def _strip_trailing_commas(raw: str) -> str:
+    """Remove trailing commas before } or ] (common invalid JSON from models)."""
+    out = raw
+    for _ in range(24):
+        nxt = re.sub(r",(\s*[}\]])", r"\1", out)
+        if nxt == out:
+            break
+        out = nxt
+    return out
+
+
 def _extract_json_block(raw: str) -> str:
     """Try to extract a JSON object {} or array [] from a larger text block.
 
@@ -126,8 +147,10 @@ def parse_claude_json(raw: str, context: str = "") -> Any:
     except json.JSONDecodeError:
         pass
 
-    # Attempt 2 — strip markdown fences
+    # Attempt 2 — strip fences, normalize quotes, strip trailing commas
     cleaned = _strip_markdown_fences(raw)
+    cleaned = _normalize_unicode_quotes(cleaned)
+    cleaned = _strip_trailing_commas(cleaned)
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
@@ -157,7 +180,9 @@ def parse_claude_json(raw: str, context: str = "") -> Any:
     except json.JSONDecodeError as exc:
         if context:
             logger.error(
-                "parse_claude_json[%s] all attempts failed. raw[:300]=%s",
-                context, raw[:300],
+                "parse_claude_json[%s] all attempts failed (len=%s). raw[:300]=%s",
+                context,
+                len(raw),
+                raw[:300],
             )
         raise exc
