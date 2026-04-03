@@ -417,6 +417,11 @@ function TradePage() {
     return accounts.find((a) => a.trading_account_id === selectedTradingAccountId) ?? null;
   }, [accounts, selectedTradingAccountId]);
 
+  useEffect(() => {
+    const ex = selectedAccount?.exchange?.trim();
+    if (ex) setExchange(ex);
+  }, [selectedAccount]);
+
   const onSelectTradingAccount = async (id: string | null) => {
     setSelectedTradingAccountId(id);
     const acct = id ? accounts.find((a) => a.trading_account_id === id) ?? null : null;
@@ -883,6 +888,25 @@ function TradePage() {
 
         {manualExpanded && (
           <div className="mt-3">
+            <div className="mb-3 rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-xs text-dark-200">
+              <span className="font-semibold text-white">Manual trade scope: </span>
+              {selectedAccount ? (
+                <>
+                  {selectedAccount.account_label?.trim() ||
+                    `${String(selectedAccount.exchange).toUpperCase()} · ${selectedAccount.is_paper ? "Paper" : "Live"}`}
+                  <span className="text-dark-500"> — asset grid and symbol search follow this account.</span>
+                </>
+              ) : (
+                <>
+                  Exchange <span className="font-mono text-white">{(exchange || "not set").toUpperCase()}</span>
+                  <span className="text-dark-500">
+                    {" "}
+                    — connect a trading account in Settings (or use the account control in the experienced layout) so
+                    the picker matches your broker.
+                  </span>
+                </>
+              )}
+            </div>
             {/* Layout A */}
             {layout === "A" && (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

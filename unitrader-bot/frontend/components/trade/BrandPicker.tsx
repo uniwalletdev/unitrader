@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLivePrice } from "@/hooks/useLivePrice";
 import { authApi, api } from "@/lib/api";
 import { formatChangePct, formatPrice } from "@/utils/formatPrice";
@@ -55,6 +55,14 @@ const BRAND_MAP: Record<string, string> = {
 
 function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
+}
+
+/** Classify API resolved_exchange into picker buckets (stocks vs crypto list). */
+function bucketResolvedExchange(resolved: string): "alpaca" | "oanda" | "crypto" {
+  const x = resolved.toLowerCase();
+  if (x === "alpaca") return "alpaca";
+  if (x === "oanda") return "oanda";
+  return "crypto";
 }
 
 function useFirstOpenTooltip(key: string) {
@@ -253,6 +261,10 @@ export default function BrandPicker({
   const [liveStockItems, setLiveStockItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
   const [liveCryptoItems, setLiveCryptoItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
   const [aiEnhanced, setAiEnhanced] = useState(false);
+  /** From API (`resolved_exchange`) so tabs/lists match the linked account even if parent `exchange` lags. */
+  const [resolvedExchange, setResolvedExchange] = useState<string | null>(null);
+  const [remoteSearchItems, setRemoteSearchItems] = useState<Array<{ symbol: string; brand: string }> | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   const selections = selectedSymbols ?? [];
   const setSelections = (next: string[]) => {
@@ -260,20 +272,20 @@ export default function BrandPicker({
   };
 
   useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H2',location:'BrandPicker.tsx:259',message:'brand-picker prop types',data:{selectedSymbolsIsArray:Array.isArray(selectedSymbols),selectedSymbolsType:typeof selectedSymbols,selectedSymbolsLength:Array.isArray(selectedSymbols)?selectedSymbols.length:null,favouritesIsArray:Array.isArray(favouritesProp),favouritesType:typeof favouritesProp},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-  }, [favouritesProp, selectedSymbols]);
+    setResolvedExchange(null);
+    setRemoteSearchItems(null);
+  }, [exchange, tradingAccountId]);
 
   const firstTip = useFirstOpenTooltip("unitrader_brandpicker_first_open_v1");
   const didLockCryptoTab = useRef(false);
-  const exchangeLower = (exchange || "").toLowerCase();
-  const coinbaseMode = exchangeLower === "coinbase";
-  const binanceMode = exchangeLower === "binance";
-  const oandaMode = exchangeLower === "oanda";
+  const effectiveLower = (resolvedExchange ?? exchange ?? "").toLowerCase();
+  const coinbaseMode = effectiveLower === "coinbase";
+  const binanceMode = effectiveLower === "binance";
+  const oandaMode = effectiveLower === "oanda";
   const cryptoOnly = coinbaseMode || binanceMode;
   const forexOnly = oandaMode;
-  const stocksOnly = exchangeLower === "alpaca";
+  const stocksOnly = effectiveLower === "alpaca";
+  const displayExchange = resolvedExchange ?? exchange;
 
   const allowedCategories: Category[] = useMemo(() => {
     if (cryptoOnly) return ["crypto"];
@@ -282,13 +294,11 @@ export default function BrandPicker({
     return ["stocks", "crypto", "all"];
   }, [cryptoOnly, forexOnly, stocksOnly]);
 
-  // If exchange changes and current category is no longer valid, snap to first allowed.
   useEffect(() => {
     if (!allowedCategories.includes(category)) {
       setCategory(allowedCategories[0] ?? "stocks");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [exchangeLower]);
+  }, [allowedCategories, category]);
 
   useEffect(() => {
     // If parent already provided settings, skip the extra API call.
@@ -353,9 +363,6 @@ export default function BrandPicker({
     // Backend requires trading_account_id; skip until we have it.
     if (!tradingAccountId) return;
     let mounted = true;
-    // #region agent log (debug-026d4d)
-    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'pre-fix',hypothesisId:'H2',location:'frontend/components/trade/BrandPicker.tsx:ai-picks',message:'About to GET /api/trading/ai-picks',data:{traderClass,hasTradingAccountId:!!tradingAccountId,tradingAccountIdType:typeof tradingAccountId},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log (debug-026d4d)
     api.get("/api/trading/ai-picks", { params: { limit: 4, trading_account_id: tradingAccountId } })
       .then((res) => {
         const picks = (res.data?.data || []) as Array<{ symbol: string }>;
@@ -364,11 +371,7 @@ export default function BrandPicker({
           .filter((x) => x.symbol);
         if (mounted && items.length >= 2) setAiFeatureItems(items);
       })
-      .catch((e) => {
-        // #region agent log (debug-026d4d)
-        fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'pre-fix',hypothesisId:'H2',location:'frontend/components/trade/BrandPicker.tsx:ai-picks',message:'GET /api/trading/ai-picks failed',data:{status:(e as any)?.response?.status??null,detail:(e as any)?.response?.data?.detail??(e as any)?.response?.data??null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion agent log (debug-026d4d)
-      });
+      .catch(() => {});
     return () => { mounted = false; };
   }, [traderClass, tradingAccountId]);
 
@@ -446,11 +449,14 @@ export default function BrandPicker({
       })
       .then((res) => {
         if (!mounted) return;
+        const rex = String(res.data?.resolved_exchange ?? ex).toLowerCase();
+        setResolvedExchange(rex);
         const items = (res.data?.data || []).map(mapItem);
-        if (ex === "alpaca") {
+        const bucket = bucketResolvedExchange(rex);
+        if (bucket === "alpaca") {
           setLiveStockItems(items);
           setLiveCryptoItems([]);
-        } else if (ex === "oanda") {
+        } else if (bucket === "oanda") {
           setLiveStockItems(items);
           setLiveCryptoItems([]);
         } else {
@@ -467,53 +473,118 @@ export default function BrandPicker({
     return () => { mounted = false; };
   }, [exchange, tradingAccountId]);
 
+  const aiFeatureItemsForExchange = useMemo(() => {
+    if (!aiFeatureItems || aiFeatureItems.length < 2) return null;
+    const eff = effectiveLower;
+    if (eff === "coinbase" || eff === "binance") {
+      const filtered = aiFeatureItems.filter((it) => {
+        const s = it.symbol.trim();
+        if (s.includes("/")) return true;
+        if (/USDT$|BUSD$/i.test(s)) return true;
+        return !/^[A-Za-z]{1,5}$/.test(s);
+      });
+      return filtered.length >= 2 ? filtered : null;
+    }
+    return aiFeatureItems;
+  }, [aiFeatureItems, effectiveLower]);
+
   const featuredRow = useMemo(() => {
     if (traderClass === "complete_novice") {
-      if (aiFeatureItems && aiFeatureItems.length >= 2) {
-        return { title: "AI's picks right now", items: aiFeatureItems };
+      if (aiFeatureItemsForExchange && aiFeatureItemsForExchange.length >= 2) {
+        return { title: "AI's picks right now", items: aiFeatureItemsForExchange };
       }
-      // Fall back to user's own saved favourites — personalised, not hardcoded
       const picks = favourites.slice(0, 3).map((sym) => ({ symbol: sym, brand: BRAND_MAP[sym] ?? sym }));
       return picks.length ? { title: "Unitrader's picks for you", items: picks } : null;
     }
     if (traderClass === "curious_saver") {
-      if (aiFeatureItems && aiFeatureItems.length >= 2) {
-        return { title: "Best opportunities right now", items: aiFeatureItems };
+      if (aiFeatureItemsForExchange && aiFeatureItemsForExchange.length >= 2) {
+        return { title: "Best opportunities right now", items: aiFeatureItemsForExchange };
       }
-      // No AI picks yet — show nothing until they arrive
       return null;
     }
     if (traderClass === "crypto_native") {
-      // Use live trending data only; no hardcoded fallback
       return trending.length ? { title: "Trending this week", items: trending } : null;
     }
     return null;
-  }, [traderClass, favourites, trending, aiFeatureItems]);
+  }, [traderClass, favourites, trending, aiFeatureItemsForExchange]);
 
-  const gridItems = useMemo(() => {
-    // Prefer AI-enhanced tier-2; fall back to instant tier-1
+  const baseList = useMemo(() => {
     const stocks = liveStockItems ?? tier1StockItems ?? [];
     const crypto = liveCryptoItems ?? tier1CryptoItems ?? [];
-    const base =
-      category === "stocks"
-        ? stocks
-        : category === "crypto"
-          ? crypto
-          : [...stocks, ...crypto];
+    if (category === "stocks") return stocks;
+    if (category === "crypto") return crypto;
+    return [...stocks, ...crypto];
+  }, [category, liveStockItems, liveCryptoItems, tier1StockItems, tier1CryptoItems]);
 
+  const localFiltered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return base;
-    return base.filter(
+    if (!q) return baseList;
+    return baseList.filter(
       (x) =>
         x.symbol.toLowerCase().includes(q) || x.brand.toLowerCase().includes(q),
     );
-  }, [category, search, liveStockItems, liveCryptoItems, tier1StockItems, tier1CryptoItems]);
+  }, [baseList, search]);
+
+  const runSymbolSearch = useCallback(async () => {
+    const q = search.trim();
+    if (q.length < 1) {
+      setRemoteSearchItems(null);
+      return;
+    }
+    setSearchLoading(true);
+    try {
+      const exForSearch = (resolvedExchange ?? exchange ?? "alpaca").toLowerCase();
+      const res = await api.get("/api/trading/symbol-search", {
+        params: {
+          q,
+          exchange: exForSearch,
+          limit: 12,
+          ...(tradingAccountId ? { trading_account_id: tradingAccountId } : {}),
+        },
+      });
+      const raw = (res.data?.data ?? []) as Array<{ symbol?: string; label?: string }>;
+      const rex = (res.data?.resolved_exchange as string | undefined)?.toLowerCase();
+      if (rex) setResolvedExchange(rex);
+      setRemoteSearchItems(
+        raw
+          .map((d) => ({
+            symbol: String(d.symbol ?? ""),
+            brand: String(d.label ?? d.symbol ?? ""),
+          }))
+          .filter((x) => x.symbol),
+      );
+    } catch {
+      setRemoteSearchItems([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  }, [search, exchange, resolvedExchange, tradingAccountId]);
+
+  useEffect(() => {
+    const q = search.trim();
+    if (q.length < 1) {
+      setRemoteSearchItems(null);
+      setSearchLoading(false);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void runSymbolSearch();
+    }, 320);
+    return () => clearTimeout(t);
+  }, [search, runSymbolSearch]);
+
+  const gridDisplayItems = useMemo(() => {
+    const q = search.trim();
+    if (!q) return baseList;
+    if (localFiltered.length > 0) return localFiltered;
+    return remoteSearchItems ?? [];
+  }, [baseList, search, localFiltered, remoteSearchItems]);
 
   // self_taught: load RSI quick stats for visible symbols
   useEffect(() => {
     if (traderClass !== "self_taught") return;
-    if (!gridItems.length) return;
-    const symbols = gridItems.slice(0, 20).map((x) => x.symbol).join(",");
+    if (!gridDisplayItems.length) return;
+    const symbols = gridDisplayItems.slice(0, 20).map((x) => x.symbol).join(",");
 
     let mounted = true;
     (async () => {
@@ -530,7 +601,7 @@ export default function BrandPicker({
     return () => {
       mounted = false;
     };
-  }, [traderClass, gridItems]);
+  }, [traderClass, gridDisplayItems]);
 
   // crypto_native: fear & greed widget
   useEffect(() => {
@@ -638,6 +709,19 @@ export default function BrandPicker({
     // kept for clarity if you later decide to render this component directly.
   }
 
+  const noOpportunities =
+    !loadingSettings && !tier1Loading && baseList.length === 0 && !search.trim();
+  const noMatches =
+    !loadingSettings &&
+    !tier1Loading &&
+    search.trim().length > 0 &&
+    gridDisplayItems.length === 0;
+
+  const applyManualSymbol = () => {
+    if (!manualSymbol.trim()) return;
+    onManualSymbol?.(manualSymbol.trim());
+  };
+
   return (
     <div className="space-y-4">
       {loadingSettings || tier1Loading ? (
@@ -649,10 +733,13 @@ export default function BrandPicker({
             ))}
           </div>
         </div>
-      ) : gridItems.length === 0 ? (
+      ) : noOpportunities ? (
         <div className="rounded-xl border border-dark-800 bg-dark-900 p-6 text-center">
           <div className="text-sm text-dark-400">No opportunities available right now</div>
-          <div className="mt-1 text-xs text-dark-500">Markets may be closed. Try again shortly or enter a symbol manually.</div>
+          <div className="mt-1 text-xs text-dark-500">
+            Markets may be closed, or your account list is still loading. Try again shortly, use Search after
+            you open this section, or enter a symbol manually.
+          </div>
         </div>
       ) : (
         <>
@@ -694,14 +781,29 @@ export default function BrandPicker({
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="relative w-full sm:w-72">
-              <Search size={16} className="absolute left-3 top-3 text-dark-500" />
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search brands or symbols"
-                className="w-full rounded-xl border border-dark-800 bg-dark-900 py-2 pl-10 pr-3 text-sm text-white outline-none placeholder:text-dark-500 focus:border-brand-500/60"
-              />
+            <div className="relative flex w-full flex-col gap-1 sm:w-auto sm:min-w-[18rem] sm:flex-1 sm:max-w-md">
+              <div className="relative w-full">
+                <Search size={16} className="absolute left-3 top-3 text-dark-500" />
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search symbols (server + grid)"
+                  aria-busy={searchLoading}
+                  className="w-full rounded-xl border border-dark-800 bg-dark-900 py-2 pl-10 pr-24 text-sm text-white outline-none placeholder:text-dark-500 focus:border-brand-500/60"
+                />
+                <button
+                  type="button"
+                  onClick={() => void runSymbolSearch()}
+                  disabled={!search.trim() || searchLoading}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg border border-dark-700 bg-dark-950 px-2.5 py-1 text-[11px] font-semibold text-dark-200 hover:text-white disabled:opacity-40"
+                >
+                  {searchLoading ? "…" : "Search"}
+                </button>
+              </div>
+              {search.trim() && localFiltered.length === 0 && remoteSearchItems && remoteSearchItems.length > 0 && (
+                <div className="text-[11px] text-dark-500">Showing exchange search results for this account.</div>
+              )}
             </div>
 
             <div className="flex items-center gap-2">
@@ -760,17 +862,15 @@ export default function BrandPicker({
               <input
                 value={manualSymbol}
                 onChange={(e) => setManualSymbol(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  applyManualSymbol();
+                }}
                 placeholder="e.g. AAPL, BTC/USD, EUR_USD"
                 className="w-full flex-1 rounded-xl border border-dark-800 bg-dark-950 px-3 py-2 text-sm text-white outline-none placeholder:text-dark-500 focus:border-brand-500/60"
               />
-              <button
-                type="button"
-                onClick={() => {
-                  if (!manualSymbol.trim()) return;
-                  onManualSymbol?.(manualSymbol.trim());
-                }}
-                className="btn"
-              >
+              <button type="button" onClick={applyManualSymbol} className="btn">
                 Use symbol
               </button>
             </div>
@@ -786,7 +886,7 @@ export default function BrandPicker({
                     traderClass={traderClass}
                     symbol={it.symbol}
                     brand={it.brand}
-                    exchange={exchange}
+                    exchange={displayExchange}
                     tradingAccountId={tradingAccountId}
                     isSelected={selections.includes(it.symbol)}
                     onToggle={() => handleToggle(it.symbol)}
@@ -814,22 +914,34 @@ export default function BrandPicker({
             )}
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {gridItems.map((it) => (
-              <BrandCard
-                key={it.symbol}
-                traderClass={traderClass}
-                symbol={it.symbol}
-                brand={it.brand}
-                exchange={exchange}
-                tradingAccountId={tradingAccountId}
-                isSelected={selections.includes(it.symbol)}
-                onToggle={() => handleToggle(it.symbol)}
-                rsi={quickStats?.[it.symbol]?.rsi ?? null}
-                showVolumeChange={traderClass === "crypto_native"}
-              />
-            ))}
-          </div>
+          {noMatches ? (
+            <div className="rounded-xl border border-dark-800 bg-dark-900 p-6 text-center">
+              <div className="text-sm text-dark-200">
+                No matches for &quot;{search.trim()}&quot;
+                {searchLoading ? " — searching…" : ""}
+              </div>
+              <div className="mt-2 text-xs text-dark-500">
+                Nothing in the current grid matched. {!searchLoading && "Try another term, tap Search, or enter a symbol manually."}
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {gridDisplayItems.map((it) => (
+                <BrandCard
+                  key={it.symbol}
+                  traderClass={traderClass}
+                  symbol={it.symbol}
+                  brand={it.brand}
+                  exchange={displayExchange}
+                  tradingAccountId={tradingAccountId}
+                  isSelected={selections.includes(it.symbol)}
+                  onToggle={() => handleToggle(it.symbol)}
+                  rsi={quickStats?.[it.symbol]?.rsi ?? null}
+                  showVolumeChange={traderClass === "crypto_native"}
+                />
+              ))}
+            </div>
+          )}
 
           {simulatorMode && (
             <div className="text-xs text-dark-400">

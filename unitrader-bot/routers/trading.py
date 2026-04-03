@@ -584,7 +584,13 @@ async def get_market_top(
     if not refresh and cached:
         age_minutes = (datetime.now(timezone.utc) - cached["at"]).total_seconds() / 60
         if age_minutes < _MARKET_TOP_TTL_MINUTES:
-            return {"status": "success", "data": cached["data"][:limit], "cached": True, "age_minutes": round(age_minutes)}
+            return {
+                "status": "success",
+                "resolved_exchange": ex,
+                "data": cached["data"][:limit],
+                "cached": True,
+                "age_minutes": round(age_minutes),
+            }
 
     try:
         # Step 1: fast momentum pre-filter — no Claude, just market data
@@ -649,7 +655,12 @@ async def get_market_top(
         # Cache full result
         _market_top_cache[ex] = {"data": ordered, "at": datetime.now(timezone.utc)}
 
-        return {"status": "success", "data": ordered[:limit], "cached": False}
+        return {
+            "status": "success",
+            "resolved_exchange": ex,
+            "data": ordered[:limit],
+            "cached": False,
+        }
 
     except HTTPException:
         raise
@@ -699,7 +710,7 @@ async def get_exchange_assets(
         {"symbol": sym, "label": SYMBOL_LABELS.get(sym, sym)}
         for sym in universe
     ]
-    return {"status": "success", "data": data}
+    return {"status": "success", "resolved_exchange": ex, "data": data}
 
 
 # ─────────────────────────────────────────────
@@ -710,22 +721,35 @@ async def get_exchange_assets(
 async def search_symbols(
     q: str = Query(min_length=1, max_length=50),
     exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    trading_account_id: str | None = Query(default=None),
     limit: int = Query(default=8, ge=1, le=20),
     current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Search symbols by ticker or company name.
 
     Supports partial matches on both ticker (AAPL) and company name (Apple).
     Returns results from the AI scanning universe for the given exchange.
 
+    When ``trading_account_id`` is provided, the exchange is taken from that
+    account (same as /exchange-assets) so search matches the active broker.
+
     Examples:
         ?q=apple&exchange=alpaca  → [{symbol: AAPL, label: Apple Inc, ...}]
         ?q=bitcoin&exchange=binance → [{symbol: BTCUSDT, label: Bitcoin, ...}]
         ?q=euro&exchange=oanda   → [{symbol: EUR_USD, label: Euro / US Dollar, ...}]
     """
+    from src.market_context import resolve_market_context
     from src.watchlists import symbol_search
-    results = symbol_search(q, exchange=exchange.lower(), limit=limit)
-    return {"status": "success", "data": results}
+
+    ex = exchange.lower()
+    if trading_account_id:
+        ctx = await resolve_market_context(
+            db=db, user_id=current_user.id, trading_account_id=trading_account_id
+        )
+        ex = ctx.exchange.value
+    results = symbol_search(q, exchange=ex, limit=limit)
+    return {"status": "success", "resolved_exchange": ex, "data": results}
 
 
 # ─────────────────────────────────────────────
