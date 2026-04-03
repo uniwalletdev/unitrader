@@ -44,6 +44,8 @@ def _fake_ctx(**overrides):
     ctx = MagicMock(spec=SharedContext)
     for k, v in defaults.items():
         setattr(ctx, k, v)
+    # Avoid auto-created sub-Mock for market_context (truthy and breaks exchange resolution)
+    ctx.market_context = None
     ctx.is_crypto_native = MagicMock(return_value=False)
     ctx.is_pro = MagicMock(return_value=True)
     ctx.is_intermediate = MagicMock(return_value=False)

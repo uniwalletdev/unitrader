@@ -615,7 +615,7 @@ async def get_market_top(
         ctx.exchange = ex
 
         agent = TradingAgent(user_id=current_user.id)
-        semaphore = asyncio.Semaphore(5)
+        semaphore = asyncio.Semaphore(3)
 
         async def _analyse_one(sym: str) -> dict | None:
             async with semaphore:
@@ -791,7 +791,7 @@ async def get_ai_picks(
         symbols = (await score_universe(market_context=market_ctx))[:15]
 
         agent = TradingAgent(user_id=current_user.id)
-        semaphore = asyncio.Semaphore(5)
+        semaphore = asyncio.Semaphore(3)
 
         async def _analyse_one(sym: str) -> dict | None:
             async with semaphore:

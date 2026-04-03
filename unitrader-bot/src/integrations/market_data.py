@@ -9,6 +9,7 @@ Symbol routing and exchange validation prevent 404/400 errors:
 All indicator calculations are implemented in pure Python (no pandas/numpy).
 """
 
+import asyncio
 import logging
 import math
 from datetime import datetime, timezone
@@ -21,6 +22,43 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10.0
+
+_ALPACA_429_BACKOFF_SEC = (0.5, 1.5, 3.0, 6.0)
+
+
+async def _alpaca_get_with_retry(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    params: dict[str, Any] | None = None,
+) -> httpx.Response:
+    """GET with retries on HTTP 429 only (Alpaca market data rate limits)."""
+    last: httpx.Response | None = None
+    for attempt in range(len(_ALPACA_429_BACKOFF_SEC) + 1):
+        resp = await client.get(url, params=params)
+        last = resp
+        if resp.status_code != 429:
+            resp.raise_for_status()
+            return resp
+        if attempt >= len(_ALPACA_429_BACKOFF_SEC):
+            break
+        wait = _ALPACA_429_BACKOFF_SEC[attempt]
+        ra = resp.headers.get("Retry-After")
+        if ra:
+            try:
+                wait = max(wait, float(ra))
+            except ValueError:
+                pass
+        logger.warning(
+            "Alpaca rate limited (429), backing off %.1fs (attempt %s) url=%s",
+            wait,
+            attempt + 1,
+            url,
+        )
+        await asyncio.sleep(wait)
+    assert last is not None
+    last.raise_for_status()
+    return last
 
 
 # ─────────────────────────────────────────────
@@ -300,19 +338,16 @@ async def _fetch_alpaca_crypto(symbol: str) -> dict:
     
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
-            # Fetch latest quote
-            quote_resp = await client.get(
+            quote_resp = await _alpaca_get_with_retry(
+                client,
                 f"{base}/v1beta3/crypto/us/latest/quotes",
                 params={"symbols": symbol},
             )
-            quote_resp.raise_for_status()
-            
-            # Fetch 1-day bars for 24h metrics
-            bars_resp = await client.get(
+            bars_resp = await _alpaca_get_with_retry(
+                client,
                 f"{base}/v1beta3/crypto/us/bars",
                 params={"symbols": symbol, "timeframe": "1Day", "limit": 2},
             )
-            bars_resp.raise_for_status()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
             logger.error(
@@ -374,13 +409,15 @@ async def _fetch_alpaca_stock(symbol: str) -> dict:
     
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
-            quote_resp = await client.get(f"{base}/v2/stocks/{symbol}/quotes/latest")
-            quote_resp.raise_for_status()
-            bars_resp = await client.get(
+            quote_resp = await _alpaca_get_with_retry(
+                client,
+                f"{base}/v2/stocks/{symbol}/quotes/latest",
+            )
+            bars_resp = await _alpaca_get_with_retry(
+                client,
                 f"{base}/v2/stocks/{symbol}/bars",
                 params={"timeframe": "1Day", "limit": 2},
             )
-            bars_resp.raise_for_status()
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
             logger.error(

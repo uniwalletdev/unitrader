@@ -25,8 +25,9 @@ from src.market_context import MarketContext, resolve_market_context
 
 logger = logging.getLogger(__name__)
 
-# Module-level cache: user_id -> (SharedContext, loaded_at_timestamp)
-_cache: dict[str, tuple["SharedContext", datetime]] = {}
+# Module-level cache: (user_id, trading_account_id or "") -> (SharedContext, loaded_at_timestamp)
+# Per-account keys avoid returning a context loaded without market_context when the caller passes trading_account_id.
+_cache: dict[tuple[str, str], tuple["SharedContext", datetime]] = {}
 
 
 @dataclass
@@ -169,21 +170,31 @@ class SharedMemory:
             SharedContext: Full user context, either from cache or DB
         """
         try:
+            acct = (trading_account_id or "").strip()
+            cache_key = (user_id, acct)
             # Check cache
-            if user_id in _cache:
-                context, loaded_at = _cache[user_id]
+            if cache_key in _cache:
+                context, loaded_at = _cache[cache_key]
                 if datetime.now(timezone.utc) - loaded_at < timedelta(
                     seconds=SharedMemory.CACHE_TTL_SECONDS
                 ):
-                    logger.debug(f"SharedMemory cache hit for user {user_id}")
+                    logger.debug(
+                        "SharedMemory cache hit for user %s account=%r",
+                        user_id,
+                        acct or "(none)",
+                    )
                     return context
 
             # Cache miss or expired — load from DB
-            logger.debug(f"SharedMemory cache miss for user {user_id}, querying DB")
+            logger.debug(
+                "SharedMemory cache miss for user %s account=%r, querying DB",
+                user_id,
+                acct or "(none)",
+            )
             context = await SharedMemory._load_from_db(user_id, db, trading_account_id=trading_account_id)
 
             # Store in cache
-            _cache[user_id] = (context, datetime.now(timezone.utc))
+            _cache[cache_key] = (context, datetime.now(timezone.utc))
 
             return context
 
@@ -193,14 +204,20 @@ class SharedMemory:
 
     @staticmethod
     def invalidate(user_id: str) -> None:
-        """Remove user's context from cache (e.g. after settings change).
+        """Remove all cached contexts for this user (all trading_account_id variants).
 
         Args:
             user_id: The user's UUID
         """
-        if user_id in _cache:
-            del _cache[user_id]
-            logger.debug(f"SharedMemory cache invalidated for user {user_id}")
+        to_del = [k for k in list(_cache.keys()) if k[0] == user_id]
+        for k in to_del:
+            del _cache[k]
+        if to_del:
+            logger.debug(
+                "SharedMemory cache invalidated for user %s (%d entries)",
+                user_id,
+                len(to_del),
+            )
 
     @staticmethod
     async def _load_from_db(
@@ -292,7 +309,13 @@ class SharedMemory:
                     context.market_context = await resolve_market_context(
                         db=db, user_id=user_id, trading_account_id=trading_account_id
                     )
-                except Exception:
+                except Exception as exc:
+                    logger.warning(
+                        "resolve_market_context failed for user %s trading_account_id=%s: %s",
+                        user_id,
+                        trading_account_id,
+                        exc,
+                    )
                     context.market_context = None
 
             return context
