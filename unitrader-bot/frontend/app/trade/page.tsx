@@ -1,9 +1,9 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { CheckCircle } from "lucide-react";
+import { CheckCircle, Loader2 } from "lucide-react";
 import GalaxyLoader from "@/components/layout/GalaxyLoader";
 import { api, authApi, exchangeApi, signalApi, tradingApi } from "@/lib/api";
 
@@ -11,7 +11,7 @@ import BotOnboardingChat from "@/components/onboarding/ApexOnboardingChat";
 import WhatIfSimulator from "@/components/onboarding/WhatIfSimulator";
 import MarketStatusBar, { MarketStatus } from "@/components/trade/MarketStatusBar";
 import TrustLadderBanner from "@/components/trade/TrustLadderBanner";
-import BrandPicker from "@/components/trade/BrandPicker";
+import BrandPicker, { displayBrandLine } from "@/components/trade/BrandPicker";
 import PriceChart from "@/components/trade/PriceChart";
 import ExplanationToggle from "@/components/trade/ExplanationToggle";
 import TradeConfirmModal from "@/components/trade/TradeConfirmModal";
@@ -23,6 +23,12 @@ import BrowseStack from "@/components/signals/BrowseStack";
 import BotSelectsPanel from "@/components/signals/ApexSelectsPanel";
 import FullAutoPanel from "@/components/signals/FullAutoPanel";
 import { useSignalStack } from "@/hooks/useSignalStack";
+import {
+  formatAmountLabel,
+  getCurrencySymbol,
+  resolveTradingCurrency,
+} from "@/utils/currency";
+import { isStocksTradingAsset, isUsEquityRegularSessionEt } from "@/utils/usEquitySession";
 
 type TraderClass =
   | "complete_novice"
@@ -69,19 +75,20 @@ function clsx(...parts: Array<string | false | null | undefined>) {
 }
 
 const getAmountHelperText = (
+  currencySymbol: string,
   traderClass: string,
   trustLadderStage: number,
   min: number,
 ): string | null => {
   if (traderClass === "complete_novice") {
     return trustLadderStage === 1
-      ? "£25 maximum during Watch Mode \u2014 Unitrader is proving itself"
+      ? `${currencySymbol}25 maximum during Watch Mode \u2014 Unitrader is proving itself`
       : "Unitrader will grow your limit as it builds your trust";
   }
   if (traderClass === "experienced" || traderClass === "semi_institutional") {
     return null;
   }
-  return "Unitrader works best with £25 or more \u2014 smaller amounts earn very small returns";
+  return `Unitrader works best with ${currencySymbol}25 or more \u2014 smaller amounts earn very small returns`;
 };
 
 const getAmountLimits = (traderClass: string, trustLadderStage: number) => {
@@ -108,7 +115,8 @@ function AmountInput({
   min,
   max,
   step,
-  label = "Amount (GBP)",
+  label,
+  currencySymbol = "$",
   helperText,
 }: {
   value: number;
@@ -117,6 +125,7 @@ function AmountInput({
   max: number;
   step: number;
   label?: string;
+  currencySymbol?: string;
   helperText?: string | null;
 }) {
   const handleChange = (raw: number) => {
@@ -129,7 +138,10 @@ function AmountInput({
     <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
       <div className="mb-2 flex items-center justify-between text-xs text-dark-400">
         <span>{label}</span>
-        <span className="tabular-nums text-white">£{value}</span>
+        <span className="tabular-nums text-white">
+          {currencySymbol}
+          {value}
+        </span>
       </div>
       <input
         type="range"
@@ -141,8 +153,14 @@ function AmountInput({
         className="w-full"
       />
       <div className="mt-2 flex justify-between text-[11px] text-dark-500">
-        <span>Min: £{min}</span>
-        <span>Max: £{max}</span>
+        <span>
+          Min: {currencySymbol}
+          {min}
+        </span>
+        <span>
+          Max: {currencySymbol}
+          {max}
+        </span>
       </div>
       {helperText && (
         <p className="mt-2 text-[11px] leading-relaxed text-dark-400">{helperText}</p>
@@ -162,6 +180,99 @@ function RiskSection({ variant }: { variant: "plain" | "pct" }) {
       </div>
     </div>
   );
+}
+
+/** Manual “Execute Trade” lifecycle (AI Trader grid + analysis). */
+type ManualExecutePhase =
+  | "no_symbol"
+  | "needs_analysis"
+  | "analyzing"
+  | "market_closed"
+  | "no_signal"
+  | "ready";
+
+const MIN_MANUAL_EXECUTE_CONFIDENCE = 50;
+
+function deriveManualExecutePhase(
+  symbol: string,
+  analyzing: boolean,
+  analysis: unknown,
+  exchangeForAsset: string,
+): ManualExecutePhase {
+  const sym = symbol.trim();
+  if (!sym) return "no_symbol";
+  if (analyzing) return "analyzing";
+  const a = analysis as Record<string, unknown> | null | undefined;
+  if (!a) return "needs_analysis";
+
+  const decision = String(a.decision ?? "").toUpperCase();
+  const conf = Number(a.confidence ?? 0);
+  if (!Number.isFinite(conf) || decision === "WAIT" || conf < MIN_MANUAL_EXECUTE_CONFIDENCE) {
+    return "no_signal";
+  }
+  if (decision !== "BUY" && decision !== "SELL") return "no_signal";
+
+  const backendClosed = a.market_closed === true;
+  const localStockClosed =
+    isStocksTradingAsset(exchangeForAsset, sym) && !isUsEquityRegularSessionEt();
+  if (backendClosed || localStockClosed) return "market_closed";
+
+  return "ready";
+}
+
+function manualExecutePhaseLabel(phase: ManualExecutePhase): string {
+  switch (phase) {
+    case "no_symbol":
+      return "Select an asset first";
+    case "needs_analysis":
+      return "Run analysis first";
+    case "analyzing":
+      return "Analysing...";
+    case "market_closed":
+      return "Markets closed";
+    case "no_signal":
+      return "No trade signal";
+    case "ready":
+      return "Execute Trade";
+  }
+}
+
+function ManualTradeExecuteButton({
+  phase,
+  onExecute,
+}: {
+  phase: ManualExecutePhase;
+  onExecute: () => void;
+}) {
+  const ready = phase === "ready";
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (phase !== "ready") return;
+        onExecute();
+      }}
+      title={ready ? undefined : manualExecutePhaseLabel(phase)}
+      disabled={!ready}
+      className={clsx(
+        "mt-4 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-colors",
+        ready
+          ? "cursor-pointer bg-green-600 text-white hover:bg-green-500"
+          : "cursor-not-allowed bg-dark-800 text-dark-400 opacity-90",
+      )}
+    >
+      {phase === "analyzing" && (
+        <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+      )}
+      {manualExecutePhaseLabel(phase)}
+    </button>
+  );
+}
+
+function analysisAssetHeading(symbol: string): string {
+  const { name, ticker } = displayBrandLine(symbol);
+  if (!ticker) return "";
+  return name !== ticker ? `${name} — ${ticker}` : ticker;
 }
 
 function RawDataColumn({ analysis }: { analysis: AnalysisResult }) {
@@ -193,41 +304,133 @@ function RawDataColumn({ analysis }: { analysis: AnalysisResult }) {
 }
 
 function AIAnalysisCard({
-  children,
+  botName,
+  symbol,
   title = "AI analysis",
   analysis,
+  analyzing,
+  analysisError,
+  onRetry,
+  showExplanationToggle,
+  showPendingAnalyseHint = true,
+  traderClass,
+  settingsExplanationLevel,
+  children,
 }: {
-  children: React.ReactNode;
+  botName: string;
+  symbol: string;
   title?: string;
   analysis: AnalysisResult | null;
+  analyzing: boolean;
+  analysisError: string | null;
+  onRetry: () => void;
+  showExplanationToggle: boolean;
+  /** Layouts that auto-run analyse hide this (no manual-only gap before the request starts). */
+  showPendingAnalyseHint?: boolean;
+  traderClass: TraderClass;
+  settingsExplanationLevel: "expert" | "simple" | "metaphor" | null;
+  children: React.ReactNode;
 }) {
-  if (analysis) {
-    return (
-      <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 md:p-5">
-        <div className="mb-3 text-sm font-semibold text-white">{title}</div>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {/* Left — raw data */}
-          <RawDataColumn analysis={analysis} />
-          {/* Right — Unitrader verdict */}
-          <div className="rounded-xl border border-brand-500/20 bg-brand-500/5 p-4">
-            <div className="mb-3 text-xs font-semibold text-brand-400">Unitrader&apos;s verdict</div>
-            <div className="mb-3 text-sm text-dark-200">
-              {analysis.message || analysis.reasoning || "Analysis ready."}
-            </div>
-            {children}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const sym = symbol.trim();
+  const heading = sym ? analysisAssetHeading(sym) : "";
+  const tickerShort = sym ? (displayBrandLine(sym).ticker || sym) : "";
+
+  const explanationPayload = {
+    expert: analysis?.expert ?? "—",
+    simple: analysis?.simple ?? analysis?.message ?? "—",
+    metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
+  };
+
+  const keyFactors: string[] = Array.isArray(analysis?.key_factors)
+    ? analysis.key_factors.filter((x: unknown) => typeof x === "string")
+    : [];
+
+  const togglesDisabled = analyzing || !!analysisError || !analysis;
 
   return (
     <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 md:p-5">
       <div className="mb-3 text-sm font-semibold text-white">{title}</div>
-      <div className="mb-4 rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-400">
-        Run analysis to see Unitrader&apos;s reasoning here.
-      </div>
-      {children}
+
+      {!sym ? (
+        <p className="rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-400">
+          Select an asset from the grid to see {botName}&apos;s analysis.
+        </p>
+      ) : (
+        <>
+          <h2 className="mb-4 text-base font-semibold text-white">{heading}</h2>
+
+          {analyzing && (
+            <div className="mb-4 flex flex-col items-center justify-center gap-3 rounded-xl border border-dark-800 bg-dark-900/60 px-4 py-10 text-center">
+              <Loader2 className="h-8 w-8 shrink-0 animate-spin text-brand-400" aria-hidden />
+              <p className="text-sm text-dark-300">
+                {botName} is analysing {tickerShort}...
+              </p>
+            </div>
+          )}
+
+          {!analyzing && analysisError && (
+            <div className="mb-4 space-y-3 rounded-xl border border-dark-800 bg-dark-950 p-4">
+              <p className="text-sm text-dark-300">{analysisError}</p>
+              <button
+                type="button"
+                onClick={onRetry}
+                className="rounded-lg border border-brand-500/40 bg-brand-500/10 px-4 py-2 text-sm font-semibold text-brand-300 transition hover:bg-brand-500/20"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {!analyzing && !analysisError && !analysis && showPendingAnalyseHint && (
+            <p className="mb-4 rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-400">
+              Click Analyse to load {botName}&apos;s reasoning for this asset.
+            </p>
+          )}
+
+          {analysis && !analyzing && !analysisError && (
+            <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+              <RawDataColumn analysis={analysis} />
+              <div className="rounded-xl border border-brand-500/20 bg-brand-500/5 p-4">
+                <div className="mb-3 text-xs font-semibold text-brand-400">Unitrader&apos;s verdict</div>
+                <div className="mb-3 text-sm text-dark-200">
+                  {analysis.message || analysis.reasoning || "Analysis ready."}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showExplanationToggle && sym && (
+            <div className="mb-4">
+              <ExplanationToggle
+                explanations={explanationPayload}
+                traderClass={traderClass}
+                settingsLevel={settingsExplanationLevel}
+                disabled={togglesDisabled}
+              />
+            </div>
+          )}
+
+          {analysis && !analyzing && !analysisError && keyFactors.length > 0 && (
+            <div className="mb-4">
+              <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-dark-500">
+                Key factors
+              </div>
+              <ul className="flex flex-wrap gap-2">
+                {keyFactors.map((f, i) => (
+                  <li
+                    key={`${f}-${i}`}
+                    className="rounded-lg border border-dark-700 bg-dark-900 px-2.5 py-1 text-xs text-dark-300"
+                  >
+                    {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {children}
+        </>
+      )}
     </div>
   );
 }
@@ -260,12 +463,14 @@ function TradePage() {
     exchange: string;
     is_paper: boolean;
     account_label?: string | null;
+    currency?: string;
   }>>([]);
   const [symbol, setSymbol] = useState("");
   const [amount, setAmount] = useState(25);
 
   const [analysis, setAnalysis] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
@@ -297,14 +502,29 @@ function TradePage() {
     return false;
   }, [trust, traderClass]);
 
+  const layout: "A" | "B" | "C" | "D" | "E" = useMemo(
+    () =>
+      traderClass === "complete_novice" || traderClass === "curious_saver"
+        ? "A"
+        : traderClass === "self_taught"
+          ? "B"
+          : traderClass === "experienced"
+            ? "C"
+            : traderClass === "semi_institutional"
+              ? "D"
+              : "E",
+    [traderClass],
+  );
+
+  const settingsExplanationLevel = useMemo((): "expert" | "simple" | "metaphor" | null => {
+    const l = settings?.explanation_level;
+    if (l === "expert" || l === "simple" || l === "metaphor") return l;
+    return null;
+  }, [settings?.explanation_level]);
+
   const amountLimits = useMemo(
     () => getAmountLimits(traderClass, trust?.stage ?? 1),
     [traderClass, trust?.stage]
-  );
-
-  const amountHelperText = useMemo(
-    () => getAmountHelperText(traderClass, trust?.stage ?? 1, amountLimits.min),
-    [traderClass, trust?.stage, amountLimits.min]
   );
 
   useEffect(() => {
@@ -312,11 +532,6 @@ function TradePage() {
       Math.min(Math.max(v, amountLimits.min), amountLimits.max),
     );
   }, [amountLimits.min, amountLimits.max]);
-
-  useEffect(() => {
-    setAnalysis(null);
-    setConfirmOpen(false);
-  }, [symbol]);
 
   useEffect(() => {
     if (bare) return;
@@ -389,6 +604,7 @@ function TradePage() {
           exchange: string;
           is_paper: boolean;
           account_label?: string | null;
+          currency?: string;
         }>;
         const connected = rows
           .filter((r) => !!r.trading_account_id)
@@ -397,6 +613,7 @@ function TradePage() {
             exchange: r.exchange,
             is_paper: r.is_paper,
             account_label: r.account_label ?? null,
+            currency: r.currency,
           }));
 
         if (!mounted) return;
@@ -427,6 +644,32 @@ function TradePage() {
     if (!selectedTradingAccountId) return null;
     return accounts.find((a) => a.trading_account_id === selectedTradingAccountId) ?? null;
   }, [accounts, selectedTradingAccountId]);
+
+  const displayCurrencyCode = useMemo(() => {
+    const ex = (selectedAccount?.exchange ?? exchange ?? "alpaca").toLowerCase();
+    return resolveTradingCurrency(ex, selectedAccount?.currency);
+  }, [selectedAccount?.exchange, selectedAccount?.currency, exchange]);
+
+  const currencySymbol = useMemo(() => {
+    const ex = selectedAccount?.exchange ?? exchange ?? "alpaca";
+    return getCurrencySymbol(ex, selectedAccount?.currency);
+  }, [selectedAccount?.exchange, selectedAccount?.currency, exchange]);
+
+  const amountSliderLabel = useMemo(
+    () => formatAmountLabel(displayCurrencyCode),
+    [displayCurrencyCode],
+  );
+
+  const amountHelperText = useMemo(
+    () =>
+      getAmountHelperText(currencySymbol, traderClass, trust?.stage ?? 1, amountLimits.min),
+    [currencySymbol, traderClass, trust?.stage, amountLimits.min],
+  );
+
+  const manualExecutePhase = useMemo(() => {
+    const exFor = (selectedAccount?.exchange || exchange || "").toLowerCase();
+    return deriveManualExecutePhase(symbol, analyzing, analysis, exFor);
+  }, [symbol, analyzing, analysis, selectedAccount?.exchange, exchange]);
 
   useEffect(() => {
     const ex = selectedAccount?.exchange?.trim();
@@ -461,6 +704,60 @@ function TradePage() {
     const t = window.setTimeout(() => setToast(null), 3000);
     return () => window.clearTimeout(t);
   }, [toast]);
+
+  const handleAnalyse = useCallback(async () => {
+    if (!symbol.trim()) return;
+    setAnalyzing(true);
+    setAnalysisError(null);
+    setAnalysis(null);
+    try {
+      const ex = (selectedAccount?.exchange || exchange || "").toLowerCase();
+      if (!ex) {
+        setToast("Select a trading account (or connect an exchange) first");
+        setAnalyzing(false);
+        return;
+      }
+      // tradingApi.analyze uses 90s timeout — default api client is 8s (too short for Claude + market data).
+      const res = await tradingApi.analyze(symbol.trim(), ex, traderClass ?? undefined, {
+        trading_account_id: selectedTradingAccountId ?? undefined,
+        is_paper: selectedAccount?.is_paper ?? isPaper,
+      });
+      setAnalysis(res.data?.data ?? res.data);
+      setAnalysisError(null);
+    } catch {
+      setAnalysis(null);
+      setAnalysisError("Analysis unavailable — market data could not be fetched.");
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [
+    symbol,
+    selectedAccount?.exchange,
+    selectedAccount?.is_paper,
+    exchange,
+    selectedTradingAccountId,
+    traderClass,
+    isPaper,
+  ]);
+
+  useEffect(() => {
+    setConfirmOpen(false);
+    if (layout !== "C") return;
+    setAnalysis(null);
+    setAnalysisError(null);
+    setAnalyzing(false);
+  }, [symbol, layout]);
+
+  useEffect(() => {
+    if (layout !== "A" && layout !== "B") return;
+    if (!symbol.trim()) {
+      setAnalysis(null);
+      setAnalysisError(null);
+      setAnalyzing(false);
+      return;
+    }
+    void handleAnalyse();
+  }, [symbol, layout, handleAnalyse]);
 
   // Debug isolation toggles (production-safe). Use:
   // - /trade?debug=bare to bypass complex UI and isolate hook-order crashes.
@@ -519,46 +816,37 @@ function TradePage() {
     );
   }
 
-  const manualDecision = String(analysis?.decision ?? "").toUpperCase();
-  const canExecuteManual = Boolean(analysis) && manualDecision !== "WAIT";
-
-  const handleAnalyse = async () => {
-    if (!symbol.trim()) return;
-    setAnalyzing(true);
-    setAnalysis(null);
-    try {
-      const ex = (selectedAccount?.exchange || exchange || "").toLowerCase();
-      if (!ex) {
-        setToast("Select a trading account (or connect an exchange) first");
-        return;
-      }
-      // tradingApi.analyze uses 90s timeout — default api client is 8s (too short for Claude + market data).
-      const res = await tradingApi.analyze(symbol.trim(), ex, traderClass ?? undefined, {
-        trading_account_id: selectedTradingAccountId ?? undefined,
-        is_paper: selectedAccount?.is_paper ?? isPaper,
-      });
-      setAnalysis(res.data?.data ?? res.data);
-    } catch (e: any) {
-      const msg =
-        e?.code === "ECONNABORTED"
-          ? "Analysis timed out — try again in a moment"
-          : e?.response?.data?.detail || "Analysis failed";
-      setToast(typeof msg === "string" ? msg : "Analysis failed");
-    } finally {
-      setAnalyzing(false);
-    }
-  };
-
   const handleConfirmedTrade = async () => {
     const sym = symbol.trim();
-    if (!sym) throw new Error("Missing symbol");
-    if (String(analysis?.decision ?? "").toUpperCase() === "WAIT") {
-      setToast("Unitrader recommends waiting — no order was placed.");
+    const ex = (selectedAccount?.exchange || exchange || "").toLowerCase();
+    const phase = deriveManualExecutePhase(sym, false, analysis, ex);
+    if (phase !== "ready") {
+      setToast("Cannot execute — check the trade button state and try again.");
+      setConfirmOpen(false);
+      return;
+    }
+    const decision = String(analysis?.decision ?? "").toUpperCase();
+    const conf = Number(analysis?.confidence ?? 0);
+    if (decision === "WAIT" || decision === "" || (decision !== "BUY" && decision !== "SELL")) {
+      setToast("No valid buy/sell signal — no order was placed.");
+      setConfirmOpen(false);
+      return;
+    }
+    if (!Number.isFinite(conf) || conf < MIN_MANUAL_EXECUTE_CONFIDENCE) {
+      setToast("Confidence is below the minimum to execute.");
+      setConfirmOpen(false);
+      return;
+    }
+    if (
+      (analysis as { market_closed?: boolean } | null)?.market_closed === true ||
+      (isStocksTradingAsset(ex, sym) && !isUsEquityRegularSessionEt())
+    ) {
+      setToast("Market is closed — no order was placed.");
+      setConfirmOpen(false);
       return;
     }
     let res: Awaited<ReturnType<typeof tradingApi.execute>>;
     try {
-      const ex = (selectedAccount?.exchange || exchange || "").toLowerCase();
       if (!ex) throw new Error("Missing exchange");
       res = await tradingApi.execute(sym, ex, {
         trading_account_id: selectedTradingAccountId ?? undefined,
@@ -713,18 +1001,6 @@ function TradePage() {
   const tradingPaused = !!settings?.trading_paused;
   const maxDailyLoss = settings?.max_daily_loss ?? 10;
 
-  // Layout selection
-  const layout: "A" | "B" | "C" | "D" | "E" =
-    traderClass === "complete_novice" || traderClass === "curious_saver"
-      ? "A"
-      : traderClass === "self_taught"
-        ? "B"
-        : traderClass === "experienced"
-          ? "C"
-          : traderClass === "semi_institutional"
-            ? "D"
-            : "E";
-
   return (
     <div className="min-h-screen bg-dark-950">
       <RiskWarning variant="bar" />
@@ -793,6 +1069,8 @@ function TradePage() {
             canAdvance={trust.canAdvance}
             daysAtStage={trust.daysAtStage}
             paperTradesCount={trust.paperTradesCount}
+            currencySymbol={currencySymbol}
+            currencyCode={displayCurrencyCode}
           />
         </div>
       )}
@@ -871,6 +1149,7 @@ function TradePage() {
               botName={resolvedBotName}
               userSettings={settings ?? {}}
               tradingAccountId={selectedTradingAccountId}
+              currencySymbol={currencySymbol}
               onExecute={async (ids) => {
                 for (const id of ids) {
                   await handleAcceptSignal(id);
@@ -936,6 +1215,7 @@ function TradePage() {
                   {!dbg("no_picker") && (
                     <BrandPicker
                       exchange={exchange}
+                      currencySymbol={currencySymbol}
                       tradingAccountId={selectedTradingAccountId}
                       traderClass={traderClass}
                       favourites={settings?.approved_assets ?? []}
@@ -945,7 +1225,16 @@ function TradePage() {
                       selectedSymbols={symbol ? [symbol] : []}
                     />
                   )}
-                  <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} helperText={amountHelperText} />
+                  <AmountInput
+                    value={amount}
+                    onChange={setAmount}
+                    min={amountLimits.min}
+                    max={amountLimits.max}
+                    step={amountLimits.step}
+                    label={amountSliderLabel}
+                    currencySymbol={currencySymbol}
+                    helperText={amountHelperText}
+                  />
                   <RiskSection variant="plain" />
                   <button
                     type="button"
@@ -961,41 +1250,22 @@ function TradePage() {
                   )}
                 </div>
 
-                <AIAnalysisCard analysis={analysis}>
-                  {!dbg("no_explain") && (
-                    <ExplanationToggle
-                      explanations={{
-                        expert: analysis?.expert ?? "—",
-                        simple: analysis?.simple ?? analysis?.message ?? "—",
-                        metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
-                      }}
-                      traderClass={traderClass}
-                      settingsLevel={
-                        settings?.explanation_level === "expert" ||
-                        settings?.explanation_level === "simple" ||
-                        settings?.explanation_level === "metaphor"
-                          ? (settings.explanation_level as any)
-                          : null
-                      }
-                    />
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setConfirmOpen(true)}
-                    disabled={!canExecuteManual}
-                    title={
-                      manualDecision === "WAIT"
-                        ? "Unitrader recommends waiting on this symbol"
-                        : undefined
-                    }
-                    className={clsx("btn-primary mt-4 w-full", !canExecuteManual && "opacity-60")}
-                  >
-                    {manualDecision === "WAIT"
-                      ? "No trade recommended"
-                      : isPaper
-                        ? "Confirm practice trade"
-                        : "Execute trade"}
-                  </button>
+                <AIAnalysisCard
+                  botName={resolvedBotName}
+                  symbol={symbol}
+                  analysis={analysis}
+                  analyzing={analyzing}
+                  analysisError={analysisError}
+                  onRetry={handleAnalyse}
+                  showExplanationToggle={!dbg("no_explain")}
+                  showPendingAnalyseHint={false}
+                  traderClass={traderClass}
+                  settingsExplanationLevel={settingsExplanationLevel}
+                >
+                  <ManualTradeExecuteButton
+                    phase={manualExecutePhase}
+                    onExecute={() => setConfirmOpen(true)}
+                  />
                 </AIAnalysisCard>
               </div>
             )}
@@ -1007,6 +1277,7 @@ function TradePage() {
                   {!dbg("no_picker") && (
                     <BrandPicker
                       exchange={exchange}
+                      currencySymbol={currencySymbol}
                       tradingAccountId={selectedTradingAccountId}
                       traderClass={traderClass}
                       favourites={settings?.approved_assets ?? []}
@@ -1021,7 +1292,16 @@ function TradePage() {
                       {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="self_taught" signal="NONE" />}
                     </div>
                   )}
-                  <AmountInput value={amount} onChange={setAmount} min={amountLimits.min} max={amountLimits.max} step={amountLimits.step} label="Amount (GBP)" helperText={amountHelperText} />
+                  <AmountInput
+                    value={amount}
+                    onChange={setAmount}
+                    min={amountLimits.min}
+                    max={amountLimits.max}
+                    step={amountLimits.step}
+                    label={amountSliderLabel}
+                    currencySymbol={currencySymbol}
+                    helperText={amountHelperText}
+                  />
                   <RiskSection variant="pct" />
                   <button
                     type="button"
@@ -1034,37 +1314,23 @@ function TradePage() {
                 </div>
 
                 <div className="space-y-4">
-                  <AIAnalysisCard analysis={analysis} title="AI analysis">
-                    {!dbg("no_explain") && (
-                      <ExplanationToggle
-                        explanations={{
-                          expert: analysis?.expert ?? "—",
-                          simple: analysis?.simple ?? analysis?.message ?? "—",
-                          metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
-                        }}
-                        traderClass={traderClass}
-                        settingsLevel={
-                          settings?.explanation_level === "expert" ||
-                          settings?.explanation_level === "simple" ||
-                          settings?.explanation_level === "metaphor"
-                            ? (settings.explanation_level as any)
-                            : null
-                        }
-                      />
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => setConfirmOpen(true)}
-                      disabled={!canExecuteManual}
-                      title={
-                        manualDecision === "WAIT"
-                          ? "Unitrader recommends waiting on this symbol"
-                          : undefined
-                      }
-                      className={clsx("btn-primary mt-4 w-full", !canExecuteManual && "opacity-60")}
-                    >
-                      {manualDecision === "WAIT" ? "No trade recommended" : "Execute trade"}
-                    </button>
+                  <AIAnalysisCard
+                    botName={resolvedBotName}
+                    symbol={symbol}
+                    title="AI analysis"
+                    analysis={analysis}
+                    analyzing={analyzing}
+                    analysisError={analysisError}
+                    onRetry={handleAnalyse}
+                    showExplanationToggle={!dbg("no_explain")}
+                    showPendingAnalyseHint={false}
+                    traderClass={traderClass}
+                    settingsExplanationLevel={settingsExplanationLevel}
+                  >
+                    <ManualTradeExecuteButton
+                      phase={manualExecutePhase}
+                      onExecute={() => setConfirmOpen(true)}
+                    />
                   </AIAnalysisCard>
 
                   <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
@@ -1148,27 +1414,22 @@ function TradePage() {
                 </div>
 
                 <div className="space-y-4">
-                  <AIAnalysisCard analysis={analysis} title="AI analysis (technical)">
-                    <ExplanationToggle
-                      explanations={{
-                        expert: analysis?.expert ?? "—",
-                        simple: analysis?.simple ?? analysis?.message ?? "—",
-                        metaphor: analysis?.metaphor ?? analysis?.message ?? "—",
-                      }}
+                  <AIAnalysisCard
+                    botName={resolvedBotName}
+                    symbol={symbol}
+                    title="AI analysis (technical)"
+                    analysis={analysis}
+                    analyzing={analyzing}
+                    analysisError={analysisError}
+                    onRetry={handleAnalyse}
+                    showExplanationToggle
+                    traderClass={traderClass}
+                    settingsExplanationLevel={settingsExplanationLevel}
+                  >
+                    <ManualTradeExecuteButton
+                      phase={manualExecutePhase}
+                      onExecute={() => setConfirmOpen(true)}
                     />
-                    <button
-                      type="button"
-                      onClick={() => setConfirmOpen(true)}
-                      disabled={!canExecuteManual}
-                      title={
-                        manualDecision === "WAIT"
-                          ? "Unitrader recommends waiting on this symbol"
-                          : undefined
-                      }
-                      className={clsx("btn-primary mt-4 w-full", !canExecuteManual && "opacity-60")}
-                    >
-                      {manualDecision === "WAIT" ? "No trade recommended" : "Execute"}
-                    </button>
                   </AIAnalysisCard>
 
                   <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
@@ -1192,7 +1453,8 @@ function TradePage() {
           ...analysis,
           symbol,
         }}
-        notionalGbp={amount}
+        notionalAmount={amount}
+        currencySymbol={currencySymbol}
         isPaper={isPaper}
         traderClass={traderClass}
       />

@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { RefreshCw, Radio } from "lucide-react";
 import SignalCard from "./SignalCard";
 import { Signal } from "@/hooks/useSignalStack";
+import { isMarketOpen } from "@/utils/usEquitySession";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -59,6 +60,7 @@ export default function BrowseStack({
   onRefresh,
 }: BrowseStackProps) {
   const visibleSignals = signals.filter((s) => s.interaction !== "skipped");
+  const marketOpen = isMarketOpen();
 
   const resolvedExplanationLevel = (
     ["expert", "simple", "metaphor"].includes(explanationLevel)
@@ -72,10 +74,18 @@ export default function BrowseStack({
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2.5 w-2.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+            {marketOpen ? (
+              <>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500" />
+              </>
+            ) : (
+              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-dark-500" />
+            )}
           </span>
-          <span className="text-sm font-semibold text-white">{botName} signals — live</span>
+          <span className="text-sm font-semibold text-white">
+            {botName} signals — {marketOpen ? "live" : "paused"}
+          </span>
         </div>
 
         <div className="flex items-center gap-3 text-xs text-dark-400">
@@ -84,14 +94,16 @@ export default function BrowseStack({
             {" · "}
             <span className="text-dark-300">{visibleSignals.length}</span> signals
           </span>
-          <button
-            onClick={onRefresh}
-            disabled={isRefreshing}
-            className="p-1.5 rounded-lg border border-dark-700 hover:bg-dark-800 text-dark-400 hover:text-white transition-all disabled:opacity-40"
-            aria-label="Refresh signals"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
-          </button>
+          {marketOpen && (
+            <button
+              onClick={onRefresh}
+              disabled={isRefreshing}
+              className="p-1.5 rounded-lg border border-dark-700 hover:bg-dark-800 text-dark-400 hover:text-white transition-all disabled:opacity-40"
+              aria-label="Refresh signals"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin" : ""}`} />
+            </button>
+          )}
         </div>
       </div>
 
@@ -105,21 +117,35 @@ export default function BrowseStack({
       ) : visibleSignals.length === 0 ? (
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-dark-700 bg-dark-900 px-6 py-10 text-center">
           <Radio className="w-8 h-8 text-dark-500" />
-          <p className="text-sm font-medium text-dark-300">
-            All signals reviewed. {botName} is scanning for more.
-          </p>
-          {nextScanInMinutes !== null && (
-            <p className="text-xs text-dark-500">
-              Next scan in{" "}
-              <span className="text-dark-300 font-medium">{nextScanInMinutes}</span> minutes.
-            </p>
+          {marketOpen ? (
+            <>
+              <p className="text-sm font-medium text-dark-300">
+                All signals reviewed. {botName} is scanning for more.
+              </p>
+              {nextScanInMinutes !== null && (
+                <p className="text-xs text-dark-500">
+                  Next scan in{" "}
+                  <span className="text-dark-300 font-medium">{nextScanInMinutes}</span> minutes.
+                </p>
+              )}
+              <button
+                onClick={onRefresh}
+                className="mt-1 px-4 py-2 rounded-xl border border-dark-600 bg-dark-800 text-sm text-dark-200 hover:bg-dark-700 hover:text-white transition-all"
+              >
+                Refresh now
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-sm font-medium text-dark-300">
+                {botName} pauses scanning outside market hours
+              </p>
+              <p className="max-w-md text-xs text-dark-500">
+                US stock markets are open Monday–Friday, 9:30am–4:00pm ET (2:30pm–9:00pm UK time).{" "}
+                {botName} will resume scanning automatically when markets open.
+              </p>
+            </>
           )}
-          <button
-            onClick={onRefresh}
-            className="mt-1 px-4 py-2 rounded-xl border border-dark-600 bg-dark-800 text-sm text-dark-200 hover:bg-dark-700 hover:text-white transition-all"
-          >
-            Refresh now
-          </button>
         </div>
       ) : (
         <AnimatePresence mode="popLayout">

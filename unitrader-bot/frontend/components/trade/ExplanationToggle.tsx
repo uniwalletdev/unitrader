@@ -17,11 +17,14 @@ export default function ExplanationToggle({
   onLevelChange,
   traderClass: traderClassProp,
   settingsLevel: settingsLevelProp,
+  disabled = false,
 }: {
   explanations: { expert: string; simple: string; metaphor: string };
   onLevelChange?: (level: ExplanationLevel) => void;
   traderClass?: TraderClass;
   settingsLevel?: ExplanationLevel | null;
+  /** When true, level buttons and save default are inactive (e.g. analysis still loading). */
+  disabled?: boolean;
 }) {
   const [traderClass, setTraderClass] = useState<TraderClass>(
     traderClassProp ?? "complete_novice",
@@ -155,6 +158,7 @@ export default function ExplanationToggle({
   };
 
   const setLevel = (level: ExplanationLevel) => {
+    if (disabled) return;
     if (!canSelectLevel(level)) return;
     if (traderClass === "experienced" || traderClass === "semi_institutional") {
       setActiveLevel("expert");
@@ -188,7 +192,7 @@ export default function ExplanationToggle({
     traderClass === "complete_novice" || traderClass === "curious_saver";
 
   return (
-    <div className="space-y-3">
+    <div className={["space-y-3", disabled ? "pointer-events-none opacity-50" : ""].filter(Boolean).join(" ")}>
       <div className="inline-flex flex-wrap items-center gap-2 rounded-xl border border-dark-800 bg-dark-950 p-2">
         {buttons.map((b) => {
           const selected = activeLevel === b.level;
@@ -196,6 +200,7 @@ export default function ExplanationToggle({
             <button
               key={b.level}
               type="button"
+              disabled={disabled}
               onClick={() => setLevel(b.level)}
               className={[
                 "rounded-lg px-3 py-2 text-xs font-semibold transition",
@@ -206,6 +211,7 @@ export default function ExplanationToggle({
                 b.level !== "expert"
                   ? "opacity-70"
                   : "",
+                disabled ? "cursor-not-allowed" : "",
               ].join(" ")}
             >
               {b.label}
@@ -217,7 +223,7 @@ export default function ExplanationToggle({
           <button
             type="button"
             onClick={handleSaveDefault}
-            disabled={saving}
+            disabled={disabled || saving}
             className="text-xs font-semibold text-brand-400 hover:underline disabled:opacity-60"
           >
             Set as my default

@@ -507,7 +507,9 @@ class TestStage5FullPipeline:
             mock_db.execute = AsyncMock(
                 return_value=MagicMock(scalar=MagicMock(return_value=0))
             )
-            safe = await agent._safety_checks(decision, 10_000.0, mock_settings, mock_db)
+            safe = await agent._safety_checks(
+                decision, 10_000.0, mock_settings, mock_db, is_paper=True
+            )
             print(f"  Allowed={safe['allowed']}  {safe.get('reason', 'All checks passed')}  "
                   f"({time.perf_counter()-t:.1f}s)")
 

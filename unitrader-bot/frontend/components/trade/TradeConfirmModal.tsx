@@ -98,7 +98,9 @@ export default function TradeConfirmModal({
   trade,
   isPaper,
   traderClass,
+  notionalAmount,
   notionalGbp,
+  currencySymbol = "$",
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -106,8 +108,12 @@ export default function TradeConfirmModal({
   trade: TradeLike;
   isPaper: boolean;
   traderClass: TraderClass;
-  /** User-selected amount (e.g. manual trade slider) when backend does not return quantity */
+  /** User-selected amount when backend does not return quantity */
+  notionalAmount?: number;
+  /** @deprecated use notionalAmount */
   notionalGbp?: number;
+  /** Prefix for notional / estimated cost rows */
+  currencySymbol?: string;
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,35 +162,37 @@ export default function TradeConfirmModal({
     trade.explanation_expert ||
     "";
 
+  const notional = notionalAmount ?? notionalGbp;
+
   const estimatedCost = useMemo(() => {
     if (isWait) return null;
     if (entry != null && qty != null && Number.isFinite(entry) && Number.isFinite(qty)) {
       return entry * qty;
     }
-    if (notionalGbp != null && Number.isFinite(notionalGbp)) {
-      return notionalGbp;
+    if (notional != null && Number.isFinite(notional)) {
+      return notional;
     }
     return null;
-  }, [entry, qty, notionalGbp, isWait]);
+  }, [entry, qty, notional, isWait]);
 
   const slPlain = useMemo(() => {
     if (!sl) return null;
     // “minus 2%” is copy; compute actual relative drop vs entry if possible
     if (entry) {
       const pct = ((sl - entry) / entry) * 100;
-      return `${formatPrice(sl, symbol)} (${formatPct(pct, 1)})`;
+      return `${formatPrice(sl, symbol, currencySymbol)} (${formatPct(pct, 1)})`;
     }
-    return formatPrice(sl, symbol);
-  }, [sl, entry, symbol]);
+    return formatPrice(sl, symbol, currencySymbol);
+  }, [sl, entry, symbol, currencySymbol]);
 
   const tpPlain = useMemo(() => {
     if (!tp) return null;
     if (entry) {
       const pct = ((tp - entry) / entry) * 100;
-      return `${formatPrice(tp, symbol)} (${formatPct(pct, 1)})`;
+      return `${formatPrice(tp, symbol, currencySymbol)} (${formatPct(pct, 1)})`;
     }
-    return formatPrice(tp, symbol);
-  }, [tp, entry, symbol]);
+    return formatPrice(tp, symbol, currencySymbol);
+  }, [tp, entry, symbol, currencySymbol]);
 
   if (!isOpen) return null;
 
@@ -262,7 +270,7 @@ export default function TradeConfirmModal({
                       />
                       <SummaryRow
                         label={qty != null ? "Estimated cost" : "Your trade amount (approx.)"}
-                        value={estimatedCost !== null ? `£${estimatedCost.toFixed(2)}` : "—"}
+                        value={estimatedCost !== null ? `${currencySymbol}${estimatedCost.toFixed(2)}` : "—"}
                       />
                       <SummaryRow
                         label="Protection"
@@ -320,7 +328,7 @@ export default function TradeConfirmModal({
                   />
                   <SummaryRow
                     label={qty != null ? "Estimated cost" : "Your trade amount (approx.)"}
-                    value={estimatedCost !== null ? `£${estimatedCost.toFixed(2)}` : "—"}
+                    value={estimatedCost !== null ? `${currencySymbol}${estimatedCost.toFixed(2)}` : "—"}
                   />
                   <SummaryRow
                     label="Stop-loss"
@@ -371,11 +379,11 @@ export default function TradeConfirmModal({
                   />
                   <SummaryRow
                     label="Stop-loss"
-                    value={sl !== null ? formatPrice(sl, symbol) : "—"}
+                    value={sl !== null ? formatPrice(sl, symbol, currencySymbol) : "—"}
                   />
                   <SummaryRow
                     label="Take-profit"
-                    value={tp !== null ? formatPrice(tp, symbol) : "—"}
+                    value={tp !== null ? formatPrice(tp, symbol, currencySymbol) : "—"}
                   />
                 </div>
               </div>
@@ -405,11 +413,11 @@ export default function TradeConfirmModal({
                   />
                   <SummaryRow
                     label="Stop-loss"
-                    value={sl !== null ? formatPrice(sl, symbol) : "—"}
+                    value={sl !== null ? formatPrice(sl, symbol, currencySymbol) : "—"}
                   />
                   <SummaryRow
                     label="Take-profit"
-                    value={tp !== null ? formatPrice(tp, symbol) : "—"}
+                    value={tp !== null ? formatPrice(tp, symbol, currencySymbol) : "—"}
                   />
                   <SummaryRow
                     label="Expected market impact"
@@ -450,10 +458,10 @@ export default function TradeConfirmModal({
                   <SummaryRow
                     label="Price"
                     value={
-                      trade.price_usd !== undefined && trade.price_gbp !== undefined
-                        ? `$${Number(trade.price_usd).toFixed(2)} / £${Number(trade.price_gbp).toFixed(2)}`
-                        : entry !== null
-                          ? `${formatPrice(entry, symbol)}`
+                      entry !== null
+                        ? formatPrice(entry, symbol, currencySymbol)
+                        : trade.price_usd !== undefined
+                          ? `${currencySymbol}${Number(trade.price_usd).toFixed(2)}`
                           : "—"
                     }
                   />
@@ -471,17 +479,17 @@ export default function TradeConfirmModal({
                     label="Exchange fee"
                     value={
                       trade.fee_amount_gbp !== undefined
-                        ? `approx 0.6% (GBP ${Number(trade.fee_amount_gbp).toFixed(2)})`
-                        : "approx 0.6% (GBP —)"
+                        ? `approx 0.6% (${currencySymbol}${Number(trade.fee_amount_gbp).toFixed(2)})`
+                        : `approx 0.6% (${currencySymbol}—)`
                     }
                   />
                   <SummaryRow
                     label="Stop-loss"
-                    value={sl !== null ? formatPrice(sl, symbol) : "—"}
+                    value={sl !== null ? formatPrice(sl, symbol, currencySymbol) : "—"}
                   />
                   <SummaryRow
                     label="Take-profit"
-                    value={tp !== null ? formatPrice(tp, symbol) : "—"}
+                    value={tp !== null ? formatPrice(tp, symbol, currencySymbol) : "—"}
                   />
                 </div>
               </div>

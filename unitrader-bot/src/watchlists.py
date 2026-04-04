@@ -157,30 +157,26 @@ async def score_universe(market_context: MarketContext | None = None) -> list[st
 async def _score_stocks_alpaca(universe: list[str], top_n: int = 15) -> list[str]:
     """Quickly score a stock universe using only raw market data (no Claude).
 
-    Fetches price_change_pct and volume concurrently for every symbol in the
-    universe, computes a simple momentum score, and returns the top_n tickers
-    sorted by score descending. This pre-filter keeps the expensive Claude
-    analysis focused on genuinely interesting candidates only.
+    Fetches price_change_pct and volume sequentially with a short delay between
+    requests to avoid Alpaca rate limits (429). Computes a simple momentum
+    score and returns the top_n tickers sorted by score descending.
 
     Score = abs(price_change_pct) * 0.6 + volume_percentile * 0.4
     """
     from src.integrations.market_data import fetch_market_data
 
     symbols = list(universe or [])
+    raw: list[tuple[str, float, float]] = []
 
-    semaphore = asyncio.Semaphore(8)
-
-    async def _fetch_one(sym: str) -> tuple[str, float, float]:
-        async with semaphore:
-            try:
-                data = await fetch_market_data(sym, "alpaca")
-                change_pct = abs(float(data.get("price_change_pct") or 0))
-                volume = float(data.get("volume") or 0)
-                return sym, change_pct, volume
-            except Exception:
-                return sym, 0.0, 0.0
-
-    raw = await asyncio.gather(*[_fetch_one(s) for s in symbols])
+    for symbol in symbols:
+        try:
+            data = await fetch_market_data(symbol, "alpaca")
+            change_pct = abs(float(data.get("price_change_pct") or 0))
+            volume = float(data.get("volume") or 0)
+            raw.append((symbol, change_pct, volume))
+        except Exception as exc:
+            logger.warning("score_universe: skipping %s — %s", symbol, exc)
+        await asyncio.sleep(0.15)
 
     # Normalise volume to 0–1 percentile across the universe
     volumes = [r[2] for r in raw]

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLivePrice } from "@/hooks/useLivePrice";
 import { authApi, api } from "@/lib/api";
+import { fetchSpotPriceViaOhlcv } from "@/lib/fetchSpotPrice";
 import { formatChangePct, formatPrice } from "@/utils/formatPrice";
 import {
   ChevronDown,
@@ -24,6 +25,8 @@ type QuickStatsMap = Record<string, { rsi?: number | null }>;
 
 interface BrandPickerProps {
   exchange: string;
+  /** For stock/ETF price prefix on cards (default "$") */
+  currencySymbol?: string;
   tradingAccountId?: string | null;
   /** If provided, avoids fetching settings on mount. */
   traderClass?: TraderClass;
@@ -40,7 +43,7 @@ interface BrandPickerProps {
 }
 
 // Display-name lookup for AI-returned symbols — not a tradeable list
-const BRAND_MAP: Record<string, string> = {
+export const BRAND_MAP: Record<string, string> = {
   AAPL: "Apple", MSFT: "Microsoft", NVDA: "NVIDIA", TSLA: "Tesla",
   AMZN: "Amazon", GOOGL: "Alphabet", META: "Meta",
   SPY: "S&P 500 ETF", VOO: "Vanguard S&P 500",
@@ -57,6 +60,15 @@ const BRAND_MAP: Record<string, string> = {
 
 function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
+}
+
+/** Human-readable asset line for analysis UI (e.g. NVIDIA — NVDA). */
+export function displayBrandLine(symbol: string): { name: string; ticker: string } {
+  const ticker = symbol.trim();
+  if (!ticker) return { name: "", ticker: "" };
+  const upper = ticker.toUpperCase();
+  const name = BRAND_MAP[ticker] ?? BRAND_MAP[upper] ?? ticker;
+  return { name, ticker };
 }
 
 /** Classify API resolved_exchange into picker buckets (stocks vs crypto list). */
@@ -115,14 +127,37 @@ function BrandCard(props: {
   symbol: string;
   brand: string;
   exchange: string;
+  currencySymbol?: string;
   tradingAccountId?: string | null;
   isSelected: boolean;
   onToggle: () => void;
+  onWsRemount?: () => void;
   rsi?: number | null;
   showVolumeChange?: boolean;
   volumeChangePct?: number | null;
 }) {
   const live = useLivePrice(props.symbol, { tradingAccountId: props.tradingAccountId });
+  const [restPrice, setRestPrice] = useState<number | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [restFetching, setRestFetching] = useState(false);
+
+  const effectivePrice = live.price ?? restPrice;
+
+  useEffect(() => {
+    setRestPrice(null);
+    setLoadFailed(false);
+    setRestFetching(false);
+  }, [props.symbol]);
+
+  useEffect(() => {
+    if (effectivePrice !== null) {
+      setLoadFailed(false);
+      return;
+    }
+    const timer = setTimeout(() => setLoadFailed(true), 8000);
+    return () => clearTimeout(timer);
+  }, [effectivePrice, props.symbol]);
+
   const change = formatChangePct(live.changePct);
 
   const showTicker =
@@ -147,14 +182,42 @@ function BrandCard(props: {
   }, [live.changePct, props.traderClass]);
 
   const arrowOnly = props.traderClass === "complete_novice";
+  const cur = props.currencySymbol ?? "$";
+
+  const retryFetch = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setLoadFailed(false);
+    setRestPrice(null);
+    setRestFetching(true);
+    try {
+      const p = await fetchSpotPriceViaOhlcv(props.symbol);
+      if (p !== null) {
+        setRestPrice(p);
+      } else {
+        props.onWsRemount?.();
+      }
+    } finally {
+      setRestFetching(false);
+    }
+  };
+
+  const onCardKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      props.onToggle();
+    }
+  };
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={props.onToggle}
+      onKeyDown={onCardKeyDown}
       title={props.traderClass === "complete_novice" ? props.symbol.toUpperCase() : undefined}
       className={clsx(
-        "group relative rounded-xl border p-4 text-left transition",
+        "group relative cursor-pointer rounded-xl border p-4 text-left transition outline-none focus-visible:ring-2 focus-visible:ring-brand-500/40",
         props.isSelected
           ? "border-brand-500 bg-brand-500/10 ring-2 ring-brand-500/20"
           : "border-dark-800 bg-dark-900 hover:border-dark-700",
@@ -181,14 +244,31 @@ function BrandCard(props: {
 
       <div className="mt-3 flex items-end justify-between gap-3">
         <div className="min-w-0">
-          <div className="text-lg font-bold text-white">
-            {live.price !== null ? formatPrice(live.price, props.symbol) : "—"}
+          <div className="flex items-center gap-2 text-lg font-bold text-white">
+            {effectivePrice !== null ? (
+              <span className="tabular-nums">{formatPrice(effectivePrice, props.symbol, cur)}</span>
+            ) : loadFailed ? (
+              <>
+                <span className="tabular-nums text-dark-400">--</span>
+                <button
+                  type="button"
+                  onClick={retryFetch}
+                  disabled={restFetching}
+                  title="Retry"
+                  className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-dark-600 bg-dark-800 text-sm text-dark-300 hover:border-brand-500/40 hover:text-brand-300 disabled:opacity-50"
+                >
+                  ↻
+                </button>
+              </>
+            ) : (
+              <span className="text-sm font-normal text-dark-500">Connecting…</span>
+            )}
           </div>
           {(props.traderClass === "experienced" || props.traderClass === "crypto_native") &&
             live.bid !== null &&
             live.ask !== null && (
               <div className="mt-0.5 text-xs text-dark-400">
-                {formatPrice(live.bid, props.symbol)} / {formatPrice(live.ask, props.symbol)}
+                {formatPrice(live.bid, props.symbol, cur)} / {formatPrice(live.ask, props.symbol, cur)}
               </div>
             )}
         </div>
@@ -223,15 +303,13 @@ function BrandCard(props: {
         </div>
       )}
 
-      {!live.isConnected && (
-        <div className="mt-2 text-xs text-red-400">Connecting…</div>
-      )}
-    </button>
+    </div>
   );
 }
 
 export default function BrandPicker({
   exchange,
+  currencySymbol = "$",
   tradingAccountId,
   traderClass: traderClassProp,
   favourites: favouritesProp,
@@ -244,6 +322,11 @@ export default function BrandPicker({
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [traderClass, setTraderClass] = useState<TraderClass>("complete_novice");
   const [favourites, setFavourites] = useState<string[]>([]);
+  /** Bumps React key on BrandCard to re-run useLivePrice (fresh WebSocket) after failed REST fallback. */
+  const [wsRemountEpoch, setWsRemountEpoch] = useState<Record<string, number>>({});
+  const bumpWsForSymbol = useCallback((sym: string) => {
+    setWsRemountEpoch((p) => ({ ...p, [sym]: (p[sym] ?? 0) + 1 }));
+  }, []);
 
   const [category, setCategory] = useState<Category>("stocks");
   const [search, setSearch] = useState("");
@@ -890,14 +973,16 @@ export default function BrandPicker({
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {featuredRow.items.map((it) => (
                   <BrandCard
-                    key={`${featuredRow.title}-${it.symbol}`}
+                    key={`${featuredRow.title}-${it.symbol}-${wsRemountEpoch[it.symbol] ?? 0}`}
                     traderClass={traderClass}
                     symbol={it.symbol}
                     brand={it.brand}
                     exchange={displayExchange}
+                    currencySymbol={currencySymbol}
                     tradingAccountId={tradingAccountId}
                     isSelected={selections.includes(it.symbol)}
                     onToggle={() => handleToggle(it.symbol)}
+                    onWsRemount={() => bumpWsForSymbol(it.symbol)}
                     showVolumeChange={traderClass === "crypto_native"}
                     volumeChangePct={(it as any).volume_change_pct ?? null}
                   />
@@ -936,14 +1021,16 @@ export default function BrandPicker({
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {gridDisplayItems.map((it) => (
                 <BrandCard
-                  key={it.symbol}
+                  key={`${it.symbol}-${wsRemountEpoch[it.symbol] ?? 0}`}
                   traderClass={traderClass}
                   symbol={it.symbol}
                   brand={it.brand}
                   exchange={displayExchange}
+                  currencySymbol={currencySymbol}
                   tradingAccountId={tradingAccountId}
                   isSelected={selections.includes(it.symbol)}
                   onToggle={() => handleToggle(it.symbol)}
+                  onWsRemount={() => bumpWsForSymbol(it.symbol)}
                   rsi={quickStats?.[it.symbol]?.rsi ?? null}
                   showVolumeChange={traderClass === "crypto_native"}
                 />

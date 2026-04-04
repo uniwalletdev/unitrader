@@ -21,6 +21,8 @@ interface BotSelectsPanelProps {
   userSettings: UserSettings;
   onExecute: (signalIds: string[]) => Promise<void>;
   tradingAccountId?: string | null;
+  /** Display prefix for max trade amount (e.g. "$") */
+  currencySymbol?: string;
 }
 
 const ALL_ASSET_CLASSES = ["stocks", "crypto", "forex", "commodities"] as const;
@@ -62,7 +64,13 @@ function DirectionBadge({ direction }: { direction: string }) {
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function BotSelectsPanel({ botName, userSettings, onExecute, tradingAccountId }: BotSelectsPanelProps) {
+export default function BotSelectsPanel({
+  botName,
+  userSettings,
+  onExecute,
+  tradingAccountId,
+  currencySymbol = "$",
+}: BotSelectsPanelProps) {
   const [shortlist, setShortlist] = useState<Signal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isExecuting, setIsExecuting] = useState(false);
@@ -250,7 +258,8 @@ export default function BotSelectsPanel({ botName, userSettings, onExecute, trad
 
                 {/* Amount */}
                 <span className="flex-shrink-0 text-xs text-dark-400">
-                  £{maxAmount}
+                  {currencySymbol}
+                  {maxAmount}
                 </span>
               </div>
             ))}

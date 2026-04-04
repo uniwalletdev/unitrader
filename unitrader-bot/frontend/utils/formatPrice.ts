@@ -41,9 +41,14 @@ function isForex(symbol: string): boolean {
  *
  * @param price - Numeric price
  * @param symbol - Trading symbol (e.g. "AAPL", "BTC", "EUR_USD")
- * @returns Formatted string like "£150.25" or "0.0001"
+ * @param currencySymbol - For stocks/ETFs; defaults to "$" (USD) when omitted
+ * @returns Formatted string like "$150.25" or "0.0001"
  */
-export function formatPrice(price: number, symbol: string): string {
+export function formatPrice(
+  price: number,
+  symbol: string,
+  currencySymbol?: string,
+): string {
   if (price === null || price === undefined) {
     return "—";
   }
@@ -61,9 +66,9 @@ export function formatPrice(price: number, symbol: string): string {
     return price.toFixed(4);
   }
 
-  // Stocks: 2dp with currency prefix
-  // Default to £ for now (can be enhanced with user settings)
-  return `£${price.toFixed(2)}`;
+  // Stocks: 2dp with currency prefix (Alpaca/Coinbase accounts are USD)
+  const sym = currencySymbol ?? "$";
+  return `${sym}${price.toFixed(2)}`;
 }
 
 /**

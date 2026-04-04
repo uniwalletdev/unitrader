@@ -14,6 +14,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
+import pytz
 import sentry_sdk
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
@@ -377,6 +378,18 @@ async def lifespan(app: FastAPI):
 # Background: Trading Loop (every 5 minutes)
 # ─────────────────────────────────────────────
 
+
+def is_market_open() -> bool:
+    """True if US stock market session is open (Mon–Fri 09:30–16:00 America/New_York)."""
+    et = pytz.timezone("America/New_York")
+    now_et = datetime.now(et)
+    if now_et.weekday() >= 5:
+        return False
+    market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+    return market_open <= now_et <= market_close
+
+
 async def _trading_loop() -> None:
     """Execute trading cycles for all active users every 5 minutes.
 
@@ -552,8 +565,6 @@ async def _trading_loop() -> None:
         except Exception as exc:
             logger.error("Trading loop outer error: %s", exc)
 
-        await asyncio.sleep(300)  # 5 minutes
-
 
 # ─────────────────────────────────────────────
 # Background: Signal loops and notifications
@@ -683,8 +694,7 @@ async def full_auto_scanner_loop() -> None:
     logger.info("Full Auto scanner loop started")
     while True:
         try:
-            now = datetime.now(timezone.utc)
-            if _is_market_hours(now):
+            if is_market_open():
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(
                         select(TradingAccount, UserSettings, User)
@@ -705,6 +715,8 @@ async def full_auto_scanner_loop() -> None:
                         except Exception as exc:
                             logger.error("Full Auto scan failed for %s: %s", user.id, exc)
                             sentry_sdk.capture_exception(exc)
+            else:
+                logger.debug("Full Auto scanner: market closed — skipping scan")
         except Exception as exc:
             logger.error("Full Auto scanner loop error: %s", exc)
         await asyncio.sleep(30 * 60)
@@ -809,8 +821,7 @@ async def apex_selects_scanner_loop() -> None:
     logger.info("Apex Selects scanner loop started")
     while True:
         try:
-            now = datetime.now(timezone.utc)
-            if _is_market_hours(now):
+            if is_market_open():
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(
                         select(UserSettings, User)
@@ -828,6 +839,8 @@ async def apex_selects_scanner_loop() -> None:
                             await _run_apex_selects_for_user(settings_row, user, db)
                         except Exception as exc:
                             logger.error("Apex Selects failed for %s: %s", user.id, exc)
+            else:
+                logger.debug("Apex Selects scanner: market closed — skipping scan")
         except Exception as exc:
             logger.error("Apex Selects loop error: %s", exc)
         await asyncio.sleep(30 * 60)

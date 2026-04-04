@@ -1075,6 +1075,8 @@ Provide your detailed technical analysis with the specified JSON format."""
         account_balance: float,
         user_settings: UserSettings,
         db: AsyncSession,
+        *,
+        is_paper: bool | None = None,
     ) -> dict:
         """Enforce hard risk limits before any order is placed.
 
@@ -1092,9 +1094,17 @@ Provide your detailed technical analysis with the specified JSON format."""
         if not decision.get("stop_loss") or decision["stop_loss"] <= 0:
             return {"allowed": False, "reason": "No stop-loss provided by Claude"}
 
-        # 3. Confidence threshold
-        if decision.get("confidence", 0) < 50:
-            return {"allowed": False, "reason": f"Confidence {decision['confidence']} < 50"}
+        # 3. Confidence threshold (lower bar on paper to exercise the full pipeline)
+        if is_paper is not None:
+            paper_trading = bool(is_paper)
+        else:
+            paper_trading = bool(getattr(user_settings, "paper_trading_enabled", False))
+        min_confidence = 30 if paper_trading else 50
+        if decision.get("confidence", 0) < min_confidence:
+            return {
+                "allowed": False,
+                "reason": f"Confidence {decision.get('confidence')} < {min_confidence}",
+            }
 
         # 4. Sufficient balance
         position_usd = account_balance * (decision["position_size_pct"] / 100)
@@ -1238,7 +1248,9 @@ Provide your detailed technical analysis with the specified JSON format."""
                 except Exception as exc:
                     return {"status": "rejected", "reason": f"Exchange balance fetch failed: {exc}"}
 
-                guard = await self._safety_checks(decision, account_balance, user_settings, db)
+                guard = await self._safety_checks(
+                    decision, account_balance, user_settings, db, is_paper=is_paper
+                )
                 if not guard["allowed"]:
                     logger.info("Trade rejected for user %s: %s", self.user_id, guard["reason"])
                     return {"status": "rejected", "reason": guard["reason"]}

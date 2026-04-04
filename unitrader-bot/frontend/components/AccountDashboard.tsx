@@ -48,6 +48,10 @@ type Account = {
   tradingAccountId?: string | null;
   accountLabel?: string | null;
   exchange: Exchange;
+  /** Raw exchange id from API (e.g. alpaca, coinbase) — used for badge and capital aggregation. */
+  rawExchange: string;
+  /** Value from API; Coinbase is always shown as live regardless. */
+  isPaperFromApi: boolean;
   mode: Mode;
   status: AccountStatus;
   balance: number;
@@ -58,6 +62,34 @@ type Account = {
   trades: Trade[];
   oandaSubtype?: "Practice" | "Live";
 };
+
+/** Badge display only — Coinbase is always live; paper only when API says paper (e.g. Alpaca paper). */
+type TradingAccountBadgeInput = { exchange: string; is_paper: boolean };
+
+function getAccountBadge(account: TradingAccountBadgeInput) {
+  if (account.exchange.toLowerCase() === "coinbase") {
+    return { label: "Live" as const, color: "green" as const };
+  }
+  if (account.is_paper) {
+    return { label: "Paper" as const, color: "amber" as const };
+  }
+  return { label: "Live" as const, color: "green" as const };
+}
+
+/** Dashboard capital totals: live = Coinbase or any account with is_paper false. */
+function countsTowardLiveCapital(account: Account): boolean {
+  if (account.rawExchange.toLowerCase() === "coinbase") return true;
+  return !account.isPaperFromApi;
+}
+
+/** Paper summary total: Alpaca paper only. */
+function countsTowardPaperValue(account: Account): boolean {
+  return account.rawExchange.toLowerCase() === "alpaca" && account.isPaperFromApi;
+}
+
+function isDisplayPaper(account: Account): boolean {
+  return getAccountBadge({ exchange: account.rawExchange, is_paper: account.isPaperFromApi }).label === "Paper";
+}
 
 function mapExchangeName(raw: string): Exchange {
   const m: Record<string, Exchange> = {
@@ -175,8 +207,10 @@ export default function AccountDashboard() {
       );
 
       const mapped: Account[] = balances.map((b, index) => {
+        const rawExchange = b.exchange ?? "";
+        const isPaperFromApi = !!b.is_paper;
         const exchange = mapExchangeName(b.exchange);
-        const mode: Mode = b.is_paper ? "paper" : "live";
+        const mode: Mode = isPaperFromApi ? "paper" : "live";
         const id = b.trading_account_id ?? `${b.exchange}-${mode}`;
         const currency = b.currency || "USD";
         const balance = b.balance ?? 0;
@@ -185,7 +219,7 @@ export default function AccountDashboard() {
           if (b.trading_account_id && trade.trading_account_id) {
             return trade.trading_account_id === b.trading_account_id;
           }
-          return trade.exchange === b.exchange && trade.is_paper === b.is_paper;
+          return trade.exchange === b.exchange && trade.is_paper === isPaperFromApi;
         });
         const accountPnl = perf.net_pnl_usd ?? 0;
         const accountPnlPct = balance > 0 ? (accountPnl / balance) * 100 : 0;
@@ -195,6 +229,8 @@ export default function AccountDashboard() {
           tradingAccountId: b.trading_account_id,
           accountLabel: b.account_label,
           exchange,
+          rawExchange,
+          isPaperFromApi,
           mode,
           status: b.error ? "error" as AccountStatus : "connected" as AccountStatus,
           balance,
@@ -262,20 +298,20 @@ export default function AccountDashboard() {
   }, [preferredTradingAccountId, accounts.length]);
 
   const summary = useMemo(() => {
-    const liveAccounts = accounts.filter((a) => a.mode === "live");
-    const paperAccounts = accounts.filter((a) => a.mode === "paper");
+    const liveCapitalAccounts = accounts.filter(countsTowardLiveCapital);
+    const paperValueAccounts = accounts.filter(countsTowardPaperValue);
 
     const toUsd = (value: number, currency: string) => value * (fxToUsd[currency] ?? 1);
 
-    const totalLiveUsd = liveAccounts.reduce(
+    const totalLiveUsd = liveCapitalAccounts.reduce(
       (sum, account) => sum + toUsd(account.balance, account.currency),
       0
     );
-    const totalPaperUsd = paperAccounts.reduce(
+    const totalPaperUsd = paperValueAccounts.reduce(
       (sum, account) => sum + toUsd(account.balance, account.currency),
       0
     );
-    const totalLivePnlUsd = liveAccounts.reduce(
+    const totalLivePnlUsd = liveCapitalAccounts.reduce(
       (sum, account) => sum + toUsd(account.pnl, account.currency),
       0
     );
@@ -284,8 +320,8 @@ export default function AccountDashboard() {
       totalLiveUsd,
       totalPaperUsd,
       totalLivePnlUsd,
-      liveCount: liveAccounts.length,
-      paperCount: paperAccounts.length,
+      liveCount: liveCapitalAccounts.length,
+      paperCount: paperValueAccounts.length,
     };
   }, [accounts]);
 
@@ -300,7 +336,7 @@ export default function AccountDashboard() {
     >();
 
     accounts
-      .filter((account) => account.mode === "live" && account.status === "connected")
+      .filter((account) => countsTowardLiveCapital(account) && account.status === "connected")
       .forEach((account) => {
         account.trades
           .filter((trade) => trade.outcome === "open")
@@ -353,6 +389,7 @@ export default function AccountDashboard() {
         return {
           ...account,
           mode: "live",
+          isPaperFromApi: false,
           oandaSubtype: account.exchange === "Oanda" ? "Live" : account.oandaSubtype,
         };
       })
@@ -397,6 +434,10 @@ export default function AccountDashboard() {
 
   const livePnlPositive = summary.totalLivePnlUsd >= 0;
   const selectedPnlPositive = selectedAccount.pnl >= 0;
+  const selectedBadge = getAccountBadge({
+    exchange: selectedAccount.rawExchange,
+    is_paper: selectedAccount.isPaperFromApi,
+  });
 
   return (
     <div className="w-full rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-2xl shadow-black/30">
@@ -457,7 +498,10 @@ export default function AccountDashboard() {
             <div className="space-y-2">
               {accounts.map((account) => {
                 const active = account.id === selectedAccount.id;
-                const isPaperLike = account.mode === "paper";
+                const badge = getAccountBadge({
+                  exchange: account.rawExchange,
+                  is_paper: account.isPaperFromApi,
+                });
                 return (
                   <button
                     key={account.id}
@@ -498,8 +542,12 @@ export default function AccountDashboard() {
                           )}
                         </div>
                       </div>
-                      <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${modeBadgeClass[account.mode]}`}>
-                        {isPaperLike ? "Paper" : "Live"}
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          badge.color === "amber" ? modeBadgeClass.paper : modeBadgeClass.live
+                        }`}
+                      >
+                        {badge.label}
                       </span>
                     </div>
 
@@ -510,6 +558,11 @@ export default function AccountDashboard() {
                         {account.status}
                       </span>
                     </div>
+                    {account.exchange === "Coinbase" && (
+                      <p className="mt-2 text-left text-[10px] leading-snug text-slate-500">
+                        Real balance — your own Coinbase account
+                      </p>
+                    )}
                   </button>
                 );
               })}
@@ -532,10 +585,14 @@ export default function AccountDashboard() {
               <div>
                 <div className="flex flex-wrap items-center gap-2">
                   <h1 className="text-xl font-semibold text-white">{selectedAccount.exchange} Account</h1>
-                  <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${modeBadgeClass[selectedAccount.mode]}`}>
-                    {selectedAccount.mode === "paper" ? "Paper" : "Live"}
+                  <span
+                    className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                      selectedBadge.color === "amber" ? modeBadgeClass.paper : modeBadgeClass.live
+                    }`}
+                  >
+                    {selectedBadge.label}
                   </span>
-                  {selectedAccount.mode === "live" && (
+                  {!isDisplayPaper(selectedAccount) && selectedAccount.exchange !== "Coinbase" && (
                     <span className="rounded-full border border-emerald-300/30 bg-emerald-400/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">
                       Live Trading - real funds
                     </span>
@@ -547,7 +604,13 @@ export default function AccountDashboard() {
                   )}
                 </div>
 
-                {selectedAccount.mode === "paper" && (
+                {selectedAccount.exchange === "Coinbase" && (
+                  <p className="mt-2 text-sm text-slate-400">
+                    Real balance — your own Coinbase account
+                  </p>
+                )}
+
+                {isDisplayPaper(selectedAccount) && (
                   <div className="mt-3 rounded-lg border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-200">
                     You&apos;re in Paper Trading mode - no real money at risk
                   </div>
@@ -564,7 +627,7 @@ export default function AccountDashboard() {
                   {selectedAccount.apexActive ? "Pause Unitrader" : "Resume Unitrader"}
                 </button>
 
-                {selectedAccount.mode === "paper" && (
+                {isDisplayPaper(selectedAccount) && (
                   <button
                     type="button"
                     onClick={() => openGoLiveModal(selectedAccount.id)}
@@ -639,7 +702,7 @@ export default function AccountDashboard() {
                         <td className="rounded-l-xl px-3 py-3">
                           <div className="flex items-center gap-2">
                             <span className="font-semibold text-slate-100">{trade.asset}</span>
-                            {selectedAccount.mode === "paper" && (
+                            {isDisplayPaper(selectedAccount) && (
                               <span className="rounded border border-amber-300/40 bg-amber-400/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
                                 P
                               </span>
