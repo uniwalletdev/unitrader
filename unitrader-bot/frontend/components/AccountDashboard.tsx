@@ -24,7 +24,7 @@ import {
 } from "../lib/api";
 import { devLogError } from "../lib/devLog";
 
-type Exchange = "Alpaca" | "Coinbase" | "Binance" | "Oanda";
+type Exchange = "Alpaca" | "Coinbase" | "Binance" | "Kraken" | "Oanda";
 type Mode = "paper" | "live";
 type AccountStatus = "connected" | "disconnected" | "error";
 
@@ -96,6 +96,7 @@ function mapExchangeName(raw: string): Exchange {
     alpaca: "Alpaca",
     coinbase: "Coinbase",
     binance: "Binance",
+    kraken: "Kraken",
     oanda: "Oanda",
   };
   return m[raw.toLowerCase()] ?? ("Alpaca" as Exchange);
@@ -166,6 +167,7 @@ function exchangeTone(exchange: Exchange) {
   if (exchange === "Alpaca") return "from-sky-500/20 to-blue-500/10";
   if (exchange === "Coinbase") return "from-indigo-500/20 to-cyan-500/10";
   if (exchange === "Binance") return "from-amber-500/20 to-yellow-500/10";
+  if (exchange === "Kraken") return "from-violet-500/20 to-purple-500/10";
   return "from-emerald-500/20 to-teal-500/10";
 }
 
@@ -558,9 +560,9 @@ export default function AccountDashboard() {
                         {account.status}
                       </span>
                     </div>
-                    {account.exchange === "Coinbase" && (
+                    {(account.exchange === "Coinbase" || account.exchange === "Kraken") && (
                       <p className="mt-2 text-left text-[10px] leading-snug text-slate-500">
-                        Real balance — your own Coinbase account
+                        Real balance — your own {account.exchange} account
                       </p>
                     )}
                   </button>
@@ -592,7 +594,9 @@ export default function AccountDashboard() {
                   >
                     {selectedBadge.label}
                   </span>
-                  {!isDisplayPaper(selectedAccount) && selectedAccount.exchange !== "Coinbase" && (
+                  {!isDisplayPaper(selectedAccount) &&
+                    selectedAccount.exchange !== "Coinbase" &&
+                    selectedAccount.exchange !== "Kraken" && (
                     <span className="rounded-full border border-emerald-300/30 bg-emerald-400/15 px-2.5 py-1 text-xs font-semibold text-emerald-300">
                       Live Trading - real funds
                     </span>
@@ -604,9 +608,9 @@ export default function AccountDashboard() {
                   )}
                 </div>
 
-                {selectedAccount.exchange === "Coinbase" && (
+                {(selectedAccount.exchange === "Coinbase" || selectedAccount.exchange === "Kraken") && (
                   <p className="mt-2 text-sm text-slate-400">
-                    Real balance — your own Coinbase account
+                    Real balance — your own {selectedAccount.exchange} account
                   </p>
                 )}
 
@@ -767,7 +771,9 @@ export default function AccountDashboard() {
                 "Oanda account: forex and CFD instruments are shown with FX pair formatting when applicable."}
               {selectedAccount.exchange === "Alpaca" &&
                 "Alpaca account: stock tickers shown in standard symbol format."}
-              {(selectedAccount.exchange === "Coinbase" || selectedAccount.exchange === "Binance") &&
+              {(selectedAccount.exchange === "Coinbase" ||
+                selectedAccount.exchange === "Binance" ||
+                selectedAccount.exchange === "Kraken") &&
                 "Crypto account: assets shown as crypto pairs (e.g. BTC/USD)."}
             </div>
           </div>

@@ -67,6 +67,8 @@ function normaliseSymbol(sym: string, exchange: string): string {
   const s = sym.trim().toUpperCase().replace(/\s/g, "");
   const ex = exchange.toLowerCase();
   if (ex === "binance" && /^BTC$/i.test(s)) return "BTCUSDT";
+  if (ex === "kraken" && /^BTC$/i.test(s)) return "XBTUSD";
+  if (ex === "kraken" && /^DOGE$/i.test(s)) return "XDGUSD";
   if (ex === "alpaca"  && /^BTC$/i.test(s)) return "BTC/USD";
   return s;
 }
@@ -775,7 +777,17 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
                       if (e.key === "Enter" && !odAnalyzing) { setSearchOpen(false); handleOnDemandAnalyze(); }
                       if (e.key === "Escape") setSearchOpen(false);
                     }}
-                    placeholder={selectedExchange === "alpaca" ? "Search e.g. Apple, AAPL, Tesla…" : selectedExchange === "binance" ? "Search e.g. Bitcoin, ETHUSDT…" : "Search e.g. Euro, EUR_USD…"}
+                    placeholder={
+                      selectedExchange === "alpaca"
+                        ? "Search e.g. Apple, AAPL, Tesla…"
+                        : selectedExchange === "binance"
+                          ? "Search e.g. Bitcoin, ETHUSDT…"
+                          : selectedExchange === "kraken"
+                            ? "Search e.g. Bitcoin, XBTUSD…"
+                            : selectedExchange === "coinbase"
+                              ? "Search e.g. Bitcoin, BTC-USD…"
+                              : "Search e.g. Euro, EUR_USD…"
+                    }
                     className="input font-mono text-sm pr-8"
                     disabled={odAnalyzing}
                     autoComplete="off"

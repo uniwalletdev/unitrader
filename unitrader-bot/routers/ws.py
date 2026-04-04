@@ -28,7 +28,7 @@ from jose import JWTError, jwt as jose_jwt
 
 from config import settings
 from security import verify_token
-from src.integrations.alpaca_rate_limiter import alpaca_limiter
+from src.integrations.alpaca_rate_limiter import alpaca_limiter, kraken_limiter
 from src.market_context import Exchange, ExchangeAssetClassError, normalize_symbol, resolve_market_context
 
 logger = logging.getLogger(__name__)
@@ -276,6 +276,33 @@ async def _fetch_binance_price(symbol: str) -> Dict[str, Any]:
     }
 
 
+async def _fetch_kraken_price(symbol: str) -> Dict[str, Any]:
+    """Fetch last trade price from Kraken public Ticker (no auth required)."""
+    await kraken_limiter.acquire()
+    url = "https://api.kraken.com/0/public/Ticker"
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        resp = await client.get(url, params={"pair": symbol.upper()})
+        resp.raise_for_status()
+        body = resp.json()
+    err = body.get("error")
+    if err:
+        raise ValueError(f"Kraken API error: {err}")
+    result = body.get("result") or {}
+    if not result:
+        raise ValueError(f"No Kraken ticker data for {symbol}")
+    pair_data = list(result.values())[0]
+    price = float(pair_data["c"][0])
+    return {
+        "symbol": symbol.upper(),
+        "price": price,
+        "bid": price,
+        "ask": price,
+        "bid_size": 0,
+        "ask_size": 0,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[str, Any]:
     """
     Fetch latest quote, routing to the correct data source based on symbol format:
@@ -311,6 +338,11 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
         if _is_stock_symbol(sym):
             raise ValueError("stocks_require_alpaca")
         return await _fetch_binance_price(sym)
+    if ex == "kraken":
+        # Pairs are e.g. XBTUSD; short equity tickers must not hit Kraken spot API.
+        if _is_stock_symbol(sym) and len(sym) <= 5:
+            raise ValueError("stocks_require_alpaca")
+        return await _fetch_kraken_price(sym)
 
     source = _classify_symbol(sym)
 

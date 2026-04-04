@@ -49,9 +49,13 @@ export const BRAND_MAP: Record<string, string> = {
   SPY: "S&P 500 ETF", VOO: "Vanguard S&P 500",
   NFLX: "Netflix", ORCL: "Oracle", AMD: "AMD", INTC: "Intel", CRM: "Salesforce",
   "BTC/USD": "Bitcoin", BTCUSDT: "Bitcoin",
+  XBTUSD: "Bitcoin",
   "ETH/USD": "Ethereum", ETHUSDT: "Ethereum",
+  ETHUSD: "Ethereum",
   "SOL/USD": "Solana", SOLUSDT: "Solana",
+  SOLUSD: "Solana",
   "DOGE/USD": "Dogecoin", DOGEUSDT: "Dogecoin",
+  XDGUSD: "Dogecoin",
   "XRP/USD": "XRP", XRPUSDT: "XRP",
   BNBUSDT: "BNB", ADAUSDT: "Cardano", DOTUSDT: "Polkadot",
   EUR_USD: "EUR/USD", GBP_USD: "GBP/USD", USD_JPY: "USD/JPY",
@@ -367,8 +371,9 @@ export default function BrandPicker({
   const effectiveLower = (resolvedExchange ?? exchange ?? "").toLowerCase();
   const coinbaseMode = effectiveLower === "coinbase";
   const binanceMode = effectiveLower === "binance";
+  const krakenMode = effectiveLower === "kraken";
   const oandaMode = effectiveLower === "oanda";
-  const cryptoOnly = coinbaseMode || binanceMode;
+  const cryptoOnly = coinbaseMode || binanceMode || krakenMode;
   const forexOnly = oandaMode;
   const stocksOnly = effectiveLower === "alpaca";
   const displayExchange = resolvedExchange ?? exchange;
@@ -437,11 +442,11 @@ export default function BrandPicker({
     didLockCryptoTab.current = true;
   }, [traderClass]);
 
-  // Coinbase mode: crypto only (stocks require Alpaca connection)
+  // Crypto venues: crypto only (stocks require Alpaca connection)
   useEffect(() => {
-    if (!coinbaseMode) return;
+    if (!cryptoOnly) return;
     if (category === "stocks") setCategory("crypto");
-  }, [coinbaseMode, category]);
+  }, [cryptoOnly, category]);
 
   // novice / saver: fetch live AI picks to power the featured row
   useEffect(() => {
@@ -476,7 +481,7 @@ export default function BrandPicker({
     const limit =
       ex === "alpaca" ? 9 :
       ex === "oanda" ? 8 :
-      12; // crypto exchange (coinbase/binance) default
+      12; // crypto exchange (coinbase/binance/kraken) default
 
     api
       .get("/api/trading/exchange-assets", {
@@ -562,7 +567,7 @@ export default function BrandPicker({
   const aiFeatureItemsForExchange = useMemo(() => {
     if (!aiFeatureItems || aiFeatureItems.length < 2) return null;
     const eff = effectiveLower;
-    if (eff === "coinbase" || eff === "binance") {
+    if (eff === "coinbase" || eff === "binance" || eff === "kraken") {
       const filtered = aiFeatureItems.filter((it) => {
         const s = it.symbol.trim();
         if (s.includes("/")) return true;

@@ -132,6 +132,7 @@ const QUICK_REPLIES: Record<TraderClass, Record<string, QuickReply[]>> = {
     exchange: [
       { label: "Stocks (Alpaca)",  value: "alpaca" },
       { label: "Crypto (Binance)", value: "binance" },
+      { label: "Crypto (Kraken)",  value: "kraken" },
       { label: "Both",             value: "mixed" },
     ],
   },
@@ -152,6 +153,7 @@ const QUICK_REPLIES: Record<TraderClass, Record<string, QuickReply[]>> = {
     exchange: [
       { label: "Coinbase Advanced Trade", value: "coinbase" },
       { label: "Binance",                 value: "binance" },
+      { label: "Kraken",                  value: "kraken" },
       { label: "I use a DEX mostly",      value: "dex" },
     ],
   },
@@ -243,6 +245,7 @@ function getLocalResponse(cls: TraderClass, field: string, value: string): strin
       alpaca:   "Alpaca confirmed — I'll trade US stocks and ETFs on your behalf.",
       binance:  "Binance confirmed — I'll trade crypto.",
       coinbase: "Coinbase Advanced Trade confirmed.",
+      kraken:   "Kraken confirmed — I'll trade crypto on your Kraken account.",
       mixed:    "Both markets — I'll diversify across stocks and crypto.",
       dex:      "DEX noted — I'll use centralised exchanges for now. DEX support coming soon.",
     };

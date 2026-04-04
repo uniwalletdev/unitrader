@@ -1370,6 +1370,7 @@ function TradePage() {
                         <option value="alpaca">Alpaca — Stocks & ETFs</option>
                         <option value="coinbase">Coinbase — Crypto</option>
                         <option value="binance">Binance — Crypto</option>
+                        <option value="kraken">Kraken — Crypto</option>
                         <option value="oanda">OANDA — Forex</option>
                       </select>
                     )}

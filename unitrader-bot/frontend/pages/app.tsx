@@ -250,7 +250,7 @@ function _LegacyDashboard({ user }: { user: User | null }) {
               {
                 num: "1",
                 title: "Connect your exchange",
-                desc: "Link Alpaca (free paper trading), Coinbase, Binance or OANDA. Your money stays in your account.",
+                desc: "Link Alpaca (free paper trading), Coinbase, Binance, Kraken, or OANDA. Your money stays in your account.",
                 hasButton: true,
               },
               {

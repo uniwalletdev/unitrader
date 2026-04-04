@@ -49,7 +49,7 @@ export function isMarketOpen(): boolean {
 /** True when manual trade execute should apply US equity hours (not crypto/forex). */
 export function isStocksTradingAsset(exchange: string, symbol: string): boolean {
   const ex = (exchange || "").toLowerCase();
-  if (ex === "binance" || ex === "coinbase") return false;
+  if (ex === "binance" || ex === "coinbase" || ex === "kraken") return false;
   if (ex === "oanda") return false;
   const s = (symbol || "").trim().toUpperCase();
   if (!s) return false;

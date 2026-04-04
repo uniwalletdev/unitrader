@@ -76,7 +76,7 @@ function isWeekendUTC(now: Date) {
 
 function getAssetClass(exchange?: string, symbol?: string): AssetClass {
   const ex = (exchange || "").toLowerCase();
-  if (ex === "binance" || ex === "coinbase") return "crypto";
+  if (ex === "binance" || ex === "coinbase" || ex === "kraken") return "crypto";
   if (ex === "oanda") return "forex";
   const s = (symbol || "").toUpperCase();
   if (s.includes("/") || s.endsWith("USDT") || s.endsWith("USDC")) return "crypto";

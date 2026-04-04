@@ -67,6 +67,16 @@ const EXCHANGES: ExchangeDef[] = [
     ],
   },
   {
+    id: "kraken",
+    name: "Kraken",
+    description: "Crypto exchange — spot trading (API key + base64 private key)",
+    docsUrl: "https://docs.kraken.com/rest/#section/Authentication/API-Keys",
+    fields: [
+      { key: "api_key", label: "API Key", placeholder: "Your Kraken API key" },
+      { key: "api_secret", label: "Private Key", placeholder: "Base64 private key from Kraken" },
+    ],
+  },
+  {
     id: "oanda",
     name: "OANDA",
     description: "Forex & CFDs — practice & live accounts",

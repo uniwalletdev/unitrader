@@ -1,9 +1,9 @@
 /**
  * Trading account currency helpers — display only (no FX conversion).
- * Alpaca / Coinbase / OANDA / Binance integrations are USD-denominated today.
+ * Alpaca / Coinbase / OANDA / Binance / Kraken integrations are USD-denominated today.
  */
 
-const USD_EXCHANGES = new Set(["alpaca", "coinbase", "oanda", "binance"]);
+const USD_EXCHANGES = new Set(["alpaca", "coinbase", "oanda", "binance", "kraken"]);
 
 /**
  * Resolve ISO currency code for display from API value or exchange default.

@@ -39,6 +39,7 @@ function exchangeLabel(ex: string): string {
     alpaca: "Alpaca",
     coinbase: "Coinbase",
     binance: "Binance",
+    kraken: "Kraken",
     oanda: "OANDA",
   };
   return map[ex.toLowerCase()] ?? ex;

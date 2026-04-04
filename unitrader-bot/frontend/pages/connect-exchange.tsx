@@ -81,6 +81,20 @@ const EXCHANGES = [
     secretPlaceholder: "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----",
     secretMultiline: true,
   },
+  {
+    id: "kraken",
+    name: "Kraken",
+    tagline: "Crypto",
+    description:
+      "Trade Bitcoin, Ethereum, and major crypto pairs on Kraken. Spot trading via REST API.",
+    signupUrl: "https://www.kraken.com/sign-up",
+    docsUrl: "https://docs.kraken.com/rest/#section/Authentication/API-Keys",
+    keyLabel: "API Key",
+    keyPlaceholder: "Your Kraken API key",
+    secretLabel: "Private Key",
+    secretPlaceholder: "Base64-encoded private key from Kraken",
+    secretMultiline: false,
+  },
 ] as const;
 
 // ─── Coinbase smart-paste helpers ─────────────────────────────────────────────
