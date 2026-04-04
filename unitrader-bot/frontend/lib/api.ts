@@ -180,7 +180,10 @@ export interface AccountBalance {
 }
 
 export const exchangeApi = {
-  list: () => api.get<{ status: string; data: ConnectedExchange[] }>("/api/trading/exchange-keys"),
+  list: (opts?: { timeout?: number }) =>
+    api.get<{ status: string; data: ConnectedExchange[] }>("/api/trading/exchange-keys", {
+      ...(opts?.timeout != null ? { timeout: opts.timeout } : {}),
+    }),
 
   balances: () =>
     api.get<{ status: string; data: AccountBalance[] }>("/api/trading/account-balances", { timeout: 30000 }),

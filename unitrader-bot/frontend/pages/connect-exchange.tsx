@@ -17,7 +17,11 @@ import {
   ToggleRight,
   Clipboard,
 } from "lucide-react";
-import { exchangeApi, type ConnectedExchange } from "@/lib/api";
+import {
+  exchangeApi,
+  type ConnectedExchange,
+  type ConnectExchangeResponse,
+} from "@/lib/api";
 import NeverHoldBanner from "@/components/layout/NeverHoldBanner";
 
 const EXCHANGES = [
@@ -104,6 +108,17 @@ function parseCbPaste(raw: string): CbPasteStatus {
 
 type ExchangeId = (typeof EXCHANGES)[number]["id"];
 
+function connectResponseToConnected(data: ConnectExchangeResponse): ConnectedExchange {
+  return {
+    trading_account_id: data.trading_account_id ?? null,
+    exchange: data.exchange,
+    account_label: data.account_label ?? null,
+    connected_at: data.connected_at ?? null,
+    is_paper: data.is_paper,
+    last_used: null,
+  };
+}
+
 export default function ConnectExchangePage() {
   const { isLoaded, isSignedIn } = useAuth();
   const router = useRouter();
@@ -123,6 +138,7 @@ export default function ConnectExchangePage() {
 
   const [submitting, setSubmitting] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const [message, setMessage] = useState<{
     type: "success" | "error";
     text: string;
@@ -136,10 +152,19 @@ export default function ConnectExchangePage() {
 
   const loadConnected = async () => {
     try {
-      const res = await exchangeApi.list();
+      const res = await exchangeApi.list({ timeout: 30000 });
       setConnected(res.data.data || []);
-    } catch {
-      setConnected([]);
+      setListError(null);
+    } catch (err: unknown) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      if (status === 401) {
+        setConnected([]);
+      }
+      if (status !== 401) {
+        setListError(
+          "Could not refresh connections. If you just connected, try refreshing the page."
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -149,8 +174,10 @@ export default function ConnectExchangePage() {
     if (isSignedIn) loadConnected();
   }, [isSignedIn]);
 
-  const isConnected = (id: string) => connected.some((c) => c.exchange === id);
-  const getConnection = (id: string) => connected.find((c) => c.exchange === id);
+  const connectionsForExchange = (exchangeId: string) =>
+    connected.filter((c) => c.exchange === exchangeId);
+
+  const isConnected = (id: string) => connectionsForExchange(id).length > 0;
 
   const resetForm = () => {
     setFormKey("");
@@ -199,6 +226,17 @@ export default function ConnectExchangePage() {
     try {
       const res = await exchangeApi.connect(exchangeId, formKey.trim(), formSecret.trim(), isPaper);
       const data = res.data.data;
+      const optimistic = connectResponseToConnected(data);
+      setConnected((prev) => {
+        const filtered = prev.filter((c) => {
+          if (c.exchange !== optimistic.exchange) return true;
+          if (c.trading_account_id && optimistic.trading_account_id) {
+            return c.trading_account_id !== optimistic.trading_account_id;
+          }
+          return c.is_paper !== optimistic.is_paper;
+        });
+        return [...filtered, optimistic];
+      });
       setMessage({
         type: "success",
         text: `${data.message}${data.balance_usd != null ? ` Balance: $${data.balance_usd.toLocaleString()}` : ""}`,
@@ -215,15 +253,24 @@ export default function ConnectExchangePage() {
     }
   };
 
-  const handleDisconnect = async (exchangeId: string) => {
-    if (!confirm(`Disconnect ${exchangeId}? You can reconnect later.`)) return;
-    setDisconnecting(exchangeId);
+  const handleDisconnect = async (connection: ConnectedExchange) => {
+    const label =
+      connection.account_label ||
+      `${connection.exchange} ${connection.is_paper ? "paper" : "live"}`;
+    if (!confirm(`Disconnect ${label}? You can reconnect later.`)) return;
+    const targetId =
+      connection.trading_account_id ||
+      `${connection.exchange}-${connection.is_paper ? "paper" : "live"}`;
+    setDisconnecting(targetId);
     setMessage(null);
     try {
-      await exchangeApi.disconnect(exchangeId);
+      await exchangeApi.disconnect(connection.exchange, {
+        trading_account_id: connection.trading_account_id || undefined,
+        is_paper: connection.is_paper,
+      });
       setMessage({
         type: "success",
-        text: `${exchangeId.charAt(0).toUpperCase() + exchangeId.slice(1)} disconnected.`,
+        text: `${label} disconnected.`,
       });
       await loadConnected();
     } catch {
@@ -270,6 +317,24 @@ export default function ConnectExchangePage() {
             <NeverHoldBanner />
           </div>
 
+          {listError && (
+            <div className="mb-6 flex flex-wrap items-center gap-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] px-4 py-3 text-sm text-amber-200">
+              <AlertCircle size={16} className="shrink-0 text-amber-400" />
+              <p className="min-w-0 flex-1 text-xs leading-relaxed">{listError}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setListError(null);
+                  setLoading(true);
+                  void loadConnected();
+                }}
+                className="shrink-0 rounded-lg border border-amber-500/30 px-3 py-1 text-xs font-medium text-amber-400 transition hover:bg-amber-500/10"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
           {message && !expandedId && (
             <div
               className={`mb-6 flex items-center gap-2 rounded-xl px-4 py-3 text-sm ${
@@ -291,7 +356,7 @@ export default function ConnectExchangePage() {
             <div className="grid gap-5 lg:grid-cols-3">
               {EXCHANGES.map((ex) => {
                 const active = isConnected(ex.id);
-                const conn = getConnection(ex.id);
+                const connInfo = connectionsForExchange(ex.id);
                 const expanded = expandedId === ex.id;
 
                 return (
@@ -334,38 +399,54 @@ export default function ConnectExchangePage() {
                         {ex.description}
                       </p>
 
-                      {active && conn && (
+                      {active && connInfo.length > 0 && (
                         <div className="mb-4 space-y-2">
-                          <div className="flex items-center gap-2 rounded-xl bg-brand-500/[0.06] border border-brand-500/10 px-3 py-2 text-xs">
-                            <CheckCircle size={13} className="text-brand-400" />
-                            <span className="text-brand-400 font-medium">
-                              {conn.is_paper ? "Paper Trading" : "Live Trading"}
-                            </span>
-                          </div>
-                          {conn.connected_at && (
-                            <p className="text-[10px] text-dark-600">
-                              Connected {new Date(conn.connected_at).toLocaleDateString()}
-                              {conn.last_used &&
-                                ` · Last used ${new Date(conn.last_used).toLocaleDateString()}`}
-                            </p>
-                          )}
+                          {connInfo.map((connection) => {
+                            const targetId =
+                              connection.trading_account_id ||
+                              `${connection.exchange}-${connection.is_paper ? "paper" : "live"}`;
+                            const rowLabel =
+                              connection.account_label ||
+                              `${ex.name} ${connection.is_paper ? "paper" : "live"}`;
+                            return (
+                              <div
+                                key={targetId}
+                                className="flex flex-col gap-2 rounded-xl border border-brand-500/15 bg-brand-500/[0.04] px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between"
+                              >
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2 text-xs">
+                                    <CheckCircle size={13} className="shrink-0 text-brand-400" />
+                                    <span className="font-medium text-brand-400">{rowLabel}</span>
+                                  </div>
+                                  {connection.connected_at && (
+                                    <p className="mt-1 pl-[21px] text-[10px] text-dark-500">
+                                      Connected{" "}
+                                      {new Date(connection.connected_at).toLocaleDateString()}
+                                      {connection.last_used &&
+                                        ` · Last used ${new Date(connection.last_used).toLocaleDateString()}`}
+                                    </p>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDisconnect(connection)}
+                                  disabled={disconnecting === targetId}
+                                  className="flex shrink-0 items-center justify-center gap-1.5 rounded-lg border border-red-500/25 px-3 py-1.5 text-[10px] font-medium text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
+                                >
+                                  {disconnecting === targetId ? (
+                                    <Loader2 size={12} className="animate-spin" />
+                                  ) : (
+                                    <Unlink size={12} />
+                                  )}
+                                  Disconnect
+                                </button>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
 
-                      {active ? (
-                        <button
-                          onClick={() => handleDisconnect(ex.id)}
-                          disabled={disconnecting === ex.id}
-                          className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-500/20 py-2.5 text-xs font-medium text-red-400 transition-colors hover:bg-red-500/10 disabled:opacity-50"
-                        >
-                          {disconnecting === ex.id ? (
-                            <Loader2 size={13} className="animate-spin" />
-                          ) : (
-                            <Unlink size={13} />
-                          )}
-                          Disconnect
-                        </button>
-                      ) : (
+                      {!active ? (
                         <button
                           onClick={() => handleExpand(ex.id)}
                           className={`flex w-full items-center justify-center gap-2 rounded-xl py-2.5 text-xs font-medium transition-all ${
@@ -377,7 +458,7 @@ export default function ConnectExchangePage() {
                           <Link2 size={13} />
                           {expanded ? "Cancel" : "Connect"}
                         </button>
-                      )}
+                      ) : null}
                     </div>
 
                     {expanded && !active && (
