@@ -22,6 +22,7 @@ import httpx
 
 from config import settings
 from src.agents.shared_memory import SharedContext
+from src.integrations.alpaca_rate_limiter import alpaca_limiter
 from src.market_context import Exchange, MarketContext
 
 logger = logging.getLogger(__name__)
@@ -207,6 +208,7 @@ class SentimentAgent:
 
         try:
             async with httpx.AsyncClient(timeout=10) as client:
+                await alpaca_limiter.acquire()
                 response = await client.get(url, headers=headers, params=params)
                 response.raise_for_status()
                 data = response.json()

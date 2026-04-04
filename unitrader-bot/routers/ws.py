@@ -28,6 +28,7 @@ from jose import JWTError, jwt as jose_jwt
 
 from config import settings
 from security import verify_token
+from src.integrations.alpaca_rate_limiter import alpaca_limiter
 from src.market_context import Exchange, ExchangeAssetClassError, normalize_symbol, resolve_market_context
 
 logger = logging.getLogger(__name__)
@@ -338,6 +339,7 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
         for _ in range(3):
             try:
                 async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
+                    await alpaca_limiter.acquire()
                     resp = await client.get(url, params=params)
                 if resp.status_code == 429:
                     retry_after = resp.headers.get("retry-after")
@@ -425,7 +427,7 @@ async def _poll_and_broadcast(symbol: str, exchange: str | None = None):
     Runs until the symbol has no more subscribers.
     """
     logger.info(f"Starting price poll for {symbol}")
-    poll_interval = 3  # seconds — stay within Alpaca free-tier rate limits
+    poll_interval = 15  # seconds — stay within Alpaca free-tier rate limits
     error_count = 0
     max_errors = 5
 

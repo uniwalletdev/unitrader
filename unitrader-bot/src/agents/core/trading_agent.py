@@ -35,6 +35,7 @@ from models import (
 )
 from security import decrypt_api_key
 from src.agents.shared_memory import SharedContext
+from src.integrations.alpaca_rate_limiter import alpaca_limiter
 from src.integrations.exchange_client import get_exchange_client
 from src.integrations.market_data import full_market_analysis, normalise_symbol as legacy_normalise_symbol
 from src.market_context import (
@@ -1826,6 +1827,7 @@ Provide your detailed technical analysis with the specified JSON format."""
                     crypto_symbol = symbol.replace("USDT", "").replace("USD", "").upper()
                     url = f"{alpaca_url}/v1beta3/crypto/us/latest/quotes"
                     params = {"symbols": crypto_symbol}
+                    await alpaca_limiter.acquire()
                     response = await client.get(url, headers=headers, params=params)
                     if response.status_code == 200:
                         data = response.json()

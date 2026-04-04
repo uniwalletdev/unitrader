@@ -58,10 +58,7 @@ SYMBOL_UNIVERSE: dict[str, list[str]] = {
     ],
 }
 
-# Explicit stock/crypto universes for the new MarketContext-aware scorer.
-# These mirror the exchange-specific universes above, but keep the branching logic
-# simple and auditable.
-STOCK_UNIVERSE: list[str] = list(SYMBOL_UNIVERSE["alpaca"])
+# Crypto universe for MarketContext-aware scorer (mirrors binance/coinbase lists).
 CRYPTO_UNIVERSE: list[str] = [
     "BTC-USD",
     "ETH-USD",
@@ -154,7 +151,7 @@ async def score_universe(market_context: MarketContext | None = None) -> list[st
     return []
 
 
-async def _score_stocks_alpaca(universe: list[str], top_n: int = 15) -> list[str]:
+async def _score_stocks_alpaca(universe: list[str], top_n: int = 10) -> list[str]:
     """Quickly score a stock universe using only raw market data (no Claude).
 
     Fetches price_change_pct and volume sequentially with a short delay between

@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 
 from config import settings
+from src.integrations.alpaca_rate_limiter import alpaca_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ async def _alpaca_get_with_retry(
     """GET with retries on HTTP 429 only (Alpaca market data rate limits)."""
     last: httpx.Response | None = None
     for attempt in range(len(_ALPACA_429_BACKOFF_SEC) + 1):
+        await alpaca_limiter.acquire()
         resp = await client.get(url, params=params)
         last = resp
         if resp.status_code != 429:
@@ -529,11 +531,11 @@ async def _fetch_alpaca_crypto_closes(symbol: str, limit: int) -> list[float]:
     if getattr(settings, "alpaca_api_secret", None):
         headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
     async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
-        resp = await client.get(
+        resp = await _alpaca_get_with_retry(
+            client,
             f"{base}/v1beta3/crypto/us/bars",
             params={"symbols": symbol, "timeframe": "5Min", "limit": limit},
         )
-        resp.raise_for_status()
     bars = (resp.json() or {}).get("bars", {}).get(symbol, []) or []
     return [float(b["c"]) for b in bars]
 
@@ -546,11 +548,11 @@ async def _fetch_alpaca_stock_closes(symbol: str, limit: int) -> list[float]:
     if getattr(settings, "alpaca_api_secret", None):
         headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
     async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
-        resp = await client.get(
+        resp = await _alpaca_get_with_retry(
+            client,
             f"{base}/v2/stocks/{symbol}/bars",
             params={"timeframe": "5Min", "limit": limit},
         )
-        resp.raise_for_status()
     return [float(b["c"]) for b in (resp.json() or {}).get("bars", []) or []]
 
 

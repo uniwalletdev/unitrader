@@ -400,6 +400,11 @@ async def _trading_loop() -> None:
     logger.info("Trading loop started")
     while True:
         try:
+            if not is_market_open():
+                logger.info("Trading loop: market closed — skipping cycle")
+                await asyncio.sleep(300)
+                continue
+
             async with AsyncSessionLocal() as db:
                 result = await db.execute(
                     select(User).where(User.is_active == True)  # noqa: E712
@@ -564,6 +569,8 @@ async def _trading_loop() -> None:
 
         except Exception as exc:
             logger.error("Trading loop outer error: %s", exc)
+
+        await asyncio.sleep(300)
 
 
 # ─────────────────────────────────────────────

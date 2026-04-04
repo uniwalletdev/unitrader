@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import get_db
 from schemas import HealthResponse, ServiceStatus
+from src.integrations.alpaca_rate_limiter import alpaca_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,10 @@ async def health_check():
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now(timezone.utc),
+        alpaca_rate_limiter={
+            "waiting": alpaca_limiter.waiting,
+            "tokens": round(alpaca_limiter.tokens, 2),
+        },
     )
 
 

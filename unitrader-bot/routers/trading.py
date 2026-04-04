@@ -52,6 +52,7 @@ from schemas import SuccessResponse, TradeResponse
 from security import encrypt_api_key, hash_api_key, decrypt_api_key
 from src.agents.goal_tracking_agent import GoalTrackingAgent
 from src.agents.shared_memory import SharedMemory
+from src.integrations.alpaca_rate_limiter import alpaca_limiter
 from src.integrations.market_data import classify_asset
 from src.agents.orchestrator import get_orchestrator
 from src.integrations.exchange_client import (
@@ -556,8 +557,8 @@ async def get_market_top(
     """Return the day's top AI-ranked opportunities from a large symbol universe.
 
     Unlike /ai-picks which analyses a fixed list, this endpoint:
-    1. Scans 40-80 symbols per exchange using fast momentum pre-scoring
-    2. Selects the top 15 candidates by price change % and volume
+    1. Scans the exchange universe using fast momentum pre-scoring
+    2. Selects the top 5 candidates by price change % and volume
     3. Runs full Claude AI analysis on those candidates only
     4. Returns the top `limit` symbols by AI confidence
 
@@ -606,7 +607,7 @@ async def get_market_top(
             except Exception:
                 req_market_context = None
 
-        candidates = (await score_universe(market_context=req_market_context))[:15]
+        candidates = (await score_universe(market_context=req_market_context))[:5]
 
         # Step 2: AI analysis of candidates only
         ctx = await SharedMemory.load(current_user.id, db, trading_account_id=trading_account_id)
@@ -766,7 +767,7 @@ async def get_ai_picks(
 ):
     """Analyse dynamic top candidates and return picks without executing.
 
-    Uses score_universe() to pre-filter the scanning universe down to 15
+    Uses score_universe() to pre-filter the scanning universe down to 5
     candidates, then runs full AI analysis and returns the highest-confidence
     results sorted by confidence descending.
     """
@@ -788,7 +789,7 @@ async def get_ai_picks(
         ctx.exchange = market_ctx.exchange.value
 
         # Dynamic candidates instead of fixed watchlist
-        symbols = (await score_universe(market_context=market_ctx))[:15]
+        symbols = (await score_universe(market_context=market_ctx))[:5]
 
         agent = TradingAgent(user_id=current_user.id)
         semaphore = asyncio.Semaphore(3)
@@ -1337,6 +1338,7 @@ async def get_ohlcv(
         base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
         url = f"{base}/v2/stocks/{sym}/bars"
         async with httpx.AsyncClient(timeout=10.0, headers=headers) as client:
+            await alpaca_limiter.acquire()
             resp = await client.get(url, params={"timeframe": "1Day", "limit": days})
             resp.raise_for_status()
             payload = resp.json()
@@ -1428,6 +1430,7 @@ async def simulate_history(
     async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
         for sym in symbol_list:
             try:
+                await alpaca_limiter.acquire()
                 resp = await client.get(
                     f"{base}/v2/stocks/{sym}/bars",
                     params={"timeframe": "1Day", "limit": limit},
