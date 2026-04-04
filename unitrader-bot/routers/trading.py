@@ -391,7 +391,9 @@ async def list_exchange_keys(
 ):
     """List all connected exchanges for the current user (no secrets exposed)."""
     result = await db.execute(
-        select(ExchangeAPIKey).where(
+        select(ExchangeAPIKey)
+        .options(selectinload(ExchangeAPIKey.trading_account))
+        .where(
             ExchangeAPIKey.user_id == current_user.id,
             ExchangeAPIKey.is_active == True,  # noqa: E712
         )
@@ -427,7 +429,9 @@ async def disconnect_exchange(
 ):
     """Deactivate exchange keys (soft-delete)."""
     result = await db.execute(
-        select(ExchangeAPIKey).where(
+        select(ExchangeAPIKey)
+        .options(selectinload(ExchangeAPIKey.trading_account))
+        .where(
             ExchangeAPIKey.user_id == current_user.id,
             ExchangeAPIKey.exchange == exchange.lower(),
             *((
