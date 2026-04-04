@@ -18,7 +18,7 @@ from typing import Any
 import httpx
 
 from config import settings
-from src.integrations.alpaca_rate_limiter import alpaca_limiter
+from src.integrations.alpaca_rate_limiter import alpaca_limiter, kraken_limiter
 
 logger = logging.getLogger(__name__)
 
@@ -71,13 +71,32 @@ EXCHANGE_CAPABILITIES = {
     "alpaca": {"stocks": True, "crypto": True, "forex": False},
     "binance": {"stocks": False, "crypto": True, "forex": False},
     "coinbase": {"stocks": False, "crypto": True, "forex": False},
+    "kraken": {"stocks": False, "crypto": True, "forex": False},
     "oanda": {"stocks": False, "crypto": False, "forex": True},
 }
 
 CRYPTO_SYMBOLS = {
-    "BTC", "ETH", "SOL", "DOGE", "ADA", "XRP",
-    "AVAX", "DOT", "MATIC", "LINK", "LTC", "BCH",
-    "UNI", "ATOM", "ALGO", "XLM", "VET", "FIL", "BNB",
+    "BTC",
+    "XBT",
+    "ETH",
+    "SOL",
+    "DOGE",
+    "XDG",
+    "ADA",
+    "XRP",
+    "AVAX",
+    "DOT",
+    "MATIC",
+    "LINK",
+    "LTC",
+    "BCH",
+    "UNI",
+    "ATOM",
+    "ALGO",
+    "XLM",
+    "VET",
+    "FIL",
+    "BNB",
 }
 
 FOREX_PAIRS = {
@@ -171,6 +190,19 @@ def normalise_symbol(symbol: str, exchange: str) -> str:
                 base = base[: -len(s)]
         return f"{base}-USD"
 
+    if ex == "kraken":
+        if asset_type != "crypto":
+            raise ValueError(
+                f"Kraken only supports crypto — cannot trade {symbol} ({asset_type})"
+            )
+        base = clean.split("/")[0].split("_")[0].split("-")[0]
+        for s in ["USDT", "USDC", "BUSD", "USD"]:
+            if base.endswith(s):
+                base = base[: -len(s)]
+        kraken_map = {"BTC": "XBT", "DOGE": "XDG"}
+        kb = kraken_map.get(base, base)
+        return f"{kb}USD"
+
     if ex == "oanda":
         if asset_type != "forex":
             raise ValueError(
@@ -250,6 +282,8 @@ async def fetch_market_data(symbol: str, exchange: str) -> dict:
         return await _fetch_binance(normalised)
     if ex == "coinbase":
         return await _fetch_coinbase_spot(normalised)
+    if ex == "kraken":
+        return await _fetch_kraken(normalised)
     if ex == "oanda":
         return await _fetch_oanda(normalised)
     
@@ -271,6 +305,38 @@ async def _fetch_binance(symbol: str) -> dict:
         "low_24h": float(d["lowPrice"]),
         "volume": float(d["quoteVolume"]),
         "price_change_pct": float(d["priceChangePercent"]),
+        "timestamp": datetime.now(timezone.utc),
+    }
+
+
+async def _fetch_kraken(symbol: str) -> dict:
+    """Symbol already normalised to e.g. XBTUSD. Public Ticker only — no auth."""
+    await kraken_limiter.acquire()
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.get(
+            "https://api.kraken.com/0/public/Ticker",
+            params={"pair": symbol},
+        )
+        resp.raise_for_status()
+        data = resp.json().get("result", {})
+        if not data:
+            raise ValueError(f"No Kraken ticker data for {symbol}")
+        pair_data = list(data.values())[0]
+        price = float(pair_data["c"][0])
+        high = float(pair_data["h"][1])
+        low = float(pair_data["l"][1])
+        volume = float(pair_data["v"][1])
+        price_change_pct = 0.0
+        if low:
+            price_change_pct = abs(high - low) / low * 100
+
+    return {
+        "symbol": symbol,
+        "price": price,
+        "high_24h": high,
+        "low_24h": low,
+        "volume": volume,
+        "price_change_pct": price_change_pct,
         "timestamp": datetime.now(timezone.utc),
     }
 
@@ -505,6 +571,8 @@ async def fetch_ohlcv(symbol: str, exchange: str, limit: int = 200) -> list[floa
 
     if ex == "binance":
         return await _fetch_binance_closes(normalised, limit)
+    if ex == "kraken":
+        return await _fetch_kraken_closes(normalised, limit)
     if ex == "alpaca" and asset_type == "crypto":
         return await _fetch_alpaca_crypto_closes(normalised, limit)
     if ex == "alpaca" and asset_type == "stock":
@@ -521,6 +589,23 @@ async def _fetch_binance_closes(symbol: str, limit: int) -> list[float]:
         resp = await client.get(url, params={"symbol": symbol, "interval": "5m", "limit": limit})
         resp.raise_for_status()
     return [float(candle[4]) for candle in resp.json()]  # index 4 = close
+
+
+async def _fetch_kraken_closes(symbol: str, limit: int) -> list[float]:
+    """Last `limit` closes from Kraken OHLC (5-minute bars)."""
+    await kraken_limiter.acquire()
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+        resp = await client.get(
+            "https://api.kraken.com/0/public/OHLC",
+            params={"pair": symbol, "interval": 5},
+        )
+        resp.raise_for_status()
+        data = resp.json().get("result", {})
+        if not data:
+            return []
+        rows = list(data.values())[0]
+        closes = [float(row[4]) for row in rows[-limit:]]
+        return closes
 
 
 async def _fetch_alpaca_crypto_closes(symbol: str, limit: int) -> list[float]:

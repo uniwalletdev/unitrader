@@ -79,6 +79,9 @@ class AlpacaRateLimiter:
 # Module-level singleton — import this everywhere
 alpaca_limiter = AlpacaRateLimiter(rate=2.5, burst=8)
 
+# Kraken public API: ~1 call/second — separate bucket so Alpaca limits stay independent.
+kraken_limiter = AlpacaRateLimiter(rate=1.0, burst=3)
+
 
 async def alpaca_request(
     client: httpx.AsyncClient,

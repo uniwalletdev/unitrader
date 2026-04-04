@@ -61,7 +61,6 @@ const EXCHANGES: ExchangeDef[] = [
     name: "Binance",
     description: "Global crypto exchange — spot trading",
     docsUrl: "https://www.binance.com/en/my/settings/api-management",
-    comingSoon: true,
     fields: [
       { key: "api_key", label: "API Key", placeholder: "Your Binance API key" },
       { key: "api_secret", label: "Secret Key", placeholder: "Your Binance secret key" },

@@ -17,6 +17,7 @@ class Exchange(str, Enum):
     COINBASE = "coinbase"
     BINANCE = "binance"
     OANDA = "oanda"
+    KRAKEN = "kraken"
 
 
 class AssetClass(str, Enum):
@@ -31,15 +32,18 @@ EXCHANGE_ASSET_CLASSES: dict[Exchange, set[AssetClass]] = {
     Exchange.ALPACA: {AssetClass.STOCKS, AssetClass.CRYPTO},
     Exchange.COINBASE: {AssetClass.CRYPTO},
     Exchange.BINANCE: {AssetClass.CRYPTO},
+    Exchange.KRAKEN: {AssetClass.CRYPTO},
     Exchange.OANDA: {AssetClass.FOREX},
 }
 
 
 CRYPTO_BASES = {
     "BTC",
+    "XBT",
     "ETH",
     "SOL",
     "DOGE",
+    "XDG",
     "ADA",
     "XRP",
     "AVAX",
@@ -109,6 +113,16 @@ def normalize_symbol(symbol: str, exchange: Exchange) -> str:
         if asset_class != AssetClass.CRYPTO:
             raise ExchangeAssetClassError(exchange, symbol, asset_class)
         return f"{base}USDT"
+
+    if exchange == Exchange.KRAKEN:
+        if asset_class != AssetClass.CRYPTO:
+            raise ExchangeAssetClassError(exchange, symbol, asset_class)
+        kraken_map = {
+            "BTC": "XBT",
+            "DOGE": "XDG",
+        }
+        kb = kraken_map.get(base, base)
+        return f"{kb}USD"
 
     if exchange == Exchange.ALPACA:
         if asset_class == AssetClass.STOCKS:

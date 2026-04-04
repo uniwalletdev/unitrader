@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/exchanges", tags=["Exchanges"])
 
 @router.get("/test-connection")
 async def test_exchange_connection(
-    exchange: str = Query(..., regex="^(alpaca|binance|oanda|coinbase)$"),
+    exchange: str = Query(..., regex="^(alpaca|binance|oanda|coinbase|kraken)$"),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -108,6 +108,8 @@ async def test_exchange_connection(
                 account_info = await _test_oanda(client, api_key, api_secret)
             elif exchange == "coinbase":
                 account_info = await _test_coinbase(client, api_key, api_secret)
+            elif exchange == "kraken":
+                account_info = await _test_kraken(api_key, api_secret)
             else:
                 raise ValueError(f"Unknown exchange: {exchange}")
 
@@ -298,6 +300,26 @@ async def _test_coinbase(client: httpx.AsyncClient, api_key: str, api_secret: st
         "buying_power": 0.0,
         "currency": "USD",
     }
+
+
+# ─────────────────────────────────────────────
+# Helper: Test Kraken connection
+# ─────────────────────────────────────────────
+
+async def _test_kraken(api_key: str, api_secret: str) -> dict:
+    """Kraken private Balance — returns ZUSD as buying_power."""
+    from src.integrations.kraken_client import KrakenClient
+
+    k = KrakenClient(api_key, api_secret)
+    try:
+        buying_power = await k.get_account_balance()
+        return {
+            "account_id": "kraken",
+            "buying_power": buying_power,
+            "currency": "USD",
+        }
+    finally:
+        await k.aclose()
 
 
 # ─────────────────────────────────────────────

@@ -59,8 +59,9 @@ from src.integrations.exchange_client import (
     get_exchange_client,
     validate_alpaca_keys,
     validate_binance_keys,
-    validate_oanda_keys,
     validate_coinbase_keys,
+    validate_kraken_keys,
+    validate_oanda_keys,
 )
 from src.services.trade_monitoring import enforce_loss_limits
 from src.services.subscription import check_trade_limit
@@ -115,13 +116,13 @@ class ClosePositionRequest(BaseModel):
 
 
 class ConnectExchangeRequest(BaseModel):
-    exchange: str = Field(..., pattern="^(alpaca|binance|oanda|coinbase)$")
+    exchange: str = Field(..., pattern="^(alpaca|binance|oanda|coinbase|kraken)$")
     api_key: str = Field(..., min_length=1)
     api_secret: str = Field(..., min_length=1)
     is_paper: bool = Field(True, description="Whether these are paper/sandbox keys")
 
 
-VALID_EXCHANGES = {"alpaca", "binance", "oanda", "coinbase"}
+VALID_EXCHANGES = {"alpaca", "binance", "oanda", "coinbase", "kraken"}
 
 
 def _account_label(exchange: str, is_paper: bool) -> str:
@@ -247,6 +248,10 @@ async def _validate_exchange_keys(exchange: str, api_key: str, api_secret: str, 
             valid = await validate_oanda_keys(api_key, api_secret)
             if not valid:
                 raise ValueError("OANDA rejected the credentials")
+        elif exchange == "kraken":
+            valid = await validate_kraken_keys(api_key, api_secret)
+            if not valid:
+                raise ValueError("Kraken rejected the credentials")
         elif exchange == "coinbase":
             import httpx as _httpx
             try:
@@ -421,7 +426,7 @@ async def list_exchange_keys(
 
 @router.delete("/exchange-keys/{exchange}")
 async def disconnect_exchange(
-    exchange: str = Path(..., pattern="^(alpaca|binance|oanda|coinbase)$"),
+    exchange: str = Path(..., pattern="^(alpaca|binance|oanda|coinbase|kraken)$"),
     trading_account_id: str | None = Query(None),
     is_paper: bool | None = Query(None),
     current_user=Depends(get_current_user),
@@ -551,7 +556,7 @@ _MARKET_TOP_TTL_MINUTES = 60
 
 @router.get("/market-top")
 async def get_market_top(
-    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase|kraken)$"),
     trading_account_id: str | None = Query(default=None),
     limit: int = Query(default=5, ge=1, le=10),
     refresh: bool = Query(default=False),
@@ -581,7 +586,7 @@ async def get_market_top(
             db=db, user_id=current_user.id, trading_account_id=trading_account_id
         )
         ex = req_market_context.exchange.value
-    if ex not in {"alpaca", "binance", "oanda", "coinbase"}:
+    if ex not in {"alpaca", "binance", "oanda", "coinbase", "kraken"}:
         raise HTTPException(status_code=400, detail="unsupported_exchange")
 
     # Return cached result if still fresh
@@ -683,7 +688,7 @@ async def get_market_top(
 
 @router.get("/exchange-assets")
 async def get_exchange_assets(
-    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase|kraken)$"),
     trading_account_id: str | None = Query(default=None),
     limit: int = Query(default=8, ge=1, le=20),
     current_user=Depends(get_current_user),
@@ -725,7 +730,7 @@ async def get_exchange_assets(
 @router.get("/symbol-search")
 async def search_symbols(
     q: str = Query(min_length=1, max_length=50),
-    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase|kraken)$"),
     trading_account_id: str | None = Query(default=None),
     limit: int = Query(default=8, ge=1, le=20),
     current_user=Depends(get_current_user),
@@ -763,7 +768,7 @@ async def search_symbols(
 
 @router.get("/ai-picks")
 async def get_ai_picks(
-    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase)$"),
+    exchange: str = Query(default="alpaca", pattern="^(alpaca|binance|oanda|coinbase|kraken)$"),
     trading_account_id: str = Query(...),
     limit: int = Query(default=3, ge=1, le=10),
     current_user=Depends(get_current_user),

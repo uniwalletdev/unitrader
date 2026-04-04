@@ -953,6 +953,17 @@ async def validate_coinbase_keys(api_key: str, api_secret: str) -> bool:
         await client.aclose()
 
 
+async def validate_kraken_keys(api_key: str, api_secret: str) -> bool:
+    """Verify Kraken credentials via private Balance."""
+    from src.integrations.kraken_client import KrakenClient
+
+    client = KrakenClient(api_key, api_secret)
+    try:
+        return await client.validate_credentials()
+    finally:
+        await client.aclose()
+
+
 # ─────────────────────────────────────────────
 # Factory
 # ─────────────────────────────────────────────
@@ -991,4 +1002,10 @@ def get_exchange_client(
         return OandaClient(api_key, api_secret, account_id=kwargs.get("account_id"))
     if exchange == "coinbase":
         return CoinbaseClient(api_key, api_secret)
-    raise ValueError(f"Unsupported exchange: '{exchange}'. Choose binance, alpaca, oanda, or coinbase.")
+    if exchange == "kraken":
+        from src.integrations.kraken_client import KrakenClient
+
+        return KrakenClient(api_key, api_secret)
+    raise ValueError(
+        f"Unsupported exchange: '{exchange}'. Choose binance, alpaca, oanda, coinbase, or kraken."
+    )

@@ -26,6 +26,19 @@ CRYPTO_UNIVERSE = [
     "AVAX-USD", "LINK-USD", "MATIC-USD", "DOT-USD", "UNI-USD",
 ]
 
+KRAKEN_UNIVERSE = [
+    "XBTUSD",
+    "ETHUSD",
+    "SOLUSD",
+    "XDGUSD",
+    "ADAUSD",
+    "AVAXUSD",
+    "LINKUSD",
+    "DOTUSD",
+    "UNIUSD",
+    "ATOMUSD",
+]
+
 # ─────────────────────────────────────────────
 # Full scanning universe (never shown to users directly)
 # ─────────────────────────────────────────────
@@ -43,6 +56,7 @@ SYMBOL_UNIVERSE: dict[str, list[str]] = {
         "INJUSDT", "SUIUSDT", "SEIUSDT", "TIAUSDT",
     ],
     "coinbase": list(CRYPTO_UNIVERSE),
+    "kraken": list(KRAKEN_UNIVERSE),
     "oanda": [
         "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD",
         "NZD_USD", "USD_CHF", "EUR_GBP", "EUR_JPY", "GBP_JPY",
@@ -93,6 +107,11 @@ SYMBOL_LABELS: dict[str, str] = {
     "LINK-USD": "Chainlink", "MATIC-USD": "Polygon", "DOGE-USD": "Dogecoin",
     "LTC-USD": "Litecoin", "NEAR-USD": "NEAR Protocol", "APT-USD": "Aptos",
     "OP-USD": "Optimism", "INJ-USD": "Injective", "XRP-USD": "XRP (Ripple)",
+    # Crypto (Kraken)
+    "XBTUSD": "Bitcoin", "ETHUSD": "Ethereum", "SOLUSD": "Solana",
+    "XDGUSD": "Dogecoin", "ADAUSD": "Cardano", "AVAXUSD": "Avalanche",
+    "LINKUSD": "Chainlink", "DOTUSD": "Polkadot", "UNIUSD": "Uniswap",
+    "ATOMUSD": "Cosmos",
     # Forex (OANDA)
     "EUR_USD": "Euro / US Dollar", "GBP_USD": "British Pound / US Dollar",
     "USD_JPY": "US Dollar / Japanese Yen", "AUD_USD": "Australian Dollar / USD",
@@ -117,6 +136,8 @@ async def score_universe(market_context=None) -> list[str]:
         return await _score_crypto_binance(
             [s.replace("-USD", "USDT") for s in CRYPTO_UNIVERSE]
         )
+    elif market_context.exchange.value == "kraken":
+        return await _score_crypto_kraken(KRAKEN_UNIVERSE)
     else:
         return []
 
@@ -170,6 +191,42 @@ async def _score_crypto_coinbase(universe: list[str]) -> list[str]:
 
 async def _score_crypto_binance(universe: list[str]) -> list[str]:
     return universe
+
+
+async def _score_crypto_kraken(universe: list[str]) -> list[str]:
+    """
+    Score Kraken crypto pairs using public ticker data.
+    No API key required — Kraken public endpoints are open.
+    """
+    import httpx
+
+    from src.integrations.alpaca_rate_limiter import kraken_limiter
+
+    scored: list[tuple[str, float]] = []
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        for symbol in universe:
+            try:
+                await kraken_limiter.acquire()
+                resp = await client.get(
+                    "https://api.kraken.com/0/public/Ticker",
+                    params={"pair": symbol},
+                )
+                resp.raise_for_status()
+                data = resp.json().get("result", {})
+                if not data:
+                    continue
+                pair_data = list(data.values())[0]
+                volume_24h = float(pair_data["v"][1])
+                high_24 = float(pair_data["h"][1])
+                low_24 = float(pair_data["l"][1])
+                price_change = abs(high_24 - low_24) / low_24 * 100 if low_24 else 0.0
+                score = volume_24h * price_change
+                scored.append((symbol, score))
+            except Exception as exc:
+                logger.warning("score_universe: skipping %s — %s", symbol, exc)
+                continue
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return [s[0] for s in scored[:8]]
 
 
 def symbol_search(query: str, exchange: str | None = None, limit: int = 8) -> list[dict]:

@@ -452,7 +452,7 @@ class TestConnectExchangeRequest:
         from routers.trading import ConnectExchangeRequest
         with pytest.raises(Exception):
             ConnectExchangeRequest(
-                exchange="kraken", api_key="k", api_secret="s", is_paper=True
+                exchange="not_an_exchange", api_key="k", api_secret="s", is_paper=True
             )
 
     def test_is_paper_defaults_true(self):
