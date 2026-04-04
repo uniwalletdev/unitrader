@@ -4,6 +4,8 @@ import {
   CheckCircle, AlertCircle, Loader2, ExternalLink, Clipboard,
 } from "lucide-react";
 import { exchangeApi } from "@/lib/api";
+import ExchangeApiKeyGuide from "@/components/exchange/ExchangeApiKeyGuide";
+import { getExchangeApiKeyGuide } from "@/lib/exchangeApiKeyGuides";
 
 interface ConnectedExchange {
   trading_account_id?: string | null;
@@ -454,7 +456,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
 
                     {/* Collapsible how-to guide */}
                     <details className="mt-3">
-                      <summary className="cursor-pointer text-[10px] text-dark-600 hover:text-dark-400">
+                      <summary className="flex min-h-11 cursor-pointer list-none items-center text-xs text-dark-600 hover:text-dark-400 sm:min-h-0 sm:text-[10px] [&::-webkit-details-marker]:hidden">
                         How to get your Coinbase CDP keys
                       </summary>
                       <ol className="mt-2 list-decimal space-y-1 pl-4 text-[10px] text-dark-500">
@@ -467,17 +469,14 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                   </>
                 ) : (
                   <>
-                    <div className="mb-3 flex items-center gap-1 text-[10px] text-dark-500">
-                      Get your API keys from
-                      <a
-                        href={exchange.docsUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-0.5 text-brand-400 hover:underline"
-                      >
-                        {exchange.name} dashboard <ExternalLink size={9} />
-                      </a>
-                    </div>
+                    {(() => {
+                      const g = getExchangeApiKeyGuide(exchange.id);
+                      return g ? (
+                        <div className="mb-3">
+                          <ExchangeApiKeyGuide guide={g} />
+                        </div>
+                      ) : null;
+                    })()}
                     <div className="space-y-3">
                       {exchange.fields.map((field) => {
                         const fieldId = `${exchange.id}_${field.key}`;
@@ -515,7 +514,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                                   onClick={() =>
                                     setShowSecrets((s) => ({ ...s, [fieldId]: !s[fieldId] }))
                                   }
-                                  className="absolute right-2 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-300"
+                                  className="absolute right-1 top-1/2 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center text-dark-500 hover:text-dark-300 sm:right-2 sm:min-h-0 sm:min-w-0"
                                 >
                                   {showSecrets[fieldId] ? <EyeOff size={14} /> : <Eye size={14} />}
                                 </button>
@@ -527,7 +526,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                     </div>
                   </>
                 )}
-                <div className="mt-4 flex items-center gap-3">
+                <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                   <button
                     onClick={() => handleConnect(exchange.id)}
                     disabled={submitting}

@@ -23,6 +23,8 @@ import {
   type ConnectExchangeResponse,
 } from "@/lib/api";
 import NeverHoldBanner from "@/components/layout/NeverHoldBanner";
+import ExchangeApiKeyGuide from "@/components/exchange/ExchangeApiKeyGuide";
+import { getExchangeApiKeyGuide } from "@/lib/exchangeApiKeyGuides";
 
 const EXCHANGES = [
   {
@@ -308,9 +310,9 @@ export default function ConnectExchangePage() {
         <title>Connect Exchange | Unitrader</title>
       </Head>
 
-      <div className="min-h-screen bg-dark-950">
+      <div className="min-h-screen bg-dark-950 mobile-safe">
         <header className="border-b border-dark-800/60">
-          <div className="mx-auto flex max-w-5xl items-center gap-4 px-6 py-4">
+          <div className="mx-auto flex max-w-5xl items-center gap-4 px-4 py-4 sm:px-6">
             <button
               onClick={() => router.push("/app")}
               className="flex items-center gap-2 text-sm text-dark-400 transition-colors hover:text-white"
@@ -321,7 +323,7 @@ export default function ConnectExchangePage() {
           </div>
         </header>
 
-        <main className="mx-auto max-w-5xl px-6 py-10 animate-fade-in">
+        <main className="mx-auto max-w-5xl px-4 py-8 animate-fade-in sm:px-6 sm:py-10">
           <div className="mb-8">
             <h1 className="page-title text-2xl">Connect Exchange</h1>
             <p className="page-subtitle">Link your brokerage accounts to enable AI-powered trading</p>
@@ -565,12 +567,12 @@ export default function ConnectExchangePage() {
                               />
                             </div>
 
-                            <div className="flex items-center justify-between rounded-xl border border-dark-800 px-3 py-2.5">
+                            <div className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-dark-800 px-3 py-2.5 sm:min-h-0">
                               <span className="text-xs text-dark-400">Trading Mode</span>
                               <button
                                 type="button"
                                 onClick={() => setIsPaper((v) => !v)}
-                                className="flex items-center gap-2 text-xs font-medium"
+                                className="flex min-h-10 min-w-[8rem] items-center justify-end gap-2 text-xs font-medium sm:min-h-0 sm:min-w-0"
                               >
                                 {isPaper ? (
                                   <>
@@ -600,6 +602,14 @@ export default function ConnectExchangePage() {
                         ) : (
                           /* ── Standard exchange form ── */
                           <div className="space-y-3">
+                            {(() => {
+                              const g = getExchangeApiKeyGuide(ex.id);
+                              return g ? (
+                                <div className="mb-1">
+                                  <ExchangeApiKeyGuide guide={g} />
+                                </div>
+                              ) : null;
+                            })()}
                             <div>
                               <label className="mb-1 block text-xs font-medium text-dark-400">
                                 {ex.keyLabel}
@@ -616,7 +626,8 @@ export default function ConnectExchangePage() {
                                 <button
                                   type="button"
                                   onClick={() => setShowKey((v) => !v)}
-                                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-300"
+                                  className="absolute right-1 top-1/2 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center text-dark-500 hover:text-dark-300 sm:right-2.5 sm:min-h-0 sm:min-w-0"
+                                  aria-label={showKey ? "Hide API key" : "Show API key"}
                                 >
                                   {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
                                 </button>
@@ -639,19 +650,20 @@ export default function ConnectExchangePage() {
                                 <button
                                   type="button"
                                   onClick={() => setShowSecret((v) => !v)}
-                                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-dark-500 hover:text-dark-300"
+                                  className="absolute right-1 top-1/2 flex min-h-11 min-w-11 -translate-y-1/2 items-center justify-center text-dark-500 hover:text-dark-300 sm:right-2.5 sm:min-h-0 sm:min-w-0"
+                                  aria-label={showSecret ? "Hide secret" : "Show secret"}
                                 >
                                   {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
                                 </button>
                               </div>
                             </div>
 
-                            <div className="flex items-center justify-between rounded-xl border border-dark-800 px-3 py-2.5">
+                            <div className="flex min-h-11 items-center justify-between gap-3 rounded-xl border border-dark-800 px-3 py-2.5 sm:min-h-0">
                               <span className="text-xs text-dark-400">Trading Mode</span>
                               <button
                                 type="button"
                                 onClick={() => setIsPaper((v) => !v)}
-                                className="flex items-center gap-2 text-xs font-medium"
+                                className="flex min-h-10 min-w-[8rem] items-center justify-end gap-2 text-xs font-medium sm:min-h-0 sm:min-w-0"
                               >
                                 {isPaper ? (
                                   <>
@@ -706,7 +718,7 @@ export default function ConnectExchangePage() {
             </div>
           )}
 
-          <div className="mt-10 rounded-2xl border border-dark-800 bg-[#0d1117] p-6">
+          <div className="mt-10 rounded-2xl border border-dark-800 bg-[#0d1117] p-4 sm:p-6">
             <h2 className="mb-3 text-sm font-semibold text-white">How it works</h2>
             <div className="grid gap-4 text-xs text-dark-400 sm:grid-cols-3">
               <div className="flex gap-3">
