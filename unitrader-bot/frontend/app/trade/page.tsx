@@ -508,6 +508,9 @@ function TradePage() {
     );
   }
 
+  const manualDecision = String(analysis?.decision ?? "").toUpperCase();
+  const canExecuteManual = Boolean(analysis) && manualDecision !== "WAIT";
+
   const handleAnalyse = async () => {
     if (!symbol.trim()) return;
     setAnalyzing(true);
@@ -538,6 +541,10 @@ function TradePage() {
   const handleConfirmedTrade = async () => {
     const sym = symbol.trim();
     if (!sym) throw new Error("Missing symbol");
+    if (String(analysis?.decision ?? "").toUpperCase() === "WAIT") {
+      setToast("Unitrader recommends waiting — no order was placed.");
+      return;
+    }
     let res: Awaited<ReturnType<typeof tradingApi.execute>>;
     try {
       const ex = (selectedAccount?.exchange || exchange || "").toLowerCase();
@@ -556,7 +563,11 @@ function TradePage() {
       throw e;
     }
     const data = res.data?.data ?? res.data;
-    setToast("Trade submitted");
+    if (data?.status === "wait" || String(data?.decision ?? "").toUpperCase() === "WAIT") {
+      setToast("Unitrader recommends waiting — no order was placed.");
+    } else {
+      setToast("Trade submitted");
+    }
     // Refresh positions count
     try {
       const pos = await tradingApi.openPositions();
@@ -959,10 +970,19 @@ function TradePage() {
                   <button
                     type="button"
                     onClick={() => setConfirmOpen(true)}
-                    disabled={!analysis}
-                    className={clsx("btn-primary mt-4 w-full", !analysis && "opacity-60")}
+                    disabled={!canExecuteManual}
+                    title={
+                      manualDecision === "WAIT"
+                        ? "Unitrader recommends waiting on this symbol"
+                        : undefined
+                    }
+                    className={clsx("btn-primary mt-4 w-full", !canExecuteManual && "opacity-60")}
                   >
-                    {isPaper ? "Confirm practice trade" : "Execute trade"}
+                    {manualDecision === "WAIT"
+                      ? "No trade recommended"
+                      : isPaper
+                        ? "Confirm practice trade"
+                        : "Execute trade"}
                   </button>
                 </AIAnalysisCard>
               </div>
@@ -1022,10 +1042,15 @@ function TradePage() {
                     <button
                       type="button"
                       onClick={() => setConfirmOpen(true)}
-                      disabled={!analysis}
-                      className={clsx("btn-primary mt-4 w-full", !analysis && "opacity-60")}
+                      disabled={!canExecuteManual}
+                      title={
+                        manualDecision === "WAIT"
+                          ? "Unitrader recommends waiting on this symbol"
+                          : undefined
+                      }
+                      className={clsx("btn-primary mt-4 w-full", !canExecuteManual && "opacity-60")}
                     >
-                      Execute trade
+                      {manualDecision === "WAIT" ? "No trade recommended" : "Execute trade"}
                     </button>
                   </AIAnalysisCard>
 
@@ -1121,10 +1146,15 @@ function TradePage() {
                     <button
                       type="button"
                       onClick={() => setConfirmOpen(true)}
-                      disabled={!analysis}
-                      className={clsx("btn-primary mt-4 w-full", !analysis && "opacity-60")}
+                      disabled={!canExecuteManual}
+                      title={
+                        manualDecision === "WAIT"
+                          ? "Unitrader recommends waiting on this symbol"
+                          : undefined
+                      }
+                      className={clsx("btn-primary mt-4 w-full", !canExecuteManual && "opacity-60")}
                     >
-                      Execute
+                      {manualDecision === "WAIT" ? "No trade recommended" : "Execute"}
                     </button>
                   </AIAnalysisCard>
 
@@ -1149,6 +1179,7 @@ function TradePage() {
           ...analysis,
           symbol,
         }}
+        notionalGbp={amount}
         isPaper={isPaper}
         traderClass={traderClass}
       />

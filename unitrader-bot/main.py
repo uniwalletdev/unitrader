@@ -30,6 +30,7 @@ from config import settings
 from database import AsyncSessionLocal, create_tables
 from models import (
     ApexSelectsApprovalToken,
+    AuditLog,
     ExchangeAPIKey,
     SignalScanRun,
     SignalStack,

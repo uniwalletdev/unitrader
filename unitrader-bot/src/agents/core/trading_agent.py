@@ -42,6 +42,7 @@ from src.market_context import (
     ExchangeAssetClassError,
     MarketContext,
     normalize_symbol,
+    resolve_market_context,
 )
 from src.services.trade_execution import build_trade_parameters
 from src.utils.json_parser import parse_claude_json
@@ -1391,6 +1392,7 @@ Provide your detailed technical analysis with the specified JSON format."""
 
         # ── Step 1: Load user + exchange keys ─────────────────────────────
         raw_key = raw_secret = None
+        market_context_for_analysis: MarketContext | None = None
         try:
             async with AsyncSessionLocal() as db:
                 user_result = await db.execute(select(User).where(User.id == self.user_id))
@@ -1420,6 +1422,18 @@ Provide your detailed technical analysis with the specified JSON format."""
                     key_row.encrypted_api_key, key_row.encrypted_api_secret
                 )
 
+                if trading_account_id:
+                    try:
+                        market_context_for_analysis = await resolve_market_context(
+                            db, self.user_id, trading_account_id
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "run_cycle: could not resolve MarketContext for account %s: %s",
+                            trading_account_id,
+                            exc,
+                        )
+
             client = get_exchange_client(exchange_name, raw_key, raw_secret, is_paper=is_paper)
             raw_key = raw_secret = None  # wipe from memory immediately
 
@@ -1434,7 +1448,11 @@ Provide your detailed technical analysis with the specified JSON format."""
             return {"status": "error", "reason": str(exc)}
 
         # ── Step 2: Market analysis ───────────────────────────────────────
-        market_data = await self.analyze_market(symbol, exchange=exchange_name)
+        market_data = await self.analyze_market(
+            symbol,
+            market_context=market_context_for_analysis,
+            exchange=exchange_name,
+        )
         if market_data is None:
             logger.warning(f"run_cycle aborting — no market data for {symbol}")
             return {

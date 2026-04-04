@@ -37,6 +37,10 @@ type TradeLike = {
   ask?: number;
   price_usd?: number;
   price_gbp?: number;
+  expert?: string;
+  simple?: string;
+  metaphor?: string;
+  explanation_expert?: string;
 };
 
 const BRAND_NAMES: Record<string, string> = {
@@ -61,9 +65,15 @@ function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-function badge(side: string) {
-  const s = (side || "").toUpperCase();
-  const isBuy = s === "BUY";
+function decisionBadge(label: "BUY" | "SELL" | "WAIT") {
+  if (label === "WAIT") {
+    return (
+      <span className="inline-flex items-center rounded-xl bg-amber-500/15 px-3 py-1 text-sm font-extrabold text-amber-200">
+        WAIT
+      </span>
+    );
+  }
+  const isBuy = label === "BUY";
   return (
     <span
       className={clsx(
@@ -88,6 +98,7 @@ export default function TradeConfirmModal({
   trade,
   isPaper,
   traderClass,
+  notionalGbp,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -95,13 +106,24 @@ export default function TradeConfirmModal({
   trade: TradeLike;
   isPaper: boolean;
   traderClass: TraderClass;
+  /** User-selected amount (e.g. manual trade slider) when backend does not return quantity */
+  notionalGbp?: number;
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showJson, setShowJson] = useState(false);
 
   const symbol = (trade.symbol || "").toUpperCase();
-  const side = ((trade.side || trade.decision || "BUY") as string).toUpperCase();
+  const rawDecision = (trade.decision || "").toUpperCase();
+  const isWait = rawDecision === "WAIT";
+  const rawSide = (trade.side || "").toUpperCase();
+  const orderSide: "BUY" | "SELL" | null =
+    rawSide === "BUY" || rawSide === "SELL"
+      ? rawSide
+      : rawDecision === "BUY" || rawDecision === "SELL"
+        ? rawDecision
+        : null;
+  const badgeLabel: "BUY" | "SELL" | "WAIT" = isWait ? "WAIT" : orderSide || "BUY";
   const brand = BRAND_NAMES[symbol] || BRAND_NAMES[symbol.replace("USDT", "/USD")] || symbol;
 
   const entry = trade.entry_price ?? trade.price_usd ?? null;
@@ -117,20 +139,33 @@ export default function TradeConfirmModal({
     if (traderClass === "experienced") return isPaper ? "Submit paper" : "Execute";
     if (traderClass === "semi_institutional") return isPaper ? "Submit paper" : "Execute";
     if (traderClass === "crypto_native") {
-      return side === "SELL" ? "Sell crypto" : "Buy crypto";
+      return orderSide === "SELL" ? "Sell crypto" : "Buy crypto";
     }
     return "Confirm";
-  }, [isPaper, traderClass, side]);
+  }, [isPaper, traderClass, orderSide]);
 
   const showPracticeBanner =
     isPaper && (traderClass === "complete_novice" || traderClass === "curious_saver");
 
-  const apexSummary = trade.message || trade.reasoning || "";
+  const apexSummary =
+    trade.simple ||
+    trade.expert ||
+    trade.metaphor ||
+    trade.message ||
+    trade.reasoning ||
+    trade.explanation_expert ||
+    "";
 
   const estimatedCost = useMemo(() => {
-    if (!entry || !qty) return null;
-    return entry * qty;
-  }, [entry, qty]);
+    if (isWait) return null;
+    if (entry != null && qty != null && Number.isFinite(entry) && Number.isFinite(qty)) {
+      return entry * qty;
+    }
+    if (notionalGbp != null && Number.isFinite(notionalGbp)) {
+      return notionalGbp;
+    }
+    return null;
+  }, [entry, qty, notionalGbp, isWait]);
 
   const slPlain = useMemo(() => {
     if (!sl) return null;
@@ -163,13 +198,15 @@ export default function TradeConfirmModal({
         <div className="flex items-start justify-between gap-3 border-b border-dark-800 p-5">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-3">
-              <div className="text-lg">{badge(side)}</div>
+              <div className="text-lg">{decisionBadge(badgeLabel)}</div>
               <div className="truncate text-lg font-extrabold text-white">
                 {isNovice ? brand : symbol}
               </div>
             </div>
             <div className="mt-1 text-xs text-dark-400">
-              Review the details before confirming.
+              {isWait
+                ? "Unitrader is not recommending a trade for this symbol right now."
+                : "Review the details before confirming."}
             </div>
           </div>
           <button
@@ -206,35 +243,59 @@ export default function TradeConfirmModal({
             <div className="space-y-3">
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
                 <div className="grid gap-3 md:grid-cols-2">
-                  <SummaryRow
-                    label={side === "SELL" ? "You are selling" : "You are buying"}
-                    value={brand}
-                  />
-                  <SummaryRow
-                    label="Estimated cost"
-                    value={estimatedCost !== null ? `£${estimatedCost.toFixed(2)}` : "—"}
-                  />
-                  <SummaryRow
-                    label="Protection"
-                    value={
-                      slPlain
-                        ? `Unitrader will sell automatically if it drops to ${slPlain}`
-                        : "—"
-                    }
-                  />
-                  <SummaryRow
-                    label="Target"
-                    value={
-                      tpPlain
-                        ? `Unitrader will sell when it reaches ${tpPlain}`
-                        : "—"
-                    }
-                  />
+                  {isWait ? (
+                    <>
+                      <SummaryRow
+                        label="Recommended action"
+                        value="Wait — no buy or sell right now"
+                      />
+                      <SummaryRow label="Symbol" value={brand} />
+                      <SummaryRow label="Estimated cost" value="—" />
+                      <SummaryRow label="Protection" value="—" />
+                      <SummaryRow label="Target" value="—" />
+                    </>
+                  ) : (
+                    <>
+                      <SummaryRow
+                        label={orderSide === "SELL" ? "You are selling" : "You are buying"}
+                        value={brand}
+                      />
+                      <SummaryRow
+                        label={qty != null ? "Estimated cost" : "Your trade amount (approx.)"}
+                        value={estimatedCost !== null ? `£${estimatedCost.toFixed(2)}` : "—"}
+                      />
+                      <SummaryRow
+                        label="Protection"
+                        value={
+                          slPlain
+                            ? orderSide === "SELL"
+                              ? `Exit context: ${slPlain}`
+                              : `Unitrader will sell automatically if it drops to ${slPlain}`
+                            : "—"
+                        }
+                      />
+                      <SummaryRow
+                        label="Target"
+                        value={
+                          tpPlain
+                            ? orderSide === "SELL"
+                              ? `Exit context: ${tpPlain}`
+                              : `Unitrader will sell when it reaches ${tpPlain}`
+                            : "—"
+                        }
+                      />
+                    </>
+                  )}
                   <SummaryRow
                     label="Exchange fees"
                     value="Free (Alpaca charges nothing)"
                   />
                 </div>
+                {isWait && (
+                  <p className="mt-3 text-[11px] text-dark-500">
+                    Stop-loss and take-profit levels are shown when Unitrader recommends a buy or sell.
+                  </p>
+                )}
               </div>
 
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
@@ -252,22 +313,22 @@ export default function TradeConfirmModal({
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
                 <div className="grid gap-3 md:grid-cols-2">
                   <SummaryRow label="Symbol" value={symbol || "—"} />
-                  <SummaryRow label="Side" value={side} />
+                  <SummaryRow label="Side" value={isWait ? "WAIT" : orderSide || "—"} />
                   <SummaryRow
                     label="Quantity (shares)"
                     value={qty !== null ? String(qty) : "—"}
                   />
                   <SummaryRow
-                    label="Estimated cost"
+                    label={qty != null ? "Estimated cost" : "Your trade amount (approx.)"}
                     value={estimatedCost !== null ? `£${estimatedCost.toFixed(2)}` : "—"}
                   />
                   <SummaryRow
                     label="Stop-loss"
-                    value={slPlain ? `${slPlain}` : "—"}
+                    value={isWait ? "—" : slPlain ? `${slPlain}` : "—"}
                   />
                   <SummaryRow
                     label="Take-profit"
-                    value={tpPlain ? `${tpPlain}` : "—"}
+                    value={isWait ? "—" : tpPlain ? `${tpPlain}` : "—"}
                   />
                   <SummaryRow
                     label="Portfolio exposure"
@@ -293,7 +354,7 @@ export default function TradeConfirmModal({
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
                 <div className="grid gap-2 md:grid-cols-3">
                   <SummaryRow label="Symbol" value={symbol || "—"} />
-                  <SummaryRow label="Side" value={side} />
+                  <SummaryRow label="Side" value={isWait ? "WAIT" : orderSide || "—"} />
                   <SummaryRow label="Order type" value={trade.order_type || "Market"} />
                   <SummaryRow label="TIF" value={trade.tif || "DAY"} />
                   <SummaryRow
@@ -327,7 +388,7 @@ export default function TradeConfirmModal({
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
                 <div className="grid gap-2 md:grid-cols-3">
                   <SummaryRow label="Symbol" value={symbol || "—"} />
-                  <SummaryRow label="Side" value={side} />
+                  <SummaryRow label="Side" value={isWait ? "WAIT" : orderSide || "—"} />
                   <SummaryRow label="Order type" value={trade.order_type || "Market"} />
                   <SummaryRow label="TIF" value={trade.tif || "DAY"} />
                   <SummaryRow
@@ -385,7 +446,7 @@ export default function TradeConfirmModal({
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
                 <div className="grid gap-2 md:grid-cols-3">
                   <SummaryRow label="Symbol" value={symbol || "—"} />
-                  <SummaryRow label="Side" value={side} />
+                  <SummaryRow label="Side" value={isWait ? "WAIT" : orderSide || "—"} />
                   <SummaryRow
                     label="Price"
                     value={
@@ -428,54 +489,71 @@ export default function TradeConfirmModal({
           )}
 
           {/* Footer actions */}
-          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-            <button
-              type="button"
-              onClick={() => {
-                if (isSubmitting) return;
-                onClose();
-              }}
-              className="btn-outline"
-              disabled={isSubmitting}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                if (isSubmitting) return;
-                setError(null);
-                setIsSubmitting(true);
-                try {
-                  if (isNative) {
-                    await Haptics.impact({ style: ImpactStyle.Medium });
-                  }
-                  await onConfirm();
+          {isWait ? (
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isSubmitting) return;
                   onClose();
-                } catch (e: any) {
-                  setError(
-                    e?.response?.data?.detail ||
-                      e?.message ||
-                      "Could not submit trade. Please try again.",
-                  );
-                } finally {
-                  setIsSubmitting(false);
-                }
-              }}
-              className={clsx(
-                "btn-primary inline-flex items-center justify-center gap-2",
-              )}
-              disabled={isSubmitting}
-            >
-              <CheckCircle2 size={16} />
-              {isSubmitting ? "Submitting…" : confirmText}
-            </button>
-          </div>
+                }}
+                className="btn-primary w-full sm:w-auto"
+              >
+                Close
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isSubmitting) return;
+                  onClose();
+                }}
+                className="btn-outline"
+                disabled={isSubmitting}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (isSubmitting) return;
+                  setError(null);
+                  setIsSubmitting(true);
+                  try {
+                    if (isNative) {
+                      await Haptics.impact({ style: ImpactStyle.Medium });
+                    }
+                    await onConfirm();
+                    onClose();
+                  } catch (e: any) {
+                    setError(
+                      e?.response?.data?.detail ||
+                        e?.message ||
+                        "Could not submit trade. Please try again.",
+                    );
+                  } finally {
+                    setIsSubmitting(false);
+                  }
+                }}
+                className={clsx(
+                  "btn-primary inline-flex items-center justify-center gap-2",
+                )}
+                disabled={isSubmitting}
+              >
+                <CheckCircle2 size={16} />
+                {isSubmitting ? "Submitting…" : confirmText}
+              </button>
+            </div>
+          )}
 
-          <div className="text-[10px] leading-relaxed text-dark-500">
-            Market orders execute at the best available price and may differ slightly from
-            estimates.
-          </div>
+          {!isWait && (
+            <div className="text-[10px] leading-relaxed text-dark-500">
+              Market orders execute at the best available price and may differ slightly from
+              estimates.
+            </div>
+          )}
         </div>
       </div>
     </div>
