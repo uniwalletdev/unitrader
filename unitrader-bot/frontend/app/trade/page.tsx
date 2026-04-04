@@ -262,7 +262,7 @@ function TradePage() {
     account_label?: string | null;
   }>>([]);
   const [symbol, setSymbol] = useState("");
-  const [amount, setAmount] = useState(100);
+  const [amount, setAmount] = useState(25);
 
   const [analysis, setAnalysis] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -306,6 +306,17 @@ function TradePage() {
     () => getAmountHelperText(traderClass, trust?.stage ?? 1, amountLimits.min),
     [traderClass, trust?.stage, amountLimits.min]
   );
+
+  useEffect(() => {
+    setAmount((v) =>
+      Math.min(Math.max(v, amountLimits.min), amountLimits.max),
+    );
+  }, [amountLimits.min, amountLimits.max]);
+
+  useEffect(() => {
+    setAnalysis(null);
+    setConfirmOpen(false);
+  }, [symbol]);
 
   useEffect(() => {
     if (bare) return;
@@ -928,6 +939,7 @@ function TradePage() {
                       tradingAccountId={selectedTradingAccountId}
                       traderClass={traderClass}
                       favourites={settings?.approved_assets ?? []}
+                      selectionMode="single"
                       onManualSymbol={(s) => setSymbol(s.toUpperCase())}
                       onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
                       selectedSymbols={symbol ? [symbol] : []}
@@ -998,6 +1010,7 @@ function TradePage() {
                       tradingAccountId={selectedTradingAccountId}
                       traderClass={traderClass}
                       favourites={settings?.approved_assets ?? []}
+                      selectionMode="single"
                       onManualSymbol={(s) => setSymbol(s.toUpperCase())}
                       onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
                       selectedSymbols={symbol ? [symbol] : []}

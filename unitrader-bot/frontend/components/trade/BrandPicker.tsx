@@ -31,6 +31,8 @@ interface BrandPickerProps {
   favourites?: string[];
   /** Used for simulator mode max-selection cap. */
   simulatorMode?: boolean;
+  /** `single` = one symbol at a time (manual trade). `multi` = watchlist-style (default). */
+  selectionMode?: "single" | "multi";
   selectedSymbols?: string[];
   onChangeSelectedSymbols?: (symbols: string[]) => void;
   /** When user enters symbol manually */
@@ -234,6 +236,7 @@ export default function BrandPicker({
   traderClass: traderClassProp,
   favourites: favouritesProp,
   simulatorMode = false,
+  selectionMode = "multi",
   selectedSymbols,
   onChangeSelectedSymbols,
   onManualSymbol,
@@ -667,7 +670,12 @@ export default function BrandPicker({
       return;
     }
     const exists = selections.includes(symbol);
-    const next = exists ? selections.filter((s) => s !== symbol) : [...selections, symbol];
+    let next: string[];
+    if (selectionMode === "single") {
+      next = exists ? [] : [symbol];
+    } else {
+      next = exists ? selections.filter((s) => s !== symbol) : [...selections, symbol];
+    }
     if (simulatorMode && next.length > 3) return;
     setSelections(next);
   };
