@@ -11,32 +11,27 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
-
-from src.market_context import Exchange, MarketContext
-
 logger = logging.getLogger(__name__)
+
+# Module-level universes for scoring (must exist before score_universe and helpers).
+STOCK_UNIVERSE = [
+    "AAPL", "MSFT", "NVDA", "TSLA", "AMZN",
+    "GOOGL", "META", "AMD", "NFLX", "JPM",
+    "V", "MA", "UNH", "JNJ", "WMT",
+    "BAC", "GS", "CRM", "ADBE", "INTC",
+]
+
+CRYPTO_UNIVERSE = [
+    "BTC-USD", "ETH-USD", "SOL-USD", "DOGE-USD", "ADA-USD",
+    "AVAX-USD", "LINK-USD", "MATIC-USD", "DOT-USD", "UNI-USD",
+]
 
 # ─────────────────────────────────────────────
 # Full scanning universe (never shown to users directly)
 # ─────────────────────────────────────────────
 
 SYMBOL_UNIVERSE: dict[str, list[str]] = {
-    "alpaca": [
-        # Mega-cap tech
-        "AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "NFLX",
-        "AMD", "INTC", "CRM", "ORCL", "ADBE", "QCOM",
-        # Financials
-        "JPM", "V", "MA", "BAC", "GS", "MS", "BLK",
-        # Healthcare / consumer
-        "JNJ", "UNH", "PFE", "ABBV", "MRK", "KO", "PEP", "WMT", "COST", "TGT",
-        # Energy / industrial
-        "XOM", "CVX", "CAT", "DE", "BA", "GE", "HON",
-        # Broad ETFs
-        "SPY", "QQQ", "VOO", "IWM", "DIA",
-        # Sector ETFs
-        "XLF", "XLK", "XLE", "XLV", "XLI", "XLY", "ARKK",
-    ],
+    "alpaca": list(STOCK_UNIVERSE),
     "binance": [
         # Layer 1
         "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "ADAUSDT",
@@ -47,30 +42,12 @@ SYMBOL_UNIVERSE: dict[str, list[str]] = {
         "XRPUSDT", "DOGEUSDT", "LTCUSDT", "BNBUSDT", "APTUSDT",
         "INJUSDT", "SUIUSDT", "SEIUSDT", "TIAUSDT",
     ],
-    "coinbase": [
-        "BTC-USD", "ETH-USD", "SOL-USD", "ADA-USD", "AVAX-USD",
-        "DOT-USD", "LINK-USD", "MATIC-USD", "DOGE-USD", "LTC-USD",
-        "NEAR-USD", "APT-USD", "OP-USD", "INJ-USD", "XRP-USD",
-    ],
+    "coinbase": list(CRYPTO_UNIVERSE),
     "oanda": [
         "EUR_USD", "GBP_USD", "USD_JPY", "AUD_USD", "USD_CAD",
         "NZD_USD", "USD_CHF", "EUR_GBP", "EUR_JPY", "GBP_JPY",
     ],
 }
-
-# Crypto universe for MarketContext-aware scorer (mirrors binance/coinbase lists).
-CRYPTO_UNIVERSE: list[str] = [
-    "BTC-USD",
-    "ETH-USD",
-    "SOL-USD",
-    "DOGE-USD",
-    "ADA-USD",
-    "AVAX-USD",
-    "LINK-USD",
-    "MATIC-USD",
-    "DOT-USD",
-    "UNI-USD",
-]
 
 # ─────────────────────────────────────────────
 # Human-readable labels (ticker → name)
@@ -129,26 +106,19 @@ SYMBOL_LABELS: dict[str, str] = {
 # Fast momentum pre-scorer
 # ─────────────────────────────────────────────
 
-async def score_universe(market_context: MarketContext | None = None) -> list[str]:
-    """
-    Returns top symbols for the given exchange/asset class.
-    Falls back to Alpaca stocks if no context provided (backwards compat).
-    """
+async def score_universe(market_context=None) -> list[str]:
     if market_context is None:
-        logger.warning("score_universe called without MarketContext — defaulting to Alpaca")
         return await _score_stocks_alpaca(STOCK_UNIVERSE)
-
-    if market_context.exchange == Exchange.ALPACA:
+    if market_context.exchange.value == "alpaca":
         return await _score_stocks_alpaca(STOCK_UNIVERSE)
-
-    if market_context.exchange == Exchange.COINBASE:
+    elif market_context.exchange.value == "coinbase":
         return await _score_crypto_coinbase(CRYPTO_UNIVERSE)
-
-    if market_context.exchange == Exchange.BINANCE:
-        return await _score_crypto_binance([s.replace("-USD", "USDT") for s in CRYPTO_UNIVERSE])
-
-    # No universe scoring for OANDA yet.
-    return []
+    elif market_context.exchange.value == "binance":
+        return await _score_crypto_binance(
+            [s.replace("-USD", "USDT") for s in CRYPTO_UNIVERSE]
+        )
+    else:
+        return []
 
 
 async def _score_stocks_alpaca(universe: list[str], top_n: int = 10) -> list[str]:
