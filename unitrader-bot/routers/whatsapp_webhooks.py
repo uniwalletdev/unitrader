@@ -251,8 +251,12 @@ async def whatsapp_webhook(
                         await db.commit()
         except Exception as exc:
             logger.warning("Failed to persist WhatsApp bot response history: %s", exc)
-    except Exception as exc:
-        logger.error("Error handling WhatsApp message from %s: %s", from_field, exc)
+    except Exception as e:
+        import logging
+        logging.getLogger('routers.whatsapp').error(
+            f'Orchestrator call failed: {type(e).__name__}: {e}', exc_info=True
+        )
+        logger.error("Error handling WhatsApp message from %s: %s", from_field, e)
         # Don't re-raise — a 500 would cause Twilio to retry indefinitely
 
     return {"status": "ok"}

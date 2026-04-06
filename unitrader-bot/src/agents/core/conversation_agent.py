@@ -13,6 +13,7 @@ so responses reference real numbers.
 import asyncio
 import logging
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 from typing import Literal
