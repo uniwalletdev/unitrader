@@ -529,8 +529,16 @@ async def test_chat_with_question():
          patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
          patch.object(svc, "_log", new=AsyncMock()), \
          patch(
-             "src.services.bot_orchestrator_chat.orchestrator_chat_reply",
-             new=AsyncMock(return_value="Based on current RSI levels, I suggest waiting."),
+             "src.services.bot_orchestrator_chat.orchestrator_chat_with_actions",
+             new=AsyncMock(
+                 return_value={
+                     "text": "Based on current RSI levels, I suggest waiting.",
+                     "action_taken": None,
+                     "requires_confirmation": None,
+                     "pending_trade": None,
+                     "raw": {},
+                 }
+             ),
          ):
         await svc.cmd_chat(upd, _ctx(["Should", "I", "buy", "Bitcoin?"]))
 
@@ -575,8 +583,16 @@ async def test_handle_message_freetext_calls_orchestrator():
          patch.object(svc, "_log", new=AsyncMock()), \
          patch.object(svc, "_reply", new=mock_reply), \
          patch(
-             "src.services.bot_orchestrator_chat.orchestrator_chat_reply",
-             new=AsyncMock(return_value="RSI is a momentum oscillator."),
+             "src.services.bot_orchestrator_chat.orchestrator_chat_with_actions",
+             new=AsyncMock(
+                 return_value={
+                     "text": "RSI is a momentum oscillator.",
+                     "action_taken": None,
+                     "requires_confirmation": None,
+                     "pending_trade": None,
+                     "raw": {},
+                 }
+             ),
          ):
         await svc.handle_message(upd, _ctx())
 
@@ -672,19 +688,27 @@ def test_winning_streak_all_losses():
 @pytest.mark.asyncio
 async def test_send_trade_alert_success():
     """send_trade_alert returns True when Telegram message is sent."""
+    from unittest.mock import AsyncMock as _AsyncMock
+    from unittest.mock import patch
+
     svc = _bot_service()
     svc.app.bot.send_message = AsyncMock()
 
-    result = await svc.send_trade_alert(
-        telegram_user_id="987654321",
-        symbol="BTCUSDT",
-        side="BUY",
-        entry_price=50_000.0,
-        stop_loss=49_000.0,
-        take_profit=52_000.0,
-        confidence=82,
-        reasoning="Strong momentum breakout above resistance.",
-    )
+    with patch(
+        "src.services.user_ai_name.get_user_ai_name",
+        new=_AsyncMock(return_value="Zeus"),
+    ):
+        result = await svc.send_trade_alert(
+            telegram_user_id="987654321",
+            user_id="00000000-0000-0000-0000-000000000001",
+            symbol="BTCUSDT",
+            side="BUY",
+            entry_price=50_000.0,
+            stop_loss=49_000.0,
+            take_profit=52_000.0,
+            confidence=82,
+            reasoning="Strong momentum breakout above resistance.",
+        )
 
     assert result is True
     svc.app.bot.send_message.assert_called_once()
@@ -692,6 +716,7 @@ async def test_send_trade_alert_success():
     assert call_kwargs["chat_id"] == "987654321"
     assert "BTCUSDT" in call_kwargs["text"]
     assert "82%" in call_kwargs["text"]
+    assert "Zeus" in call_kwargs["text"]
 
 
 @pytest.mark.asyncio
@@ -702,35 +727,51 @@ async def test_send_trade_alert_no_app():
     svc.token = "fake:TOKEN"
     svc.app = None   # not initialised
 
-    result = await svc.send_trade_alert(
-        telegram_user_id="1",
-        symbol="ETHUSDT",
-        side="SELL",
-        entry_price=3000.0,
-        stop_loss=3060.0,
-        take_profit=2940.0,
-        confidence=70,
-        reasoning="Test",
-    )
+    from unittest.mock import AsyncMock as _AsyncMock
+    from unittest.mock import patch
+
+    with patch(
+        "src.services.user_ai_name.get_user_ai_name",
+        new=_AsyncMock(return_value="Apex"),
+    ):
+        result = await svc.send_trade_alert(
+            telegram_user_id="1",
+            user_id="u1",
+            symbol="ETHUSDT",
+            side="SELL",
+            entry_price=3000.0,
+            stop_loss=3060.0,
+            take_profit=2940.0,
+            confidence=70,
+            reasoning="Test",
+        )
     assert result is False
 
 
 @pytest.mark.asyncio
 async def test_send_trade_alert_telegram_error():
     """send_trade_alert returns False and doesn't raise on Telegram errors."""
+    from unittest.mock import AsyncMock as _AsyncMock
+    from unittest.mock import patch
+
     svc = _bot_service()
     svc.app.bot.send_message = AsyncMock(side_effect=Exception("Telegram API error"))
 
-    result = await svc.send_trade_alert(
-        telegram_user_id="111",
-        symbol="SOLUSDT",
-        side="BUY",
-        entry_price=150.0,
-        stop_loss=145.0,
-        take_profit=160.0,
-        confidence=65,
-        reasoning="Test error handling",
-    )
+    with patch(
+        "src.services.user_ai_name.get_user_ai_name",
+        new=_AsyncMock(return_value="Apex"),
+    ):
+        result = await svc.send_trade_alert(
+            telegram_user_id="111",
+            user_id="u1",
+            symbol="SOLUSDT",
+            side="BUY",
+            entry_price=150.0,
+            stop_loss=145.0,
+            take_profit=160.0,
+            confidence=65,
+            reasoning="Test error handling",
+        )
     assert result is False
 
 

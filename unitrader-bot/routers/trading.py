@@ -1273,13 +1273,19 @@ async def undo_trade(
     )
     notification_engine = get_unitrader_notification_engine()
     if notification_engine:
+        from src.services.user_ai_name import get_user_ai_name
+
+        _ai = await get_user_ai_name(undo_token.user_id, db)
         await notification_engine._dispatch(  # type: ignore[attr-defined]
             user_id=undo_token.user_id,
             notification_type="trade_undo_confirmed",
-            title=f"Done — Apex reversed {trade.symbol}",
-            body=f"Done — Apex's trade on {trade.symbol} has been reversed. No further action needed.",
-            telegram_message=(
-                f"Done — Apex's trade on {trade.symbol} has been reversed.\n"
+            title=f"Done — {_ai} reversed {trade.symbol}",
+            body=(
+                f"Done — {_ai}'s trade on {trade.symbol} has been reversed. "
+                "No further action needed."
+            ),
+            channel_message=(
+                f"Done — {_ai}'s trade on {trade.symbol} has been reversed.\n"
                 "No further action needed.\n\n"
                 "⚠️ Not financial advice. Capital at risk."
             ),

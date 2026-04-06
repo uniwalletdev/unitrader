@@ -457,6 +457,9 @@ class UserSettings(Base):
 
     # UI / Preferences
     theme: Mapped[str] = mapped_column(String(10), default="dark", nullable=False)
+    ai_name: Mapped[str] = mapped_column(
+        String(50), default="Apex", server_default="Apex", nullable=False
+    )
     explanation_level: Mapped[str] = mapped_column(String(20), default="simple", nullable=False)
     trade_mode: Mapped[str] = mapped_column(String(20), default="auto", nullable=False)
 

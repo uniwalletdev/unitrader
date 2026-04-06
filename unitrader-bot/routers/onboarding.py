@@ -2,6 +2,7 @@
 routers/onboarding.py — Onboarding and user agreement endpoints.
 
 Endpoints:
+    POST /api/onboarding/set-ai-name             — Save personalised AI companion name
     POST /api/onboarding/accept-risk-disclosure  — Accept risk disclosure
     GET  /api/onboarding/trust-ladder            — Trust ladder status (frontend)
     GET  /api/onboarding/trust-ladder/status     — Alias
@@ -15,7 +16,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -146,6 +147,13 @@ async def advance_trust_ladder(
 # Schemas
 # ─────────────────────────────────────────────
 
+
+class AINameRequest(BaseModel):
+    """Body for POST /set-ai-name."""
+
+    name: str
+
+
 class AcceptRiskDisclosureResponse(BaseModel):
     """Response after accepting risk disclosure."""
     success: bool
@@ -155,6 +163,70 @@ class AcceptRiskDisclosureResponse(BaseModel):
 # ─────────────────────────────────────────────
 # Endpoints
 # ─────────────────────────────────────────────
+
+
+@router.post("/set-ai-name")
+async def set_ai_name(
+    body: AINameRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Persist the user's chosen name for their AI trader and seed the first chat line."""
+    name = body.name.strip()
+    if not 2 <= len(name) <= 20:
+        raise HTTPException(status_code=400, detail="Name must be 2-20 characters")
+    if not name.replace(" ", "").isalpha():
+        raise HTTPException(
+            status_code=400, detail="Name must contain letters only (spaces allowed)"
+        )
+
+    result = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == current_user.id)
+    )
+    settings = result.scalar_one_or_none()
+    if not settings:
+        settings = UserSettings(user_id=current_user.id)
+        db.add(settings)
+        await db.flush()
+
+    await db.execute(
+        update(UserSettings)
+        .where(UserSettings.user_id == current_user.id)
+        .values(ai_name=name)
+    )
+    await db.execute(
+        update(User).where(User.id == current_user.id).values(ai_name=name)
+    )
+    await db.commit()
+
+    try:
+        from src.agents.core.conversation_agent import ConversationAgent
+        from src.agents.shared_memory import SharedMemory
+        from src.services.context_detection import GENERAL
+        from src.services.conversation_memory import save_conversation
+
+        SharedMemory.invalidate(current_user.id)
+        sc = await SharedMemory.load(current_user.id, db)
+        agent = ConversationAgent(current_user.id)
+        first = await agent.generate_first_message(sc)
+        await save_conversation(
+            user_id=current_user.id,
+            message="You named your AI companion.",
+            response=first,
+            context=GENERAL,
+            sentiment="neutral",
+            db=db,
+        )
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.warning("set_ai_name: first chat message not saved for %s: %s", current_user.id, exc)
+
+    return {
+        "ai_name": name,
+        "message": f"Perfect. {name} is ready to get to work.",
+    }
+
 
 @router.post("/accept-risk-disclosure", response_model=AcceptRiskDisclosureResponse)
 async def accept_risk_disclosure(

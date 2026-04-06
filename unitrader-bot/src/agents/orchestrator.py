@@ -561,10 +561,13 @@ class MasterOrchestrator:
             raise ValueError("Missing message in payload")
 
         conv_agent = ConversationAgent(user_id=user_id)
+        channel = str(payload.get("channel") or "web_app")
         # Pass db=None so respond() manages its own sessions — avoids failures
         # if the request-scoped session is in an aborted PG transaction state.
         # Pass ctx from route() so we do not reload SharedMemory and lose market_context.
-        result = await conv_agent.handle_message(message=message, context=ctx, db=None)
+        result = await conv_agent.handle_message(
+            message=message, context=ctx, db=None, channel=channel
+        )
 
         # Normalise: expose both 'response' and 'message' so either frontend
         # field read pattern works

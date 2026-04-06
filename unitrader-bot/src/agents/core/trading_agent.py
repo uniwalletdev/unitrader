@@ -1935,6 +1935,7 @@ Provide your detailed technical analysis with the specified JSON format."""
                 if ext.platform == "telegram" and tg_bot:
                     await tg_bot.send_trade_alert(
                         telegram_user_id=ext.external_id,
+                        user_id=user_id,
                         symbol=symbol,
                         side=side,
                         entry_price=entry_price,
@@ -1946,6 +1947,7 @@ Provide your detailed technical analysis with the specified JSON format."""
                 elif ext.platform == "whatsapp" and wa_bot:
                     await wa_bot.send_trade_alert(
                         whatsapp_number=ext.external_id,
+                        user_id=user_id,
                         symbol=symbol,
                         side=side,
                         entry_price=entry_price,

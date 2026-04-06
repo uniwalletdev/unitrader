@@ -92,6 +92,132 @@ class WhatsAppBotService:
         self.auth_token   = auth_token
         self.twilio_number = twilio_whatsapp_number
 
+    async def _whatsapp_resolve_pending_trade(
+        self, phone: str, body: str, user: User
+    ) -> str | None:
+        """Handle YES/NO after a chat-suggested trade confirmation."""
+        from src.services.bot_pending_trade import (
+            get_pending_confirmation,
+            pop_pending_confirmation,
+        )
+
+        parts = (body or "").strip().split()
+        if not parts:
+            return None
+        head = parts[0].upper()
+        if head not in ("YES", "NO"):
+            return None
+        pend = await get_pending_confirmation(phone)
+        if not pend or pend["user_id"] != str(user.id):
+            return None
+        await pop_pending_confirmation(phone)
+        if head == "NO":
+            return "Cancelled — no trade placed."
+        return await self._execute_whatsapp_confirmed_trade(
+            user, pend["trade"], parts
+        )
+
+    async def _execute_whatsapp_confirmed_trade(
+        self,
+        user: User,
+        trade: dict,
+        yes_parts: list[str],
+    ) -> str:
+        """Place order via orchestrator after YES (optional USD: YES 50)."""
+        from fastapi import HTTPException
+
+        from src.agents.core.conversation_agent import (
+            _format_execute_result_for_chat,
+            _http_detail_str,
+            _orchestrator_route,
+        )
+        from src.agents.shared_memory import SharedMemory
+
+        side = str(trade.get("side") or "").upper()
+        symbol = str(trade.get("symbol") or "").strip()
+        if side not in ("BUY", "SELL") or not symbol:
+            return "Invalid pending trade. Ask for a new quote in chat."
+
+        async with AsyncSessionLocal() as db:
+            sc = await SharedMemory.load(str(user.id), db)
+            cap = float(sc.max_trade_amount or 100.0)
+            amount = min(cap, 100.0)
+            amount = max(amount, 10.0)
+            if len(yes_parts) > 1:
+                try:
+                    custom = float(yes_parts[1])
+                    if custom > 0:
+                        amount = min(custom, cap)
+                        amount = max(amount, 5.0)
+                except ValueError:
+                    pass
+
+            if not sc.subscription_active:
+                return "A subscription is required to execute trades."
+            if sc.trading_paused:
+                return "Trading is paused. Unpause in Settings before executing."
+
+        try:
+            result = await _orchestrator_route(
+                str(user.id),
+                "trade_execute",
+                {"symbol": symbol, "side": side, "amount": amount},
+            )
+            from src.services.bot_orchestrator_chat import whatsapp_plain_chat_text
+
+            return whatsapp_plain_chat_text(_format_execute_result_for_chat(result))
+        except HTTPException as e:
+            return f"Could not place order: {_http_detail_str(e.detail)}"
+        except Exception as exc:
+            logger.warning("WhatsApp confirmed trade failed: %s", exc)
+            return "Could not complete the trade. Try the app Trade screen."
+
+    async def _whatsapp_orchestrator_chat_turn(
+        self, phone: str, user: User, message: str
+    ) -> tuple[str, bool]:
+        """Run Apex chat + action tags; plain text. Returns (text, already_sent_to_user)."""
+        from src.services.bot_orchestrator_chat import (
+            orchestrator_chat_with_actions,
+            whatsapp_plain_chat_text,
+        )
+        from src.services.bot_pending_trade import store_pending_confirmation
+
+        text_in = (message or "").strip()
+        if not text_in:
+            return "Send a message to continue.", False
+
+        async with AsyncSessionLocal() as db:
+            from src.agents.shared_memory import SharedMemory
+
+            sc = await SharedMemory.load(str(user.id), db)
+            await db.commit()
+            data = await orchestrator_chat_with_actions(
+                str(user.id),
+                text_in,
+                db=db,
+                shared_context=sc,
+                channel="whatsapp",
+            )
+
+        if data.get("requires_confirmation") and data.get("pending_trade"):
+            trade = data["pending_trade"]
+            confirm = (
+                f"⚠️ Confirm trade: {trade['side'].upper()} {trade['symbol']}?\n"
+                f"Reply YES to confirm or NO to cancel.\n"
+                f"(Optional: YES 50 = $50 notional, up to your max trade setting.)"
+            )
+            await self.send_message(phone, _trunc(confirm))
+            await store_pending_confirmation(
+                phone,
+                user_id=str(user.id),
+                trade=trade,
+                ttl_seconds=60,
+            )
+            return confirm, True
+
+        plain = whatsapp_plain_chat_text(data["text"])
+        return plain, False
+
     # ── Entry point ───────────────────────────────────────────────────────────
 
     async def handle_incoming_message(
@@ -113,9 +239,18 @@ class WhatsAppBotService:
 
         t0   = time.perf_counter()
         user = await self._get_linked_user(phone)
+        already_sent = False
 
         try:
-            if command == "start":
+            pending_reply: str | None = None
+            if user:
+                pending_reply = await self._whatsapp_resolve_pending_trade(
+                    phone, body, user
+                )
+
+            if pending_reply is not None:
+                response = pending_reply
+            elif command == "start":
                 response = await self._cmd_start(user, phone)
             elif command == "link":
                 response = await self._cmd_link(user, phone, args)
@@ -130,7 +265,17 @@ class WhatsAppBotService:
             elif command == "performance":
                 response = await self._cmd_performance(user)
             elif command == "chat":
-                response = await self._cmd_chat(user, " ".join(args))
+                if not user:
+                    response = "Send START to link your account first."
+                elif not " ".join(args).strip():
+                    response = (
+                        "Ask a question here or send: CHAT <your question>\n\n"
+                        "When linked, you can also type naturally without CHAT."
+                    )
+                else:
+                    response, already_sent = await self._whatsapp_orchestrator_chat_turn(
+                        phone, user, " ".join(args)
+                    )
             elif command == "alerts":
                 response = await self._cmd_alerts(user)
             elif command == "settings":
@@ -141,7 +286,6 @@ class WhatsAppBotService:
                 response = self._cmd_help()
             elif user:
                 from src.services.bot_intent import classify_natural_intent
-                from src.services.bot_orchestrator_chat import orchestrator_chat_reply
 
                 full = (body or "").strip()
                 intent = classify_natural_intent(full)
@@ -160,11 +304,17 @@ class WhatsAppBotService:
                     elif c == "performance":
                         response = await self._cmd_performance(user)
                     else:
-                        response = await orchestrator_chat_reply(str(user.id), full)
+                        response, already_sent = (
+                            await self._whatsapp_orchestrator_chat_turn(
+                                phone, user, full
+                            )
+                        )
                 else:
                     log_command = "chat"
-                    response = await orchestrator_chat_reply(
-                        str(user.id), intent["message"]
+                    response, already_sent = (
+                        await self._whatsapp_orchestrator_chat_turn(
+                            phone, user, intent["message"]
+                        )
                     )
             else:
                 response = (
@@ -183,7 +333,8 @@ class WhatsAppBotService:
 
         ms = int((time.perf_counter() - t0) * 1000)
 
-        await self.send_message(phone, _trunc(response))
+        if not already_sent:
+            await self.send_message(phone, _trunc(response))
         await self._log(
             external_user_id=phone,
             message_type="command",
@@ -476,6 +627,21 @@ class WhatsAppBotService:
             lines.append(f"{i}. {em} {t.symbol} {t.side}  ${pnl:+,.2f}  {when}")
         return "\n".join(lines)
 
+    async def _cmd_chat(self, user: User | None, question: str) -> str:
+        """CHAT command / tests: delegate to orchestrator turn (dummy phone if no send)."""
+        if not user:
+            return "Send START to link your account first."
+        q = (question or "").strip()
+        if not q:
+            return (
+                "Ask a question here or send: CHAT <your question>\n\n"
+                "When linked, you can also type naturally without CHAT."
+            )
+        text, _already = await self._whatsapp_orchestrator_chat_turn(
+            "+00000000000", user, q
+        )
+        return text
+
     async def _cmd_performance(self, user: User | None) -> str:
         if not user:
             return "Send START to link your account first."
@@ -509,19 +675,6 @@ class WhatsAppBotService:
             f"Worst:      ${worst:,.2f}\n"
             f"Avg/Trade:  ${avg:+,.2f}"
         )
-
-    async def _cmd_chat(self, user: User | None, question: str) -> str:
-        if not user:
-            return "Send START to link your account first."
-        if not question.strip():
-            return (
-                "Ask a question here or send: CHAT <your question>\n\n"
-                "When linked, you can also type naturally without CHAT."
-            )
-
-        from src.services.bot_orchestrator_chat import orchestrator_chat_reply
-
-        return await orchestrator_chat_reply(str(user.id), question)
 
     async def _cmd_alerts(self, user: User | None) -> str:
         if not user:
@@ -594,6 +747,7 @@ class WhatsAppBotService:
     async def send_trade_alert(
         self,
         whatsapp_number: str,
+        user_id: str,
         symbol: str,
         side: str,
         entry_price: float,
@@ -607,10 +761,14 @@ class WhatsAppBotService:
         Called by the trading loop after a trade is placed.
         Returns True if the message was sent successfully.
         """
+        from src.services.user_ai_name import get_user_ai_name
+
+        async with AsyncSessionLocal() as db:
+            ai_name = await get_user_ai_name(str(user_id), db)
         em   = "📈" if side == "BUY" else "📉"
         text = _trunc(
-            f"{em} TRADE ALERT\n\n"
-            f"{side} {symbol}\n"
+            f"✅ {ai_name} executed a trade\n\n"
+            f"{em} {side} {symbol}\n"
             f"Entry: ${entry_price:,.4f}\n"
             f"Stop:  ${stop_loss:,.4f}\n"
             f"TP:    ${take_profit:,.4f}\n"

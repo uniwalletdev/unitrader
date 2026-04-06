@@ -25,15 +25,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import AsyncSessionLocal
 from models import Trade, User, OnboardingMessage, UserSettings
+from src.agents.core.unitrader_chat_prompt import build_system_prompt
 from src.agents.shared_memory import SharedContext, SharedMemory
 from src.services.context_detection import (
     AI_PERFORMANCE,
-    EDUCATIONAL,
-    EMOTIONAL_SUPPORT,
-    FRIENDLY_CHAT,
     GENERAL,
     MARKET_ANALYSIS,
-    TECHNICAL_HELP,
     TRADING_QUESTION,
     detect_context,
 )
@@ -208,12 +205,28 @@ _PROPOSE_TRADE_CMD_RE = re.compile(
 )
 
 
-def _performance_snapshot_for_prompt(context: SharedContext) -> str:
-    return (
-        f"- Closed trades (profile aggregate): {context.total_trades}\n"
-        f"- Win rate: {float(context.win_rate or 0):.1f}%\n"
-        f"- Avg signal confidence: {float(context.avg_confidence or 0):.1f}%"
+def _wants_broad_market_summary(message: str) -> bool:
+    low = (message or "").lower()
+    return bool(
+        re.search(
+            r"\b(what'?s the market|how\s*(?:'s| is) the market|markets?\s+doing|"
+            r"market\s+today|overall\s+market|indices?\s+doing|how\s+are\s+stocks)\b",
+            low,
+        )
     )
+
+
+def _infer_exchange_for_position(symbol: str, stored: str | None) -> str:
+    if stored:
+        return stored.lower()
+    s = (symbol or "").upper()
+    if "USDT" in s or "USDC" in s:
+        return "binance"
+    if "_" in s:
+        parts = s.split("_")
+        if len(parts) == 2 and all(len(p) == 3 for p in parts):
+            return "oanda"
+    return "alpaca"
 
 
 def _primary_exchange_hint(ctx: SharedContext) -> str:
@@ -385,6 +398,60 @@ async def _build_market_data_block(
     return block, now.isoformat()
 
 
+async def _build_open_positions_marks_block(
+    positions: list[dict],
+    *,
+    max_positions: int = 10,
+) -> str:
+    """Mark-to-market lines for open positions (approx unrealized P&L from last price)."""
+    if not positions:
+        return ""
+    from src.integrations.market_data import fetch_market_data
+
+    lines: list[str] = []
+    for p in positions[:max_positions]:
+        sym = (p.get("symbol") or "").strip()
+        if not sym:
+            continue
+        ex = _infer_exchange_for_position(sym, p.get("exchange"))
+        entry = float(p.get("entry_price") or 0)
+        qty = float(p.get("qty") or 0)
+        side = str(p.get("side") or "BUY").upper()
+        try:
+            snap = await fetch_market_data(sym, ex)
+            mark = float(snap.get("price") or 0)
+        except Exception as exc:
+            logger.debug("mark fetch failed for %s/%s: %s", sym, ex, exc)
+            mark = 0.0
+        if mark and entry and qty:
+            if side == "SELL":
+                upnl = (entry - mark) * qty
+            else:
+                upnl = (mark - entry) * qty
+            upnl_s = f"${upnl:+,.2f}"
+        else:
+            upnl_s = "n/a"
+        mark_s = f"${mark:,.4f}" if mark else "n/a"
+        try:
+            qty_disp = f"{qty:g}"
+        except (TypeError, ValueError):
+            qty_disp = str(qty)
+        lines.append(
+            f"- {sym} ({ex}) {side} qty {qty_disp} entry ${entry:,.4f} "
+            f"last ~{mark_s} unrealized ~{upnl_s}"
+        )
+
+    if not lines:
+        return ""
+
+    now = datetime.now(timezone.utc)
+    return (
+        f"\n\nOPEN POSITIONS — MARK / UNREALIZED (approx., {now.strftime('%Y-%m-%d %H:%M UTC')}):\n"
+        + "\n".join(lines)
+        + "\n(Unrealized P&L is indicative; use exchange statements for official figures.)"
+    )
+
+
 # ─────────────────────────────────────────────
 # System prompts — one per context
 # ─────────────────────────────────────────────
@@ -405,108 +472,6 @@ _ONBOARDING_SYSTEM_PROMPT = (
     "- Never use terms like RSI, MACD, margin, or leverage.\n"
     "- Keep responses under 3 sentences."
 )
-
-
-def _build_tone_system_prompt(context: str, ai_name: str, user_email: str) -> str:
-    """Return tone/style instructions for the detected conversation context."""
-
-    base = (
-        f"You are {ai_name}, a personal AI trading companion for {user_email}. "
-        f"Always refer to yourself as {ai_name}. "
-        f"Never refer to yourself as 'the bot', 'the AI', or 'Claude'. "
-    )
-
-    context_prompts = {
-
-        FRIENDLY_CHAT: (
-            f"{base}"
-            "The user is excited, celebrating, or just being friendly. "
-            "Match their energy — be warm, enthusiastic, and conversational. "
-            "Use emojis generously. Celebrate their wins. "
-            "Keep responses short (2–4 sentences), engaging, and fun. "
-            "Reference their trading achievements when relevant."
-        ),
-
-        TRADING_QUESTION: (
-            f"{base}"
-            "The user is asking for trading advice or a recommendation. "
-            "Be analytical and data-driven. Always include: "
-            "(1) a clear recommendation with a confidence level (0–100%), "
-            "(2) the key reasoning behind it, "
-            "(3) a brief risk assessment with stop-loss suggestion. "
-            "Never guarantee profits. Always remind them that all trading carries risk. "
-            "Format: Recommendation → Reasoning → Risk."
-        ),
-
-        TECHNICAL_HELP: (
-            f"{base}"
-            "The user has a technical problem or needs help with a feature. "
-            "Be patient, clear, and methodical. "
-            "Give numbered step-by-step instructions. "
-            "Explain technical concepts in plain language — no jargon without explanation. "
-            "If the first solution might not work, offer an alternative. "
-            "End with an invitation to ask follow-up questions."
-        ),
-
-        MARKET_ANALYSIS: (
-            f"{base}"
-            "The user wants a professional market analysis. "
-            "Be objective and thorough. Cover: "
-            "(1) current price action and trend, "
-            "(2) key support and resistance levels, "
-            "(3) relevant technical indicators (RSI, MACD, MAs), "
-            "(4) macro factors or sentiment if relevant, "
-            "(5) your balanced outlook. "
-            "Never make absolute price predictions. "
-            "Present multiple scenarios (bullish / bearish / neutral)."
-        ),
-
-        AI_PERFORMANCE: (
-            f"{base}"
-            "The user is asking about trading results or performance metrics. "
-            "Be honest, transparent, and supportive. "
-            "Highlight wins clearly with specific figures. "
-            "For losses, explain what happened objectively without making excuses. "
-            "Identify patterns in the data. "
-            "Suggest concrete improvements for future trades. "
-            "End on an encouraging note that focuses on long-term growth."
-        ),
-
-        EDUCATIONAL: (
-            f"{base}"
-            "The user wants to learn about trading or a related concept. "
-            "Be a patient, encouraging educator. "
-            "Start from the basics and build up. "
-            "Use real-world analogies and simple examples. "
-            "Break complex topics into digestible steps. "
-            "Anticipate follow-up questions and briefly address them. "
-            "End with a 'What to explore next' suggestion."
-        ),
-
-        EMOTIONAL_SUPPORT: (
-            f"{base}"
-            "The user is frustrated, worried, or emotionally stressed about trading. "
-            "Be empathetic and human first — acknowledge their feelings before anything else. "
-            "Normalise their emotions (losses happen to everyone, even professionals). "
-            "Gently put things in perspective with concrete context. "
-            "Reference any past wins to remind them of their progress. "
-            "Encourage long-term thinking over short-term results. "
-            "Never dismiss their concerns or lecture them. "
-            "Keep the tone calm, warm, and reassuring."
-        ),
-
-        GENERAL: (
-            f"{base}"
-            "The user has a general question or message. "
-            "Be helpful, friendly, and professional. "
-            "Adapt your tone naturally to match theirs. "
-            "Be concise — don't over-explain. "
-            "If trading-related, bring in your expertise. "
-            "If off-topic, be helpful and gently steer back to how you can assist them."
-        ),
-    }
-
-    return context_prompts.get(context, context_prompts[GENERAL])
 
 
 # ─────────────────────────────────────────────
@@ -558,69 +523,6 @@ class ConversationAgent:
     def __init__(self, user_id: str):
         self.user_id = user_id
         self._claude = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-
-    def _build_system_prompt(self, context: SharedContext) -> str:
-        """Full shared context for Claude — accounts, positions, subscription (truthful data)."""
-        exchange_lines: list[str] = []
-        for acc in context.trading_accounts or []:
-            ex = str(acc.get("exchange", "unknown")).lower()
-            is_paper = acc.get("is_paper")
-            bal = float(acc.get("balance_usd") or 0)
-            mode = "Paper" if is_paper else "LIVE"
-            exchange_lines.append(
-                f"- {ex.title()}: {mode} account, balance ~${bal:.2f}"
-            )
-        exchanges_text = "\n".join(exchange_lines) if exchange_lines else "No exchanges connected yet."
-
-        positions = context.open_positions or []
-        if positions:
-            pos_parts: list[str] = []
-            for p in positions:
-                sym = p.get("symbol") or "—"
-                side = p.get("side") or "—"
-                qty = p.get("qty")
-                try:
-                    qty_s = f"{float(qty):g}" if qty is not None else "—"
-                except (TypeError, ValueError):
-                    qty_s = str(qty) if qty is not None else "—"
-                ep = float(p.get("entry_price") or 0)
-                pos_parts.append(f"- {sym}: {side} {qty_s} @ ${ep:.2f}")
-            positions_text = "\n".join(pos_parts)
-        else:
-            positions_text = "No open positions."
-
-        persona = context.apex_name or "Apex"
-        who = context.user_name or "the user"
-
-        return f"""You are {persona}, the AI trading companion inside Unitrader.
-You are speaking with {who} (trader class: {context.trader_class or 'unknown'}).
-
-CONNECTED EXCHANGES:
-{exchanges_text}
-
-OPEN POSITIONS:
-{positions_text}
-
-TRUST LADDER STAGE: {context.trust_ladder_stage or 1}
-SUBSCRIPTION: {context.subscription_tier or 'free'}
-TRADING PAUSED: {context.trading_paused or False}
-
-PERFORMANCE SNAPSHOT (use for "show my performance", "how am I doing", win rate, P&L overview):
-{_performance_snapshot_for_prompt(context)}
-
-TRADING INTENTS (coordinate with the product — some requests are fulfilled automatically before you reply):
-- If they ask to **analyse** or **analyze** a specific stock/crypto (or ask your **outlook** / **opinion** with a clear symbol), the TradingAgent analysis pipeline may already have run — summarise any analysis block you see and stay consistent with it.
-- If they say **buy** or **sell** with a symbol and size, the system asks them to confirm with `CONFIRM BUY|SELL SYMBOL AMOUNT` (amount = notional in USD). Until they send that exact confirm line, **do not** claim the order is placed; explain the proposal and risks briefly.
-- **Performance** questions: answer from PERFORMANCE SNAPSHOT plus CONNECTED EXCHANGES / OPEN POSITIONS — never invent numbers.
-- **Balance** questions: answer only from CONNECTED EXCHANGES balances above; if an exchange shows $0.00 placeholder, say balances may need a live refresh in Settings.
-
-You have full knowledge of the user's accounts, balances, positions, and trade history.
-Never say you don't have access to their data — you do.
-Never say "as an AI I cannot" — you are {persona}, not a generic assistant.
-Answer questions directly using the context above.
-If they ask what exchange they're connected to, tell them exactly.
-If they ask their balance, tell them from the context above.
-Keep responses concise and direct. Use plain English unless they're an experienced trader."""
 
     async def _maybe_route_trading_via_orchestrator(
         self,
@@ -676,7 +578,7 @@ Keep responses concise and direct. Use plain English unless they're an experienc
             side = m.group(1).upper()
             raw_sym = m.group(2)
             amt_raw = m.group(3)
-            sym, _ex = _resolve_symbol_for_trade_cmd(raw_sym)
+            sym, default_ex = _resolve_symbol_for_trade_cmd(raw_sym)
             if not sym:
                 return f"I couldn't understand the symbol `{raw_sym}`. Try e.g. BTCUSDT or AAPL."
             if not amt_raw:
@@ -697,7 +599,7 @@ Keep responses concise and direct. Use plain English unless they're an experienc
                     ar = await _orchestrator_route(
                         self.user_id,
                         "trade_analyze",
-                        {"symbol": sym},
+                        {"symbol": sym, "exchange": default_ex},
                     )
                     brief = _format_analyze_result_for_chat(ar, shared_ctx)
                 except HTTPException as e:
@@ -721,32 +623,53 @@ Keep responses concise and direct. Use plain English unless they're an experienc
             )
             return "\n".join(lines)
 
-        # ── Deep analysis (symbol required) ───────────────────────────────────
-        assets = _extract_assets(user_message)
-        if assets and _wants_trading_agent_analysis(user_message, conv_context):
-            if not shared_ctx.subscription_active:
-                return None
-            symbol, _ex = assets[0]
-            try:
-                result = await _orchestrator_route(
-                    self.user_id,
-                    "trade_analyze",
-                    {"symbol": symbol},
-                )
-                return _format_analyze_result_for_chat(result, shared_ctx)
-            except HTTPException as e:
-                return _http_detail_str(e.detail)
-            except Exception as exc:
-                logger.warning("trade_analyze from chat failed: %s", exc)
-                return None
+        # Analyse / deep outlook: injected into the system prompt in respond() so Claude
+        # can blend engine output with conversational tone (not a standalone canned reply).
 
         return None
+
+    async def _build_trading_engine_context_block(
+        self,
+        user_message: str,
+        shared_ctx: SharedContext,
+        conv_context: str,
+    ) -> str:
+        """Run trade_analyze and format for system prompt (sentiment + trading agent)."""
+        if shared_ctx.trading_paused or not shared_ctx.subscription_active:
+            return ""
+        assets = _extract_assets(user_message)
+        if not assets or not _wants_trading_agent_analysis(user_message, conv_context):
+            return ""
+        symbol, exch = assets[0]
+        try:
+            result = await _orchestrator_route(
+                self.user_id,
+                "trade_analyze",
+                {"symbol": symbol, "exchange": exch},
+            )
+        except HTTPException as e:
+            return (
+                "\n\nTRADING ENGINE: analysis unavailable ("
+                f"{_http_detail_str(e.detail)})."
+            )
+        except Exception as exc:
+            logger.warning("trade_analyze injection failed: %s", exc)
+            return ""
+        parts = [
+            "\n\nTRADING ENGINE (full analysis; align your answer and cite this signal when relevant):",
+            _format_analyze_result_for_chat(result, shared_ctx),
+        ]
+        sctx = result.get("sentiment_context")
+        if sctx:
+            parts.append(f"Sentiment (engine): {str(sctx)[:1200]}")
+        return "\n".join(parts)
 
     async def respond(
         self,
         user_message: str,
         db: AsyncSession | None = None,
         shared_context: SharedContext | None = None,
+        channel: str = "web_app",
     ) -> dict:
         """Process a user message and return an AI response.
 
@@ -767,6 +690,7 @@ Keep responses concise and direct. Use plain English unless they're an experienc
             db: Optional injected AsyncSession (for request-scoped sessions).
             shared_context: If provided (e.g. from Orchestrator.route), used for the system
                 prompt instead of loading SharedMemory again on a new session.
+            channel: ``web_app`` | ``whatsapp`` | ``telegram`` — shapes prompt and output length.
 
         Returns:
             {
@@ -793,13 +717,16 @@ Keep responses concise and direct. Use plain English unless they're an experienc
         if not user:
             return self._fallback_response(user_message, reason="User not found")
 
-        ai_name = user.ai_name or "Claude"
-
         if shared_context is not None:
             shared_ctx = shared_context
         else:
             async with AsyncSessionLocal() as _ctx_db:
                 shared_ctx = await SharedMemory.load(self.user_id, _ctx_db)
+
+        ai_name = (
+            (shared_ctx.ai_name or shared_ctx.apex_name or user.ai_name or "Apex").strip()
+            or "Apex"
+        )
 
         # ── Detect context & sentiment ─────────────────────────────────────
         context = detect_context(user_message)
@@ -832,33 +759,52 @@ Keep responses concise and direct. Use plain English unless they're an experienc
 
         # ── Extract assets and fetch live market data ──────────────────────
         assets = _extract_assets(user_message)
+        if not assets and _wants_broad_market_summary(user_message):
+            assets = [("SPY", "alpaca"), ("BTCUSDT", "binance")]
+
         data_freshness: str | None = None
         market_block = ""
 
-        if assets or context in _MARKET_CONTEXTS:
+        if assets:
             try:
                 market_block, data_freshness = await _build_market_data_block(assets)
             except Exception as exc:
                 logger.warning("Market data injection failed: %s", exc)
+
+        marks_block = ""
+        if shared_ctx.open_positions:
+            try:
+                marks_block = await _build_open_positions_marks_block(
+                    shared_ctx.open_positions
+                )
+            except Exception as exc:
+                logger.warning("Open position marks injection failed: %s", exc)
+
+        trading_engine_block = ""
+        try:
+            trading_engine_block = await self._build_trading_engine_context_block(
+                user_message, shared_ctx, context
+            )
+        except Exception as exc:
+            logger.warning("Trading engine context injection failed: %s", exc)
 
         # ── Build message history for Claude ──────────────────────────────
         history = await get_recent_messages_for_claude(
             self.user_id, limit=_HISTORY_TURNS, db=db
         )
 
-        # ── Shared context (accounts / positions) + per-message tone ───────
-        system_prompt = (
-            self._build_system_prompt(shared_ctx)
-            + "\n\n---\n\nMESSAGE TONE:\n"
-            + _build_tone_system_prompt(context, ai_name, user.email)
-        )
+        # ── Shared context (accounts / positions) — production persona prompt ──
+        system_prompt = build_system_prompt(shared_ctx, channel)
 
         if context == AI_PERFORMANCE:
             async with AsyncSessionLocal() as _db2:
                 perf = await _get_performance_summary(self.user_id, _db2)
             system_prompt += f"\n\nCURRENT PERFORMANCE DATA:\n{perf}"
 
-        # ── Inject live market data ────────────────────────────────────────
+        if marks_block:
+            system_prompt += marks_block
+        if trading_engine_block:
+            system_prompt += trading_engine_block
         if market_block:
             system_prompt += market_block
 
@@ -866,10 +812,11 @@ Keep responses concise and direct. Use plain English unless they're an experienc
         messages = [*history, {"role": "user", "content": user_message}]
 
         # ── Call Claude ────────────────────────────────────────────────────
+        max_out = 600 if channel in ("whatsapp", "telegram") else _MAX_TOKENS
         try:
             claude_response = await self._claude.messages.create(
-                model=_CLAUDE_MODEL,
-                max_tokens=_MAX_TOKENS,
+                model=settings.anthropic_model,
+                max_tokens=max_out,
                 system=system_prompt,
                 messages=messages,
             )
@@ -907,13 +854,30 @@ Keep responses concise and direct. Use plain English unless they're an experienc
         message: str,
         context: SharedContext,
         db: AsyncSession | None = None,
+        channel: str = "web_app",
     ) -> dict:
         """Preferred entry when SharedContext is already loaded (e.g. Orchestrator.route).
 
         Forwards to ``respond`` with ``shared_context`` so the system prompt matches the
         orchestrator snapshot (including ``market_context`` when scoped by trading account).
         """
-        return await self.respond(message, db=db, shared_context=context)
+        return await self.respond(
+            message, db=db, shared_context=context, channel=channel
+        )
+
+    async def generate_first_message(self, context: SharedContext) -> str:
+        """First assistant line after the user names their AI during onboarding."""
+        name = (context.ai_name or context.apex_name or "Apex").strip() or "Apex"
+        user = (context.user_name or "there").strip() or "there"
+        return (
+            f"Hey {user}. I'm {name}.\n\n"
+            f"I'll watch the markets, flag the right moments, "
+            f"and when you're ready — execute trades on your behalf. "
+            f"Every decision I make, I'll explain in plain English. "
+            f"No jargon unless you want it.\n\n"
+            f"I'm already connected to your account and monitoring. "
+            f"What do you want to do first?"
+        )
 
     # ─────────────────────────────────────────
     # ONBOARDING CHAT
@@ -1268,6 +1232,7 @@ Keep responses concise and direct. Use plain English unless they're an experienc
         market_context: dict,
         portfolio_context: dict,
         agent_insights: dict,
+        channel: str = "web_app",
     ) -> dict:
         """Respond to a user message using orchestrator-provided context.
 
@@ -1302,20 +1267,19 @@ Keep responses concise and direct. Use plain English unless they're an experienc
             r.update({"context_used": [], "suggested_actions": None, "market_data_freshness": None})
             return r
 
-        ai_name = user.ai_name or "Claude"
-
         async with AsyncSessionLocal() as _ctx_db:
             shared_ctx = await SharedMemory.load(self.user_id, _ctx_db)
+
+        ai_name = (
+            (shared_ctx.ai_name or shared_ctx.apex_name or user.ai_name or "Apex").strip()
+            or "Apex"
+        )
 
         # Existing context & sentiment detection
         context = detect_context(message)
         sentiment = analyze_sentiment(message)
 
-        system_prompt = (
-            self._build_system_prompt(shared_ctx)
-            + "\n\n---\n\nMESSAGE TONE:\n"
-            + _build_tone_system_prompt(context, ai_name, user.email)
-        )
+        system_prompt = build_system_prompt(shared_ctx, channel)
 
         # Performance injection unchanged
         if context == AI_PERFORMANCE:
@@ -1351,11 +1315,12 @@ Keep responses concise and direct. Use plain English unless they're an experienc
         history = conversation_history or []
         messages = [*history, {"role": "user", "content": message}]
 
+        max_out = 600 if channel in ("whatsapp", "telegram") else _MAX_TOKENS
         # Call Claude
         try:
             claude_response = await self._claude.messages.create(
-                model=_CLAUDE_MODEL,
-                max_tokens=_MAX_TOKENS,
+                model=settings.anthropic_model,
+                max_tokens=max_out,
                 system=system_prompt,
                 messages=messages,
             )
@@ -1424,7 +1389,7 @@ Keep responses concise and direct. Use plain English unless they're an experienc
             "context": GENERAL,
             "context_label": get_context_label(GENERAL),
             "sentiment": analyze_sentiment(user_message),
-            "user_ai_name": "Claude",
+            "user_ai_name": "Apex",
             "conversation_id": None,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "data_freshness": None,

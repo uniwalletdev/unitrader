@@ -613,8 +613,16 @@ async def test_chat_returns_ai_response():
     user = _fake_user()
 
     with patch(
-        "src.services.bot_orchestrator_chat.orchestrator_chat_reply",
-        new=AsyncMock(return_value="BTC looks bullish based on current RSI."),
+        "src.services.bot_orchestrator_chat.orchestrator_chat_with_actions",
+        new=AsyncMock(
+            return_value={
+                "text": "BTC looks bullish based on current RSI.",
+                "action_taken": None,
+                "requires_confirmation": None,
+                "pending_trade": None,
+                "raw": {},
+            }
+        ),
     ):
         text = await svc._cmd_chat(user, "Should I buy Bitcoin?")
 
@@ -631,8 +639,16 @@ async def test_chat_response_truncated_at_1600():
     long_response = "A" * 2500
 
     with patch(
-        "src.services.bot_orchestrator_chat.orchestrator_chat_reply",
-        new=AsyncMock(return_value=long_response),
+        "src.services.bot_orchestrator_chat.orchestrator_chat_with_actions",
+        new=AsyncMock(
+            return_value={
+                "text": long_response,
+                "action_taken": None,
+                "requires_confirmation": None,
+                "pending_trade": None,
+                "raw": {},
+            }
+        ),
     ), \
          patch.object(svc, "send_message",     new=send_mock), \
          patch.object(svc, "_log",             new=AsyncMock()), \
@@ -655,8 +671,16 @@ async def test_linked_freetext_routes_to_orchestrator_not_unknown():
          patch.object(svc, "send_message", new=send_mock), \
          patch.object(svc, "_log", new=AsyncMock()), \
          patch(
-             "src.services.bot_orchestrator_chat.orchestrator_chat_reply",
-             new=AsyncMock(return_value="RSI measures momentum."),
+             "src.services.bot_orchestrator_chat.orchestrator_chat_with_actions",
+             new=AsyncMock(
+                 return_value={
+                     "text": "RSI measures momentum.",
+                     "action_taken": None,
+                     "requires_confirmation": None,
+                     "pending_trade": None,
+                     "raw": {},
+                 }
+             ),
          ):
         await svc.handle_incoming_message(_FROM, "What is RSI?")
 
@@ -741,64 +765,89 @@ def test_help_within_whatsapp_limit():
 @pytest.mark.asyncio
 async def test_send_trade_alert_success():
     """send_trade_alert returns True and sends the message."""
+    from unittest.mock import AsyncMock as _AsyncMock
+    from unittest.mock import patch
+
     svc = _wa_service()
     svc.send_message = AsyncMock()
 
-    result = await svc.send_trade_alert(
-        whatsapp_number=_PHONE,
-        symbol="BTCUSDT",
-        side="BUY",
-        entry_price=50_000.0,
-        stop_loss=49_000.0,
-        take_profit=52_000.0,
-        confidence=82,
-        reasoning="Strong breakout above resistance.",
-    )
+    with patch(
+        "src.services.user_ai_name.get_user_ai_name",
+        new=_AsyncMock(return_value="Zeus"),
+    ):
+        result = await svc.send_trade_alert(
+            whatsapp_number=_PHONE,
+            user_id="00000000-0000-0000-0000-000000000001",
+            symbol="BTCUSDT",
+            side="BUY",
+            entry_price=50_000.0,
+            stop_loss=49_000.0,
+            take_profit=52_000.0,
+            confidence=82,
+            reasoning="Strong breakout above resistance.",
+        )
 
     assert result is True
     svc.send_message.assert_called_once()
     body: str = svc.send_message.call_args[0][1]
     assert "BTCUSDT" in body
     assert "82%" in body
+    assert "Zeus" in body
 
 
 @pytest.mark.asyncio
 async def test_send_trade_alert_twilio_error_returns_false():
     """send_trade_alert returns False if Twilio throws."""
+    from unittest.mock import AsyncMock as _AsyncMock
+    from unittest.mock import patch
+
     svc = _wa_service()
     svc.send_message = AsyncMock(side_effect=Exception("Twilio error"))
 
-    result = await svc.send_trade_alert(
-        whatsapp_number=_PHONE,
-        symbol="ETHUSDT",
-        side="SELL",
-        entry_price=3_000.0,
-        stop_loss=3_060.0,
-        take_profit=2_940.0,
-        confidence=70,
-        reasoning="Test",
-    )
+    with patch(
+        "src.services.user_ai_name.get_user_ai_name",
+        new=_AsyncMock(return_value="Apex"),
+    ):
+        result = await svc.send_trade_alert(
+            whatsapp_number=_PHONE,
+            user_id="u1",
+            symbol="ETHUSDT",
+            side="SELL",
+            entry_price=3_000.0,
+            stop_loss=3_060.0,
+            take_profit=2_940.0,
+            confidence=70,
+            reasoning="Test",
+        )
     assert result is False
 
 
 @pytest.mark.asyncio
 async def test_trade_alert_truncated_for_long_reasoning():
     """Trade alert with very long reasoning is still under 1600 chars."""
+    from unittest.mock import AsyncMock as _AsyncMock
+    from unittest.mock import patch
+
     svc = _wa_service()
     svc.send_message = AsyncMock()
 
     long_reason = "Very detailed reason. " * 200   # ~4400 chars
 
-    await svc.send_trade_alert(
-        whatsapp_number=_PHONE,
-        symbol="SOLUSDT",
-        side="BUY",
-        entry_price=150.0,
-        stop_loss=145.0,
-        take_profit=160.0,
-        confidence=75,
-        reasoning=long_reason,
-    )
+    with patch(
+        "src.services.user_ai_name.get_user_ai_name",
+        new=_AsyncMock(return_value="Apex"),
+    ):
+        await svc.send_trade_alert(
+            whatsapp_number=_PHONE,
+            user_id="u1",
+            symbol="SOLUSDT",
+            side="BUY",
+            entry_price=150.0,
+            stop_loss=145.0,
+            take_profit=160.0,
+            confidence=75,
+            reasoning=long_reason,
+        )
 
     body: str = svc.send_message.call_args[0][1]
     assert len(body) <= 1600

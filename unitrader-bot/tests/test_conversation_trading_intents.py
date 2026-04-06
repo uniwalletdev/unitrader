@@ -110,7 +110,33 @@ async def test_propose_trade_with_amount_calls_analyze_and_lists_confirm():
 
 
 @pytest.mark.asyncio
-async def test_analyze_intent_routes_trade_analyze():
+async def test_analyze_intent_not_short_circuited_in_router():
+    """Deep analysis is injected in respond() with Claude — router does not return canned text."""
+    from src.agents.core.conversation_agent import ConversationAgent
+
+    agent = ConversationAgent("user-test-1")
+    shared = _ctx(
+        subscription_active=True,
+        trading_paused=False,
+        trader_class="experienced",
+    )
+
+    with patch(
+        "src.agents.core.conversation_agent._orchestrator_route",
+        new=AsyncMock(),
+    ) as mock_route:
+        out = await agent._maybe_route_trading_via_orchestrator(
+            "analyze AAPL for me",
+            shared,
+            "market_analysis",
+        )
+
+    assert out is None
+    mock_route.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_trading_engine_context_block_calls_analyze():
     from src.agents.core.conversation_agent import ConversationAgent
 
     agent = ConversationAgent("user-test-1")
@@ -128,16 +154,17 @@ async def test_analyze_intent_routes_trade_analyze():
                 "expert": "Strong uptrend.",
                 "simple": "Looks good.",
                 "entry_price": 100.0,
+                "sentiment_context": "News slightly positive.",
             }
         ),
     ) as mock_route:
-        out = await agent._maybe_route_trading_via_orchestrator(
+        block = await agent._build_trading_engine_context_block(
             "analyze AAPL for me",
             shared,
             "market_analysis",
         )
 
-    assert out and "BUY" in out and "Strong uptrend" in out
+    assert "BUY" in block and "Strong uptrend" in block
     mock_route.assert_awaited_once()
     assert mock_route.await_args[0][1] == "trade_analyze"
     assert mock_route.await_args[0][2]["symbol"] == "AAPL"

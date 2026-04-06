@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from models import ApexNotification, UserExternalAccount, UserSettings
+from src.services.user_ai_name import get_user_ai_name
 
 logger = logging.getLogger(__name__)
 
@@ -56,29 +57,30 @@ class UnitraderNotificationEngine:
         stop_loss_pct = float(trade.get("stop_loss_pct", 2) or 2)
         take_profit_pct = float(trade.get("take_profit_pct", 5) or 5)
 
+        ai_name = await get_user_ai_name(user_id, db)
         side_word = "bought" if side == "BUY" else "sold"
         direction_arrow = "▲" if side == "BUY" else "▼"
 
-        channel_msg = f"""{direction_arrow} Unitrader just {side_word} {asset_name}
+        channel_msg = f"""{direction_arrow} {ai_name} just {side_word} {asset_name}
 
 Amount: £{amount:.2f} at £{price:.4f}
 Confidence: {confidence}% ({votes_for}/7 signals agreed)
 
-Why Unitrader acted:
+Why {ai_name} acted:
 {reasoning}
 
 Protection:
-  Stop-loss: -{stop_loss_pct}% (Unitrader auto-closes if price drops)
-  Target: +{take_profit_pct}% (Unitrader takes profit here)
+  Stop-loss: -{stop_loss_pct}% ({ai_name} auto-closes if price drops)
+  Target: +{take_profit_pct}% ({ai_name} takes profit here)
 
 ↩ Undo this trade (60 seconds):
 {self._undo_url(undo_token)}
 
-⏸ Pause Unitrader: /pause
+⏸ Pause automated trading: /pause
 
 ⚠️ Not financial advice. Capital at risk."""
 
-        push_title = f"{direction_arrow} Unitrader {side_word} {asset_name}"
+        push_title = f"{direction_arrow} {ai_name} {side_word} {asset_name}"
         push_body = f"£{amount:.2f} · {confidence}% confidence · Tap to see details"
 
         await self._dispatch(
@@ -113,6 +115,7 @@ Protection:
         top_signal = str(top.get("signal", "buy")).upper()
         threshold = top.get("threshold_used", 75)
 
+        ai_name = await get_user_ai_name(user_id, db)
         signal_lines = []
         for signal in selected_signals[:3]:
             signal_lines.append(
@@ -121,7 +124,7 @@ Protection:
                 f"— {signal.get('confidence', 0)}% confidence"
             )
 
-        channel_msg = f"""Unitrader found {count} signal{'s' if count != 1 else ''} matching your criteria
+        channel_msg = f"""📊 {ai_name} spotted {count} signal{'s' if count != 1 else ''} matching your criteria
 
 Scanned: {total_scanned} assets
 Your threshold: {threshold}%+
@@ -137,7 +140,7 @@ Or open Unitrader to review and choose individually.
 This offer expires in 30 minutes.
 ⚠️ Not financial advice. Capital at risk."""
 
-        push_title = f"Unitrader found {count} signal{'s' if count != 1 else ''} for you"
+        push_title = f"{ai_name} found {count} signal{'s' if count != 1 else ''} for you"
         push_body = f"Best: {top_signal} {top_name} at {top_conf}%. Tap to approve."
 
         await self._dispatch(
@@ -161,6 +164,7 @@ This offer expires in 30 minutes.
         db: AsyncSession,
     ) -> None:
         count = len(executed_trades)
+        ai_name = await get_user_ai_name(user_id, db)
         lines = []
         for trade in executed_trades[:3]:
             asset_name = trade.get("asset_name", trade.get("symbol", ""))
@@ -168,19 +172,19 @@ This offer expires in 30 minutes.
             amount = float(trade.get("amount", 0) or 0)
             lines.append(f"  {side} {asset_name} — £{amount:.2f}")
 
-        channel_msg = f"""Unitrader executed {count} approved trade{'s' if count != 1 else ''}
+        channel_msg = f"""{ai_name} executed {count} approved trade{'s' if count != 1 else ''}
 
 Executed:
 {chr(10).join(lines) if lines else '  No trades were included.'}
 
-Open Unitrader to review the positions Unitrader is now monitoring.
+Open Unitrader to review the positions {ai_name} is now monitoring.
 ⚠️ Not financial advice. Capital at risk."""
 
         await self._dispatch(
             user_id=user_id,
             notification_type="apex_selects_executed",
-            title=f"Unitrader executed {count} approved trade{'s' if count != 1 else ''}",
-            body="Your approved Unitrader Selects trades have been placed.",
+            title=f"{ai_name} executed {count} approved trade{'s' if count != 1 else ''}",
+            body=f"Your approved trades have been placed by {ai_name}.",
             channel_message=channel_msg,
             data={
                 "trade_count": count,
@@ -207,14 +211,15 @@ Open Unitrader to review the positions Unitrader is now monitoring.
         top_signal = str(top.get("signal", "buy")).upper()
         top_reason = top.get("reasoning_simple", "") or ""
 
+        ai_name = await get_user_ai_name(user_id, db)
         if trader_class in ("complete_novice", "curious_saver"):
-            greeting = "Good morning! Unitrader has been watching the markets."
-            cta = "Tap to see what Unitrader found and decide if you want to trade."
+            greeting = f"Good morning. {ai_name} here — I've been watching the markets."
+            cta = f"Tap to see what {ai_name} found and decide if you want to trade."
         elif trader_class == "crypto_native":
-            greeting = "GM. Unitrader ran the overnight scan."
+            greeting = f"GM. {ai_name} here — I ran the overnight scan."
             cta = "Open Unitrader to browse and execute."
         else:
-            greeting = f"Morning briefing — Unitrader scanned {total_scanned} assets."
+            greeting = f"Morning briefing — {ai_name} here. I scanned {total_scanned} assets."
             cta = "Open Unitrader to review and execute."
 
         signal_lines = []
@@ -238,10 +243,10 @@ Open Unitrader to trade:
 
 {cta}
 
-Remember: In Browse mode, Unitrader never trades without your tap.
+Remember: In Browse mode, {ai_name} never trades without your tap.
 ⚠️ Not financial advice. Capital at risk."""
 
-        push_title = f"Unitrader found {count} signal{'s' if count != 1 else ''} this morning"
+        push_title = f"{ai_name} found {count} signal{'s' if count != 1 else ''} this morning"
         push_body = f"Best: {top_signal} {top_name} at {top_conf}% confidence"
 
         await self._dispatch(
@@ -269,14 +274,14 @@ Remember: In Browse mode, Unitrader never trades without your tap.
         asset_name = trade.get("asset_name", trade.get("symbol", ""))
         entry = float(trade.get("entry_price", 0) or 0)
 
-        channel_msg = f"""🛡️ Unitrader protected you — Stop-loss triggered
+        ai_name = await get_user_ai_name(user_id, db)
+        channel_msg = f"""⚠️ {ai_name} closed {asset_name} — stop loss triggered.
 
-{asset_name} closed automatically
 Entry: £{entry:.4f} → Close: £{close_price:.4f}
 Loss: -£{abs(loss_amount):.2f} (-{abs(loss_pct):.1f}%)
 
 Without the stop-loss, losses could have continued.
-Unitrader closed the position to protect your capital.
+{ai_name} closed the position to protect your capital.
 
 Your remaining portfolio is unaffected.
 ⚠️ Not financial advice. Capital at risk."""
@@ -285,7 +290,7 @@ Your remaining portfolio is unaffected.
             user_id=user_id,
             notification_type="stop_loss_triggered",
             title=f"Stop-loss triggered — {asset_name} closed",
-            body=f"Unitrader protected you. Loss: -£{abs(loss_amount):.2f}",
+            body=f"{ai_name} closed the position. Loss: -£{abs(loss_amount):.2f}",
             channel_message=channel_msg,
             data={"trade_id": str(trade.get("id", ""))},
             trade_id=str(trade.get("id", "")) or None,
@@ -304,7 +309,8 @@ Your remaining portfolio is unaffected.
         asset_name = trade.get("asset_name", trade.get("symbol", ""))
         exchange = trade.get("exchange", "exchange")
 
-        channel_msg = f"""Unitrader took profit on {asset_name}
+        ai_name = await get_user_ai_name(user_id, db)
+        channel_msg = f"""{ai_name} took profit on {asset_name}
 
 Profit: +£{profit_amount:.2f} (+{profit_pct:.1f}%)
 Position closed at target price (£{close_price:.4f}).
@@ -317,7 +323,7 @@ Open Unitrader to see your updated portfolio.
         await self._dispatch(
             user_id=user_id,
             notification_type="take_profit_triggered",
-            title=f"+£{profit_amount:.2f} — Unitrader hit the target on {asset_name}",
+            title=f"+£{profit_amount:.2f} — {ai_name} hit the target on {asset_name}",
             body=f"+{profit_pct:.1f}% profit. Cash is in your account.",
             channel_message=channel_msg,
             data={"trade_id": str(trade.get("id", ""))},
@@ -340,7 +346,8 @@ Open Unitrader to see your updated portfolio.
         pnl_arrow = "+" if pnl_today >= 0 else ""
         watchlist_str = ", ".join(watchlist[:5]) if watchlist else "your watchlist"
 
-        channel_msg = f"""Good morning — Unitrader daily report
+        ai_name = await get_user_ai_name(user_id, db)
+        channel_msg = f"""Good morning — {ai_name} here with your daily report
 
 Yesterday:
   Trades: {trades_today}
@@ -348,17 +355,17 @@ Yesterday:
   Signals skipped: {signals_skipped} (below threshold)
   Open positions: {open_positions}
 
-Today: Unitrader is watching {watchlist_str}
+Today: {ai_name} is watching {watchlist_str}
 Next scan: in 30 minutes
 
 Open Unitrader to review positions.
-⏸ Pause Unitrader anytime: /pause
+⏸ Pause automated trading anytime: /pause
 ⚠️ Not financial advice. Capital at risk."""
 
         await self._dispatch(
             user_id=user_id,
             notification_type="daily_digest",
-            title="Unitrader daily report",
+            title=f"{ai_name} — daily report",
             body=(
                 f"{trades_today} trades · {pnl_arrow}£{pnl_today:.2f} P&L · "
                 f"{open_positions} positions open"

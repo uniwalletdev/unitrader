@@ -10,6 +10,7 @@ Endpoints:
 """
 
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -20,7 +21,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import Conversation
 from routers.auth import get_current_user
+from src.agents.core.conversation_agent import (
+    _format_analyze_result_for_chat,
+    _http_detail_str,
+    _orchestrator_route,
+    _resolve_symbol_for_trade_cmd,
+)
 from src.agents.orchestrator import get_orchestrator
+from src.agents.shared_memory import SharedContext
 from src.services.context_detection import (
     ALL_CONTEXTS,
     detect_context,
@@ -36,6 +44,96 @@ from src.services.conversation_memory import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
+
+_ACTION_ANALYSE_RE = re.compile(r"\[ACTION:ANALYSE:([A-Z0-9\-/.]+)\]", re.I)
+_ACTION_TRADE_RE = re.compile(
+    r"\[ACTION:TRADE:(BUY|SELL):([A-Z0-9\-/.]+)\]",
+    re.I,
+)
+
+
+def _normalize_action_symbol(tag: str) -> tuple[str, str]:
+    """Map an action-tag token (e.g. BTC-USD, AAPL) to (symbol, exchange) for trade_analyze."""
+    raw = (tag or "").strip()
+    if not raw:
+        return "UNKNOWN", "alpaca"
+    u = raw.upper()
+    if "-" in u and "_" not in u:
+        left, right = u.split("-", 1)
+        if right in ("USD", "USDT", "EUR", "GBP"):
+            if right == "USDT":
+                return f"{left}USDT", "binance"
+            return f"{left}/{right}", "alpaca"
+    sym, ex = _resolve_symbol_for_trade_cmd(raw)
+    if sym and ex:
+        return sym, ex
+    compact = u.replace("-", "").replace("/", "")
+    if re.match(r"^[A-Z0-9]{2,20}$", compact):
+        return compact, "binance"
+    return u.replace("-", "/") if "-" in u else u, "alpaca"
+
+
+async def process_chat_response(
+    raw_response: str,
+    context: SharedContext,
+    user_message: str,
+    db: AsyncSession,
+) -> dict:
+    """Parse Apex action tags and route to sub-agents.
+
+    ``db`` is reserved for future persistence hooks; analysis uses a fresh session
+    via ``_orchestrator_route`` to avoid conflicting with the request transaction.
+    """
+    del db
+    del user_message
+
+    if "[ACTION:ANALYSE:" in raw_response.upper():
+        match = _ACTION_ANALYSE_RE.search(raw_response)
+        if match:
+            raw_sym = match.group(1)
+            clean_response = raw_response.replace(match.group(0), "").strip()
+            symbol, exchange = _normalize_action_symbol(raw_sym)
+            try:
+                analysis = await _orchestrator_route(
+                    context.user_id,
+                    "trade_analyze",
+                    {"symbol": symbol, "exchange": exchange},
+                )
+                clean_response += "\n\n" + _format_analyze_result_for_chat(
+                    analysis, context
+                )
+            except HTTPException as e:
+                logger.warning(
+                    "Analysis action failed for %s: %s", symbol, e.detail
+                )
+                clean_response += (
+                    f"\n\nI tried to pull a live analysis for {raw_sym} but couldn't "
+                    f"complete it ({_http_detail_str(e.detail)}). "
+                    "Try the Trade / AI Trader screen for the full signal."
+                )
+            except Exception as e:
+                logger.warning("Analysis action failed for %s: %s", raw_sym, e)
+                clean_response += (
+                    f"\n\nI tried to pull a live analysis for {raw_sym} but hit a "
+                    "data issue. Try the AI Trader tab for the full signal."
+                )
+            return {"response": clean_response, "action_taken": f"analyse:{symbol}"}
+
+    if "[ACTION:TRADE:" in raw_response.upper():
+        match = _ACTION_TRADE_RE.search(raw_response)
+        if match:
+            side = match.group(1).lower()
+            raw_sym = match.group(2)
+            symbol, _ex = _normalize_action_symbol(raw_sym)
+            clean_response = raw_response.replace(match.group(0), "").strip()
+            return {
+                "response": clean_response,
+                "action_taken": f"trade_pending:{side}:{symbol}",
+                "requires_confirmation": True,
+                "pending_trade": {"side": side, "symbol": symbol},
+            }
+
+    return {"response": raw_response, "action_taken": None}
 
 
 # ─────────────────────────────────────────────
@@ -76,15 +174,28 @@ async def send_message(
     # Onboarding-incomplete users get the tool-based profile-collection flow.
     # Everyone else gets the full trading conversation agent.
     from src.agents.shared_memory import SharedMemory
+
     ctx = await SharedMemory.load(current_user.id, db)
     action = "chat" if ctx.onboarding_complete else "onboarding_chat"
 
     result = await orchestrator.route(
         user_id=current_user.id,
         action=action,
-        payload={"message": body.message},
+        payload={"message": body.message, "channel": "web_app"},
         db=db,
     )
+
+    if ctx.onboarding_complete and action == "chat":
+        raw = (result.get("response") or result.get("message") or "").strip()
+        parsed = await process_chat_response(raw, ctx, body.message, db)
+        result["response"] = parsed["response"]
+        result["message"] = parsed["response"]
+        result["action_taken"] = parsed.get("action_taken")
+        if "requires_confirmation" in parsed:
+            result["requires_confirmation"] = parsed["requires_confirmation"]
+        if "pending_trade" in parsed:
+            result["pending_trade"] = parsed["pending_trade"]
+
     # Keep the existing API contract: return the conversation payload directly.
     return {"status": "success", "data": result}
 

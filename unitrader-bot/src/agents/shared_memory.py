@@ -11,16 +11,19 @@ SharedMemory maintains a module-level cache and handles DB queries + cache
 expiration logic.
 """
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from models import Conversation, ExchangeAPIKey, Trade, User, UserSettings
+from security import decrypt_api_key
+from src.integrations.exchange_client import get_exchange_client
 from src.market_context import MarketContext, resolve_market_context
 
 logger = logging.getLogger(__name__)
@@ -39,7 +42,8 @@ class SharedContext:
     """
 
     user_id: str
-    apex_name: str                          # Custom AI trader name
+    apex_name: str                          # Custom AI trader name (legacy alias)
+    ai_name: str                            # Personalised companion name (settings-first)
     goal: str                               # e.g. "grow_savings"
     risk_level: str                         # e.g. "balanced"
     max_trade_amount: float                 # USD
@@ -68,13 +72,22 @@ class SharedContext:
     open_positions: list[dict] = field(default_factory=list)
     user_name: Optional[str] = None
     subscription_tier: str = "free"
+    # Closed-trade aggregates (DB truth for P&L / history questions)
+    closed_net_pnl_usd: float = 0.0
+    best_closed_trade_usd: float = 0.0
+    worst_closed_trade_usd: float = 0.0
+    recent_closed_trades: list[dict] = field(default_factory=list)
+    # Chat-oriented snapshots (last N closed trades; overlaps recent_closed_trades with different shape)
+    performance: dict = field(default_factory=dict)
+    recent_trades: list[dict] = field(default_factory=list)
 
     @classmethod
     def default(cls, user_id: str) -> "SharedContext":
         """Return a safe default SharedContext with minimal values."""
         return cls(
             user_id=user_id,
-            apex_name="Claude",
+            apex_name="Apex",
+            ai_name="Apex",
             goal="grow_savings",
             risk_level="balanced",
             max_trade_amount=1000.0,
@@ -102,6 +115,18 @@ class SharedContext:
             open_positions=[],
             user_name=None,
             subscription_tier="free",
+            closed_net_pnl_usd=0.0,
+            best_closed_trade_usd=0.0,
+            worst_closed_trade_usd=0.0,
+            recent_closed_trades=[],
+            performance={
+                "total_trades": 0,
+                "win_rate": 0,
+                "total_pnl": 0.0,
+                "best_trade": None,
+                "worst_trade": None,
+            },
+            recent_trades=[],
         )
 
     def is_novice(self) -> bool:
@@ -229,8 +254,37 @@ class SharedMemory:
             )
 
     @staticmethod
+    async def _fetch_one_account_balance(k: ExchangeAPIKey) -> dict:
+        """Single connected exchange row with a live balance fetch (best-effort)."""
+        entry = {
+            "exchange": (k.exchange or "unknown").lower(),
+            "is_paper": bool(k.is_paper),
+            "balance_usd": 0.0,
+            "balance_error": None,
+        }
+        try:
+            api_key, api_secret = decrypt_api_key(
+                k.encrypted_api_key, k.encrypted_api_secret
+            )
+            client = get_exchange_client(
+                k.exchange, api_key, api_secret, is_paper=k.is_paper
+            )
+            bal = await client.get_account_balance()
+            await client.aclose()
+            entry["balance_usd"] = round(float(bal), 2)
+        except Exception as exc:
+            logger.warning(
+                "Balance fetch failed for %s (key %s): %s",
+                k.exchange,
+                k.id,
+                exc,
+            )
+            entry["balance_error"] = "unavailable"
+        return entry
+
+    @staticmethod
     async def _fetch_trading_accounts_snapshot(user_id: str, db: AsyncSession) -> list[dict]:
-        """Active exchange keys for chat context (balances omitted for latency)."""
+        """Active exchange keys for chat context with live balances (parallel, cached 60s)."""
         try:
             result = await db.execute(
                 select(ExchangeAPIKey).where(
@@ -239,14 +293,13 @@ class SharedMemory:
                 )
             )
             keys = result.scalars().all()
-            return [
-                {
-                    "exchange": (k.exchange or "unknown").lower(),
-                    "is_paper": bool(k.is_paper),
-                    "balance_usd": 0.0,
-                }
-                for k in keys
-            ]
+            if not keys:
+                return []
+            return list(
+                await asyncio.gather(
+                    *[SharedMemory._fetch_one_account_balance(k) for k in keys]
+                )
+            )
         except Exception as exc:
             logger.warning("trading_accounts snapshot failed for %s: %s", user_id, exc)
             return []
@@ -264,17 +317,104 @@ class SharedMemory:
                 .limit(50)
             )
             rows = result.scalars().all()
+            out: list[dict] = []
+            for t in rows:
+                entry = float(t.entry_price or 0)
+                qty = float(t.quantity or 0)
+                out.append(
+                    {
+                        "symbol": t.symbol,
+                        "side": (t.side or "").upper(),
+                        "qty": t.quantity,
+                        "entry_price": entry,
+                        "exchange": (t.exchange or "alpaca").lower(),
+                        "notional_entry_usd": round(entry * qty, 2),
+                    }
+                )
+            return out
+        except Exception as exc:
+            logger.warning("open_positions snapshot failed for %s: %s", user_id, exc)
+            return []
+
+    @staticmethod
+    def _trade_realized_usd(t: Trade) -> float:
+        """Closed-trade P&L from profit/loss columns (no single `pnl` field on Trade)."""
+        return float((t.profit or 0) - (t.loss or 0))
+
+    @staticmethod
+    async def _fetch_performance_snapshot(user_id: str, db: AsyncSession) -> dict[str, Any]:
+        """Lightweight P&L summary for chat context (last 50 closed trades)."""
+        empty: dict[str, Any] = {
+            "total_trades": 0,
+            "win_rate": 0,
+            "total_pnl": 0.0,
+            "best_trade": None,
+            "worst_trade": None,
+        }
+        try:
+            result = await db.execute(
+                select(Trade)
+                .where(
+                    Trade.user_id == user_id,
+                    Trade.status == "closed",
+                )
+                .order_by(desc(Trade.closed_at), desc(Trade.created_at))
+                .limit(50)
+            )
+            trades = list(result.scalars().all())
+            if not trades:
+                return empty
+
+            pnls = [SharedMemory._trade_realized_usd(t) for t in trades]
+            wins = [p for p in pnls if p > 0]
+            total_pnl = sum(pnls)
+            win_rate = round(len(wins) / len(pnls) * 100) if pnls else 0
+
+            best = max(trades, key=SharedMemory._trade_realized_usd)
+            worst = min(trades, key=SharedMemory._trade_realized_usd)
+            bp = SharedMemory._trade_realized_usd(best)
+            wp = SharedMemory._trade_realized_usd(worst)
+
+            return {
+                "total_trades": len(trades),
+                "win_rate": win_rate,
+                "total_pnl": round(total_pnl, 2),
+                "best_trade": (
+                    f"{best.symbol} +${bp:.2f}" if bp >= 0 else f"{best.symbol} ${bp:.2f}"
+                ),
+                "worst_trade": (
+                    f"{worst.symbol} -${abs(wp):.2f}" if wp < 0 else f"{worst.symbol} +${wp:.2f}"
+                ),
+            }
+        except Exception as e:
+            logger.warning("Performance snapshot failed: %s", e)
+            return dict(empty)
+
+    @staticmethod
+    async def _fetch_recent_trades_snapshot(user_id: str, db: AsyncSession) -> list[dict]:
+        """Last 5 closed trades for chat context."""
+        try:
+            result = await db.execute(
+                select(Trade)
+                .where(
+                    Trade.user_id == user_id,
+                    Trade.status == "closed",
+                )
+                .order_by(desc(Trade.closed_at), desc(Trade.created_at))
+                .limit(5)
+            )
+            trades = result.scalars().all()
             return [
                 {
                     "symbol": t.symbol,
-                    "side": t.side or "",
-                    "qty": t.quantity,
-                    "entry_price": float(t.entry_price or 0),
+                    "side": t.side,
+                    "pnl": round(SharedMemory._trade_realized_usd(t), 2),
+                    "closed_at": t.closed_at.strftime("%d %b") if t.closed_at else "unknown",
                 }
-                for t in rows
+                for t in trades
             ]
-        except Exception as exc:
-            logger.warning("open_positions snapshot failed for %s: %s", user_id, exc)
+        except Exception as e:
+            logger.warning("Recent trades snapshot failed: %s", e)
             return []
 
     @staticmethod
@@ -288,7 +428,8 @@ class SharedMemory:
         Queries:
         1. User + UserSettings (one JOIN)
         2. Aggregate trades for win_rate and total_trades
-        3. Last 5 onboarding messages from Conversation
+        3. Closed-trade insights, performance snapshot (50), recent trades (5)
+        4. Last 5 onboarding messages from Conversation
 
         If no UserSettings row exists, creates one with defaults.
         """
@@ -316,6 +457,11 @@ class SharedMemory:
 
             # Aggregate trade stats
             trade_stats = await SharedMemory._aggregate_trade_stats(user_id, db)
+            closed_insights = await SharedMemory._fetch_closed_trade_insights(user_id, db)
+            performance, recent_trades = await asyncio.gather(
+                SharedMemory._fetch_performance_snapshot(user_id, db),
+                SharedMemory._fetch_recent_trades_snapshot(user_id, db),
+            )
 
             # Fetch last 5 onboarding messages
             onboarding_messages = await SharedMemory._fetch_onboarding_messages(
@@ -336,10 +482,21 @@ class SharedMemory:
                 trading_accounts[0]["exchange"] if trading_accounts else "alpaca"
             )
 
+            settings_ai = (getattr(settings, "ai_name", None) or "").strip()
+            user_ai = (getattr(user, "ai_name", None) or "").strip()
+            resolved_ai = settings_ai or user_ai or "Apex"
+
+            trust_ladder_stage = 1
+            if getattr(settings, "risk_disclosure_accepted", False):
+                trust_ladder_stage = 2
+            if getattr(settings, "onboarding_complete", False):
+                trust_ladder_stage = 3
+
             # Build SharedContext
             context = SharedContext(
                 user_id=user_id,
-                apex_name=user.ai_name or "Claude",
+                apex_name=resolved_ai,
+                ai_name=resolved_ai,
                 goal=getattr(settings, "financial_goal", None) or "grow_savings",
                 risk_level=getattr(settings, "risk_level_setting", None) or "balanced",
                 max_trade_amount=settings.max_trade_amount or 1000.0,
@@ -347,7 +504,7 @@ class SharedMemory:
                 explanation_level=settings.explanation_level or "simple",
                 trade_mode=settings.trade_mode or "guided",
                 paper_trading_enabled=True,  # Default — extend with user_settings table if needed
-                trust_ladder_stage=1,  # Default — extend with user_settings table if needed
+                trust_ladder_stage=trust_ladder_stage,
                 trading_paused=bool(settings.trading_paused),
                 subscription_active=(
                     user.subscription_tier == "pro"
@@ -373,6 +530,12 @@ class SharedMemory:
                 open_positions=open_positions,
                 user_name=user.email,
                 subscription_tier=(user.subscription_tier or "free").lower(),
+                closed_net_pnl_usd=closed_insights["closed_net_pnl_usd"],
+                best_closed_trade_usd=closed_insights["best_closed_trade_usd"],
+                worst_closed_trade_usd=closed_insights["worst_closed_trade_usd"],
+                recent_closed_trades=closed_insights["recent_closed_trades"],
+                performance=performance,
+                recent_trades=recent_trades,
             )
 
             if trading_account_id:
@@ -462,6 +625,72 @@ class SharedMemory:
                 "win_rate": 0.0,
                 "avg_confidence": 0.0,
             }
+
+    @staticmethod
+    async def _fetch_closed_trade_insights(
+        user_id: str, db: AsyncSession
+    ) -> dict[str, Any]:
+        """Net / best / worst realized P&L and a short recent-closed list for chat prompts."""
+        empty = {
+            "closed_net_pnl_usd": 0.0,
+            "best_closed_trade_usd": 0.0,
+            "worst_closed_trade_usd": 0.0,
+            "recent_closed_trades": [],
+        }
+        try:
+            realized = func.coalesce(Trade.profit, 0) - func.coalesce(Trade.loss, 0)
+            agg_stmt = (
+                select(
+                    func.count(Trade.id),
+                    func.coalesce(func.sum(realized), 0),
+                    func.max(realized),
+                    func.min(realized),
+                ).where(
+                    Trade.user_id == user_id,
+                    Trade.status == "closed",
+                )
+            )
+            agg_row = (await db.execute(agg_stmt)).one()
+            n_closed = int(agg_row[0] or 0)
+            if n_closed == 0:
+                return empty
+
+            net = float(agg_row[1] or 0)
+            best = float(agg_row[2] or 0)
+            worst = float(agg_row[3] or 0)
+
+            recent_stmt = (
+                select(Trade)
+                .where(
+                    Trade.user_id == user_id,
+                    Trade.status == "closed",
+                )
+                .order_by(desc(Trade.closed_at), desc(Trade.created_at))
+                .limit(8)
+            )
+            recent_rows = (await db.execute(recent_stmt)).scalars().all()
+            recent_closed_trades: list[dict] = []
+            for t in recent_rows:
+                pnl = float((t.profit or 0) - (t.loss or 0))
+                closed_at = t.closed_at.isoformat() if t.closed_at else None
+                recent_closed_trades.append(
+                    {
+                        "symbol": t.symbol,
+                        "side": (t.side or "").upper(),
+                        "realized_usd": round(pnl, 2),
+                        "closed_at": closed_at,
+                    }
+                )
+
+            return {
+                "closed_net_pnl_usd": round(net, 2),
+                "best_closed_trade_usd": round(best, 2),
+                "worst_closed_trade_usd": round(worst, 2),
+                "recent_closed_trades": recent_closed_trades,
+            }
+        except Exception as exc:
+            logger.warning("closed trade insights failed for %s: %s", user_id, exc)
+            return empty
 
     @staticmethod
     async def _fetch_onboarding_messages(

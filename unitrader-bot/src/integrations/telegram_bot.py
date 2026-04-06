@@ -722,6 +722,34 @@ class TelegramBotService:
         await self._log(tg_id, "command", "/performance", "/performance", text,
                         "success", user_id=user.id, response_time_ms=ms)
 
+    async def _telegram_orchestrator_chat_text(
+        self,
+        user_id: str,
+        message: str,
+        db,
+        shared_context,
+    ) -> str:
+        """Apex chat + action tags; append Telegram hint when trade confirm is pending."""
+        from src.services.bot_orchestrator_chat import orchestrator_chat_with_actions
+
+        data = await orchestrator_chat_with_actions(
+            str(user_id),
+            message,
+            db=db,
+            shared_context=shared_context,
+            channel="telegram",
+        )
+        t = data["text"]
+        if data.get("requires_confirmation"):
+            pt = data.get("pending_trade") or {}
+            su = str(pt.get("side") or "").upper()
+            sy = str(pt.get("symbol") or "")
+            t += (
+                "\n\n⚠️ *Pending trade* — confirm in the web app with "
+                f"`CONFIRM {su} {sy} <USD>` or use /trade."
+            )
+        return t
+
     # ── /chat ─────────────────────────────────────────────────────────────────
 
     async def cmd_chat(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -743,8 +771,6 @@ class TelegramBotService:
 
         user: User | None = None
         try:
-            from src.services.bot_orchestrator_chat import orchestrator_chat_reply
-
             async with AsyncSessionLocal() as db:
                 user = await self._telegram_linked_user(db, tg_id)
                 if not user:
@@ -761,11 +787,11 @@ class TelegramBotService:
                     shared_context.onboarding_complete,
                 )
                 await db.commit()
-                text = await orchestrator_chat_reply(
+                text = await self._telegram_orchestrator_chat_text(
                     str(user.id),
                     question,
-                    db=db,
-                    shared_context=shared_context,
+                    db,
+                    shared_context,
                 )
             status_str = "success"
         except Exception as exc:
@@ -776,7 +802,7 @@ class TelegramBotService:
         ms = int((time.perf_counter() - t0) * 1000)
         # Split if over Telegram's 4096-char limit
         for chunk in _chunk(text):
-            await self._reply(update, chunk)
+            await self._reply(update, chunk, parse_mode="Markdown")
         await self._log(tg_id, "message", "/chat", question, text, status_str,
                         user_id=user.id, response_time_ms=ms)
 
@@ -931,7 +957,6 @@ class TelegramBotService:
         t0 = time.perf_counter()
 
         from src.services.bot_intent import classify_natural_intent
-        from src.services.bot_orchestrator_chat import orchestrator_chat_reply
 
         intent = classify_natural_intent(raw)
 
@@ -1017,11 +1042,11 @@ class TelegramBotService:
             await db.commit()
             await update.message.chat.send_action(ChatAction.TYPING)
             try:
-                text = await orchestrator_chat_reply(
+                text = await self._telegram_orchestrator_chat_text(
                     str(user.id),
                     intent["message"],
-                    db=db,
-                    shared_context=shared_context,
+                    db,
+                    shared_context,
                 )
                 status_str = "success"
             except Exception as exc:
@@ -1031,7 +1056,7 @@ class TelegramBotService:
 
         ms = int((time.perf_counter() - t0) * 1000)
         for chunk in _chunk(text):
-            await self._reply(update, chunk)
+            await self._reply(update, chunk, parse_mode="Markdown")
         await self._log(
             tg_id,
             "message",
@@ -1048,6 +1073,7 @@ class TelegramBotService:
     async def send_trade_alert(
         self,
         telegram_user_id: str,
+        user_id: str,
         symbol: str,
         side: str,
         entry_price: float,
@@ -1063,10 +1089,14 @@ class TelegramBotService:
         """
         if not self.app:
             return False
+        from src.services.user_ai_name import get_user_ai_name
+
+        async with AsyncSessionLocal() as db:
+            ai_name = await get_user_ai_name(str(user_id), db)
         em = "📈" if side == "BUY" else "📉"
         text = (
-            f"{em} *Trade Alert!*\n\n"
-            f"📊 {side} `{symbol}`\n"
+            f"✅ *{ai_name}* executed a trade\n\n"
+            f"{em} {side} `{symbol}`\n"
             f"💵 Entry: `${entry_price:,.4f}`\n"
             f"🛑 Stop Loss: `${stop_loss:,.4f}`\n"
             f"🎯 Take Profit: `${take_profit:,.4f}`\n"
