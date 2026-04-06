@@ -655,16 +655,22 @@ function TradePage() {
     if (!settings) return;
     let mounted = true;
     (async () => {
-      try {
-        const res = await exchangeApi.balances();
-        const rows = (res.data?.data ?? []) as Array<{
-          trading_account_id?: string | null;
-          exchange: string;
-          is_paper: boolean;
-          account_label?: string | null;
-          currency?: string;
-        }>;
-        const connected = rows
+      type TradingAccountRow = {
+        trading_account_id: string;
+        exchange: string;
+        is_paper: boolean;
+        account_label: string | null;
+        currency?: string;
+      };
+
+      const fromBalancesRows = (rows: Array<{
+        trading_account_id?: string | null;
+        exchange: string;
+        is_paper: boolean;
+        account_label?: string | null;
+        currency?: string;
+      }>): TradingAccountRow[] =>
+        rows
           .filter((r) => !!r.trading_account_id)
           .map((r) => ({
             trading_account_id: r.trading_account_id as string,
@@ -674,35 +680,63 @@ function TradePage() {
             currency: r.currency,
           }));
 
-        if (!mounted) return;
-        setAccounts(connected);
+      const fromListRows = (rows: Array<{
+        trading_account_id?: string | null;
+        exchange: string;
+        is_paper: boolean;
+        account_label?: string | null;
+      }>): TradingAccountRow[] =>
+        rows
+          .filter((r) => !!r.trading_account_id)
+          .map((r) => ({
+            trading_account_id: r.trading_account_id as string,
+            exchange: r.exchange,
+            is_paper: r.is_paper,
+            account_label: r.account_label ?? null,
+          }));
 
-        const preferred = settings.preferred_trading_account_id ?? null;
-        const preferredInList =
-          !!preferred && connected.some((a) => a.trading_account_id === preferred);
-        const resolved =
-          (preferred && connected.find((a) => a.trading_account_id === preferred)?.trading_account_id) ||
-          connected[0]?.trading_account_id ||
-          null;
-
-        if (preferred && !preferredInList && resolved) {
-          await authApi.updateSettings({ preferred_trading_account_id: resolved }).catch(() => {});
-          if (mounted) {
-            setSettings((prev) => (prev ? { ...prev, preferred_trading_account_id: resolved } : prev));
-          }
-        }
-
-        if (!mounted) return;
-        setSelectedTradingAccountId(resolved);
-
-        // Derive exchange from selected account when connected; otherwise keep current read-only exchange choice.
-        const selected = resolved ? connected.find((a) => a.trading_account_id === resolved) : null;
-        if (selected?.exchange) setExchange(selected.exchange);
+      let connected: TradingAccountRow[] = [];
+      try {
+        const res = await exchangeApi.balances();
+        const rows = (res.data?.data ?? []) as Parameters<typeof fromBalancesRows>[0];
+        connected = fromBalancesRows(rows);
       } catch {
-        if (!mounted) return;
-        setAccounts([]);
-        setSelectedTradingAccountId(null);
+        connected = [];
       }
+
+      if (connected.length === 0) {
+        try {
+          const res = await exchangeApi.list();
+          const rows = (res.data?.data ?? []) as Parameters<typeof fromListRows>[0];
+          connected = fromListRows(rows);
+        } catch {
+          connected = [];
+        }
+      }
+
+      if (!mounted) return;
+      setAccounts(connected);
+
+      const preferred = settings.preferred_trading_account_id ?? null;
+      const preferredInList =
+        !!preferred && connected.some((a) => a.trading_account_id === preferred);
+      const resolved =
+        (preferred && connected.find((a) => a.trading_account_id === preferred)?.trading_account_id) ||
+        connected[0]?.trading_account_id ||
+        null;
+
+      if (preferred && !preferredInList && resolved) {
+        await authApi.updateSettings({ preferred_trading_account_id: resolved }).catch(() => {});
+        if (mounted) {
+          setSettings((prev) => (prev ? { ...prev, preferred_trading_account_id: resolved } : prev));
+        }
+      }
+
+      if (!mounted) return;
+      setSelectedTradingAccountId(resolved);
+
+      const selected = resolved ? connected.find((a) => a.trading_account_id === resolved) : null;
+      if (selected?.exchange) setExchange(selected.exchange);
     })();
     return () => {
       mounted = false;
