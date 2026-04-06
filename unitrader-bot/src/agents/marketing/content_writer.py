@@ -238,7 +238,18 @@ async def generate_blog_post(
         f"Write a complete blog post about: **{topic}**"
         f"{hub_context}"
         f"{stats_context}\n\n"
-        "Remember: output ONLY valid JSON with no markdown code fences."
+        "Remember: output ONLY valid JSON with no markdown code fences.\n\n"
+        'You MUST respond with ONLY valid JSON. No markdown, no preamble,\n'
+        'no code fences. Return a JSON object with these exact keys:\n'
+        '{\n'
+        '  "title": "string",\n'
+        '  "slug": "string",\n'
+        '  "content": "string (full article in markdown)",\n'
+        '  "word_count": number,\n'
+        '  "read_time_minutes": number,\n'
+        '  "tags": ["string"]\n'
+        '}\n'
+        'Your entire response must be parseable by json.loads(). Nothing else.'
     )
 
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
