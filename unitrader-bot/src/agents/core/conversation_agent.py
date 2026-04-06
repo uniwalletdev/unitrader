@@ -15,6 +15,7 @@ import logging
 import re
 from datetime import datetime, timezone
 from typing import Any
+from typing import Literal
 
 import anthropic
 from fastapi import HTTPException
@@ -45,6 +46,57 @@ logger = logging.getLogger(__name__)
 _CLAUDE_MODEL = "claude-3-haiku-20240307"
 _MAX_TOKENS = 1024
 _HISTORY_TURNS = 10  # number of past exchanges to include
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Channel-aware formatting
+# ─────────────────────────────────────────────────────────────────────────────
+
+Channel = Literal["web", "whatsapp", "telegram"]
+
+
+def _normalize_channel(channel: str | None) -> Channel:
+    """Map various channel names to the canonical set."""
+    c = (channel or "").strip().lower()
+    if c in ("whatsapp", "wa"):
+        return "whatsapp"
+    if c in ("telegram", "tg"):
+        return "telegram"
+    # legacy values used elsewhere in the codebase
+    if c in ("web_app", "webapp", "web"):
+        return "web"
+    return "web"
+
+
+def _format_instruction_for_channel(channel: Channel) -> str:
+    # IMPORTANT: Keep all formatting rules centralized here (single source of truth).
+    if channel == "whatsapp":
+        return """
+
+FORMATTING RULES:
+- Plain text only. No markdown whatsoever.
+- No asterisks, no hashes, no backticks, no bullet dashes.
+- Use line breaks to separate ideas.
+- Use numbers for lists: 1. 2. 3. never dashes or dots.
+- Keep responses under 300 words. WhatsApp is read on a phone.
+- Be warm and conversational. Short sentences.
+"""
+    if channel == "telegram":
+        return """
+
+FORMATTING RULES:
+- Telegram supports basic markdown: *bold*, _italic_, `code`.
+- Avoid complex headers or tables.
+- Keep responses concise and well spaced.
+- Use numbered lists for multiple points.
+"""
+    return """
+
+FORMATTING RULES:
+- Use markdown freely: **bold**, bullet points, headers, code blocks.
+- Structure longer responses with clear sections.
+- Tables are supported and encouraged for comparisons.
+- No length restriction but be concise and purposeful.
+"""
 
 
 async def _save_onboarding_messages(
@@ -698,7 +750,7 @@ class ConversationAgent:
         db: AsyncSession | None = None,
         shared_context: SharedContext | None = None,
         conversation_history: list[dict[str, str]] | None = None,
-        channel: str = "web_app",
+        channel: Channel | str = "web",
     ) -> dict:
         """Process a user message and return an AI response.
 
@@ -830,7 +882,10 @@ class ConversationAgent:
             )
 
         # ── Shared context (accounts / positions) — production persona prompt ──
-        system_prompt = build_system_prompt(shared_ctx, channel)
+        ch = _normalize_channel(str(channel))
+        system_prompt = build_system_prompt(shared_ctx, ch)
+        # Append channel-specific formatting instructions (never replace base prompt).
+        system_prompt = system_prompt + _format_instruction_for_channel(ch)
 
         if context == AI_PERFORMANCE:
             async with AsyncSessionLocal() as _db2:
@@ -848,7 +903,7 @@ class ConversationAgent:
         messages = [*history, {"role": "user", "content": user_message}]
 
         # ── Call Claude ────────────────────────────────────────────────────
-        max_out = 600 if channel in ("whatsapp", "telegram") else _MAX_TOKENS
+        max_out = 600 if ch in ("whatsapp", "telegram") else _MAX_TOKENS
         try:
             claude_response = await self._claude.messages.create(
                 model=settings.anthropic_model,
@@ -932,7 +987,7 @@ class ConversationAgent:
         context: SharedContext,
         db: AsyncSession | None = None,
         conversation_history: list[dict[str, str]] | None = None,
-        channel: str = "web_app",
+        channel: Channel | str = "web",
     ) -> dict:
         """Preferred entry when SharedContext is already loaded (e.g. Orchestrator.route).
 
@@ -1314,7 +1369,7 @@ class ConversationAgent:
         market_context: dict,
         portfolio_context: dict,
         agent_insights: dict,
-        channel: str = "web_app",
+        channel: Channel | str = "web",
     ) -> dict:
         """Respond to a user message using orchestrator-provided context.
 
@@ -1361,7 +1416,9 @@ class ConversationAgent:
         context = detect_context(message)
         sentiment = analyze_sentiment(message)
 
-        system_prompt = build_system_prompt(shared_ctx, channel)
+        ch = _normalize_channel(str(channel))
+        system_prompt = build_system_prompt(shared_ctx, ch)
+        system_prompt = system_prompt + _format_instruction_for_channel(ch)
 
         # Performance injection unchanged
         if context == AI_PERFORMANCE:
@@ -1397,7 +1454,7 @@ class ConversationAgent:
         history = conversation_history or []
         messages = [*history, {"role": "user", "content": message}]
 
-        max_out = 600 if channel in ("whatsapp", "telegram") else _MAX_TOKENS
+        max_out = 600 if ch in ("whatsapp", "telegram") else _MAX_TOKENS
         # Call Claude
         try:
             claude_response = await self._claude.messages.create(

@@ -237,7 +237,7 @@ async def send_message(
             context=ctx,
             db=db,
             conversation_history=conversation_history,
-            channel="web_app",
+            channel="web",
         )
     else:
         orchestrator = get_orchestrator()
