@@ -178,7 +178,7 @@ export default function FullAutoPanel({
       setPnlToday(
         closedRecent.length === 0
           ? "—"
-          : `${pnlSum >= 0 ? "+" : "-"}£${Math.abs(pnlSum).toFixed(2)}`,
+          : `${pnlSum >= 0 ? "+" : "-"}$${Math.abs(pnlSum).toFixed(2)}`,
       );
     } catch {
       setActivity([]);

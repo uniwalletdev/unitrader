@@ -16,8 +16,8 @@ import { authApi } from "@/lib/api";
 // ─────────────────────────────────────────────
 
 const COMPARISON_ROWS = [
-  { need: "Market analysis", institution: "£10M trading desk", apex: "Unitrader — included" },
-  { need: "Sentiment analysis", institution: "Bloomberg Terminal £24k/yr", apex: "Built into Unitrader" },
+  { need: "Market analysis", institution: "$10M trading desk", apex: "Unitrader — included" },
+  { need: "Sentiment analysis", institution: "Bloomberg Terminal $24k/yr", apex: "Built into Unitrader" },
   { need: "24/7 position watch", institution: "Operations team", apex: "Position Monitor Agent" },
   { need: "Risk management", institution: "Risk department", apex: "Risk Agent + circuit breaker" },
   { need: "Trade execution", institution: "Execution desk", apex: "Direct to Alpaca or Coinbase" },

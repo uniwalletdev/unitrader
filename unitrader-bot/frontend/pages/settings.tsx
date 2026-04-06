@@ -204,8 +204,8 @@ export default function SettingsPage() {
 
                 <div className="mt-3 p-3 rounded-xl bg-dark-900/50 border border-dark-800/50">
                   <p className="text-sm text-dark-300">
-                    This equals <span className="font-bold text-brand-400 tabular-nums">£{calculatedLossAmount.toFixed(2)}</span> loss
-                    <span className="text-dark-500"> (based on £{portfolioValue.toLocaleString()} portfolio)</span>
+                    This equals <span className="font-bold text-brand-400 tabular-nums">${calculatedLossAmount.toFixed(2)}</span> loss
+                    <span className="text-dark-500"> (based on ${portfolioValue.toLocaleString()} portfolio)</span>
                   </p>
                 </div>
               </div>

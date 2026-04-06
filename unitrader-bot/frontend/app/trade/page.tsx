@@ -102,7 +102,7 @@ const getAmountLimits = (traderClass: string, trustLadderStage: number) => {
     crypto_native:      { min: 1,  max: 5000,  step: 5   },
   };
 
-  // Trust Ladder Stage 1 always caps at £25 regardless of class (no minimum floor)
+  // Trust Ladder Stage 1 always caps at $25 regardless of class (no minimum floor)
   if (trustLadderStage === 1) {
     return { min: 1, max: 25, step: 1 };
   }

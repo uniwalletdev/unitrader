@@ -92,10 +92,10 @@ const QUICK_REPLIES: Record<TraderClass, Record<string, QuickReply[]>> = {
       { label: "I want bigger swings",              value: "aggressive" },
     ],
     budget: [
-      { label: "£25 — just testing",  value: "25" },
-      { label: "£100 — comfortable",  value: "100" },
-      { label: "£250 — ready",        value: "250" },
-      { label: "£500 or more",        value: "500" },
+      { label: "$25 — just testing",  value: "25" },
+      { label: "$100 — comfortable",  value: "100" },
+      { label: "$250 — ready",        value: "250" },
+      { label: "$500 or more",        value: "500" },
     ],
     exchange: [
       { label: "Stocks — Apple, Tesla etc", value: "alpaca" },
@@ -111,10 +111,10 @@ const QUICK_REPLIES: Record<TraderClass, Record<string, QuickReply[]>> = {
       { label: "I'm comfortable with risk",           value: "moderate" },
     ],
     budget: [
-      { label: "£50 — topping up", value: "50"  },
-      { label: "£100",             value: "100" },
-      { label: "£250",             value: "250" },
-      { label: "£500 or more",     value: "500" },
+      { label: "$50 — topping up", value: "50"  },
+      { label: "$100",             value: "100" },
+      { label: "$250",             value: "250" },
+      { label: "$500 or more",     value: "500" },
     ],
     exchange: [
       { label: "Stocks — Apple, Tesla etc", value: "alpaca" },
@@ -231,11 +231,11 @@ function getLocalResponse(cls: TraderClass, field: string, value: string): strin
 
   if (field === "budget") {
     const budgetLabels: Record<string, string> = {
-      "25":  "£25 noted — a sensible starting point.",
-      "50":  "£50 confirmed.",
-      "100": "£100 confirmed — I'll build positions carefully.",
-      "250": "£250 — solid capital to work with.",
-      "500": "£500 or more — excellent, I'll build a diversified portfolio.",
+      "25":  "$25 noted — a sensible starting point.",
+      "50":  "$50 confirmed.",
+      "100": "$100 confirmed — I'll build positions carefully.",
+      "250": "$250 — solid capital to work with.",
+      "500": "$500 or more — excellent, I'll build a diversified portfolio.",
     };
     return (budgetLabels[value] ?? "Budget noted.") + " What would you like to trade?";
   }

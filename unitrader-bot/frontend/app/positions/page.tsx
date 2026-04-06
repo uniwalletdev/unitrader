@@ -119,12 +119,6 @@ function Sparkline({ points }: { points: number[] }) {
   );
 }
 
-function formatGBP(n: number) {
-  const v = Number.isFinite(n) ? n : 0;
-  const sign = v >= 0 ? "+" : "-";
-  return `${sign}£${Math.abs(v).toFixed(2)}`;
-}
-
 function formatUSD(n: number) {
   const v = Number.isFinite(n) ? n : 0;
   const sign = v >= 0 ? "+" : "-";
@@ -644,7 +638,7 @@ function PositionRow({
       <div className="text-sm font-semibold text-white">{p.symbol.toUpperCase()}</div>
     );
 
-  const pnlText = traderClass === "crypto_native" ? formatUSD(pnl) : formatGBP(pnl);
+  const pnlText = formatUSD(pnl);
 
   return (
     <>

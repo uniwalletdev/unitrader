@@ -24,7 +24,8 @@ type TraderClass =
   | "crypto_native";
 
 type PerfSummary = {
-  total_return_gbp: number;
+  total_return_usd?: number;
+  total_return_gbp: number; // legacy
   total_return_pct: number;
   win_rate: number;
   total_trades: number;
@@ -54,8 +55,8 @@ type PerfSummary = {
 
   // crypto_native
   vs_bitcoin_hold?: number;
-  best_crypto?: { symbol: string; pct_gain: number; pnl_gbp: number } | null;
-  worst_crypto?: { symbol: string; pct_loss: number; pnl_gbp: number } | null;
+  best_crypto?: { symbol: string; pct_gain: number; pnl_usd?: number; pnl_gbp?: number } | null;
+  worst_crypto?: { symbol: string; pct_loss: number; pnl_usd?: number; pnl_gbp?: number } | null;
   total_fees_paid?: number;
 };
 
@@ -106,10 +107,10 @@ function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-function formatGBP(n: number) {
+function formatUSD(n: number) {
   const v = Number.isFinite(n) ? n : 0;
   const sign = v >= 0 ? "+" : "-";
-  return `${sign}£${Math.abs(v).toFixed(2)}`;
+  return `${sign}$${Math.abs(v).toFixed(2)}`;
 }
 
 function dateShort(iso: string | null) {
@@ -305,7 +306,7 @@ export default function PerformancePage() {
     return "pro";
   }, [traderClass]);
 
-  const monthPnl = summary?.total_return_gbp ?? 0;
+  const monthPnl = summary?.total_return_usd ?? summary?.total_return_gbp ?? 0;
   const monthTone = monthPnl >= 0 ? "good" : "bad";
 
   const periodLabel = period === 30 ? "30d" : period === 90 ? "90d" : "1y";
@@ -430,8 +431,8 @@ export default function PerformancePage() {
                 )}
               >
                 {monthPnl >= 0
-                  ? `You are up ${formatGBP(monthPnl)} this month`
-                  : `Unitrader is learning - down ${formatGBP(Math.abs(monthPnl))} this month`}
+                  ? `You are up ${formatUSD(monthPnl)} this month`
+                  : `Unitrader is learning - down ${formatUSD(Math.abs(monthPnl))} this month`}
               </div>
               {summary.encouragement && (
                 <div className="mt-2 text-sm text-dark-200">{summary.encouragement}</div>
@@ -483,7 +484,7 @@ export default function PerformancePage() {
                     <tr className="text-left text-xs font-semibold text-dark-400">
                       <th className="px-5 py-3">Date</th>
                       <th className="px-5 py-3">Company</th>
-                      <th className="px-5 py-3 text-right">P&L (GBP)</th>
+                      <th className="px-5 py-3 text-right">P&L (USD)</th>
                       <th className="px-5 py-3 text-right">Feedback</th>
                     </tr>
                   </thead>
@@ -496,7 +497,7 @@ export default function PerformancePage() {
                           <td className="px-5 py-3 text-sm text-dark-300">{dateShort(t.closed_at || t.created_at)}</td>
                           <td className="px-5 py-3 text-sm font-semibold text-white">{name}</td>
                           <td className={clsx("px-5 py-3 text-right text-sm font-bold tabular-nums", pnl >= 0 ? "text-green-300" : "text-red-300")}>
-                            {formatGBP(pnl)}
+                            {formatUSD(pnl)}
                           </td>
                           <td className="px-5 py-3">
                             <FeedbackThumbs tradeId={t.id} />
@@ -665,7 +666,7 @@ export default function PerformancePage() {
                           <td className="py-3 text-white">{sector}</td>
                           <td className="py-3 text-right text-dark-300">—</td>
                           <td className={clsx("py-3 text-right tabular-nums", pnl >= 0 ? "text-green-300" : "text-red-300")}>
-                            {formatGBP(pnl)}
+                            {formatUSD(pnl)}
                           </td>
                           <td className="py-3 text-right text-dark-300">—</td>
                         </tr>
@@ -699,7 +700,7 @@ export default function PerformancePage() {
                 </div>
               </div>
               <div className="mt-2 text-xs text-dark-400">
-                Total fees paid: £{Number(summary.total_fees_paid ?? 0).toFixed(2)}
+                Total fees paid: ${Number(summary.total_fees_paid ?? 0).toFixed(2)}
               </div>
             </div>
 
@@ -717,7 +718,11 @@ export default function PerformancePage() {
                   {summary.best_crypto?.symbol ?? "—"}
                 </div>
                 <div className="mt-1 text-xs text-green-300 tabular-nums">
-                  {summary.best_crypto ? `${summary.best_crypto.pct_gain.toFixed(2)}% · ${formatGBP(summary.best_crypto.pnl_gbp)}` : "—"}
+                  {summary.best_crypto
+                    ? `${summary.best_crypto.pct_gain.toFixed(2)}% · ${formatUSD(
+                        (summary.best_crypto as any).pnl_usd ?? (summary.best_crypto as any).pnl_gbp ?? 0
+                      )}`
+                    : "—"}
                 </div>
               </div>
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
@@ -726,10 +731,14 @@ export default function PerformancePage() {
                   {summary.worst_crypto?.symbol ?? "—"}
                 </div>
                 <div className="mt-1 text-xs text-red-300 tabular-nums">
-                  {summary.worst_crypto ? `${summary.worst_crypto.pct_loss.toFixed(2)}% · ${formatGBP(summary.worst_crypto.pnl_gbp)}` : "—"}
+                  {summary.worst_crypto
+                    ? `${summary.worst_crypto.pct_loss.toFixed(2)}% · ${formatUSD(
+                        (summary.worst_crypto as any).pnl_usd ?? (summary.worst_crypto as any).pnl_gbp ?? 0
+                      )}`
+                    : "—"}
                 </div>
               </div>
-              <StatCard label="Total fees paid" value={`£${Number(summary.total_fees_paid ?? 0).toFixed(2)}`} />
+              <StatCard label="Total fees paid" value={`$${Number(summary.total_fees_paid ?? 0).toFixed(2)}`} />
             </div>
 
             <TradeListCrypto trades={trades} />
@@ -766,9 +775,9 @@ export default function PerformancePage() {
                 <span className="font-semibold tabular-nums text-white">{summary?.total_trades ?? 0}</span>
               </div>
               <div className="mt-2 flex justify-between gap-3">
-                <span className="text-dark-400">Total return (GBP)</span>
+                <span className="text-dark-400">Total return (USD)</span>
                 <span className={clsx("font-semibold tabular-nums", monthPnl >= 0 ? "text-green-300" : "text-red-300")}>
-                  {formatGBP(monthPnl)}
+                  {formatUSD(monthPnl)}
                 </span>
               </div>
               <div className="mt-2 text-xs text-dark-400">Account type: {ACCOUNT_TYPE[traderClass]}</div>
@@ -816,7 +825,7 @@ function TradeListSelf({ trades }: { trades: TradeRow[] }) {
               <th className="px-5 py-3">Symbol</th>
               <th className="px-5 py-3 text-right">Entry</th>
               <th className="px-5 py-3 text-right">Exit</th>
-              <th className="px-5 py-3 text-right">P&L GBP</th>
+              <th className="px-5 py-3 text-right">P&L USD</th>
               <th className="px-5 py-3 text-right">P&L %</th>
               <th className="px-5 py-3">Hold</th>
               <th className="px-5 py-3 text-right">Feedback</th>
@@ -835,7 +844,7 @@ function TradeListSelf({ trades }: { trades: TradeRow[] }) {
                     {t.exit_price?.toFixed(2) ?? "—"}
                   </td>
                   <td className={clsx("px-5 py-3 text-right text-sm font-bold tabular-nums", pnl >= 0 ? "text-green-300" : "text-red-300")}>
-                    {formatGBP(pnl)}
+                    {formatUSD(pnl)}
                   </td>
                   <td className={clsx("px-5 py-3 text-right text-sm font-semibold tabular-nums", pnl >= 0 ? "text-green-300" : "text-red-300")}>
                     {t.profit_percent !== null && t.profit_percent !== undefined ? `${t.profit_percent.toFixed(2)}%` : "—"}
@@ -957,7 +966,7 @@ function TradeListPro({ trades }: { trades: TradeRow[] }) {
                   <td className="px-5 py-3 text-right text-sm text-dark-200 tabular-nums">{qty}</td>
                   <td className="px-5 py-3 text-right text-sm text-dark-200 tabular-nums">{t.entry_price?.toFixed(2) ?? "—"}</td>
                   <td className="px-5 py-3 text-right text-sm text-dark-200 tabular-nums">{t.exit_price?.toFixed(2) ?? "—"}</td>
-                  <td className={clsx("px-5 py-3 text-right text-sm font-bold tabular-nums", pnl >= 0 ? "text-green-300" : "text-red-300")}>{formatGBP(pnl)}</td>
+                  <td className={clsx("px-5 py-3 text-right text-sm font-bold tabular-nums", pnl >= 0 ? "text-green-300" : "text-red-300")}>{formatUSD(pnl)}</td>
                   <td className={clsx("px-5 py-3 text-right text-sm font-semibold tabular-nums", pnl >= 0 ? "text-green-300" : "text-red-300")}>
                     {t.profit_percent !== null && t.profit_percent !== undefined ? `${t.profit_percent.toFixed(2)}%` : "—"}
                   </td>
@@ -987,7 +996,7 @@ function TradeListCrypto({ trades }: { trades: TradeRow[] }) {
               <th className="px-5 py-3">Date</th>
               <th className="px-5 py-3">Symbol</th>
               <th className="px-5 py-3">Side</th>
-              <th className="px-5 py-3 text-right">P&L GBP</th>
+              <th className="px-5 py-3 text-right">P&L USD</th>
               <th className="px-5 py-3 text-right">P&L %</th>
               <th className="px-5 py-3 text-right">Fees</th>
               <th className="px-5 py-3 text-right">Feedback</th>
@@ -1001,7 +1010,7 @@ function TradeListCrypto({ trades }: { trades: TradeRow[] }) {
                   <td className="px-5 py-3 text-sm text-dark-300">{dateShort(t.closed_at || t.created_at)}</td>
                   <td className="px-5 py-3 text-sm font-semibold text-white">{t.symbol}</td>
                   <td className="px-5 py-3 text-sm text-dark-200">{t.side}</td>
-                  <td className={clsx("px-5 py-3 text-right text-sm font-bold tabular-nums", pnl >= 0 ? "text-green-300" : "text-red-300")}>{formatGBP(pnl)}</td>
+                  <td className={clsx("px-5 py-3 text-right text-sm font-bold tabular-nums", pnl >= 0 ? "text-green-300" : "text-red-300")}>{formatUSD(pnl)}</td>
                   <td className={clsx("px-5 py-3 text-right text-sm font-semibold tabular-nums", pnl >= 0 ? "text-green-300" : "text-red-300")}>
                     {t.profit_percent !== null && t.profit_percent !== undefined ? `${t.profit_percent.toFixed(2)}%` : "—"}
                   </td>

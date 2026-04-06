@@ -395,10 +395,10 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
               />
 
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                <div className="text-xs text-dark-400">Estimated GBP gain</div>
+                <div className="text-xs text-dark-400">Estimated USD gain</div>
                 <div className="mt-1 text-lg font-bold text-white tabular-nums">
                   {data?.gain_gbp !== undefined
-                    ? `${data.gain_gbp >= 0 ? "+" : ""}£${data.gain_gbp.toFixed(2)}`
+                    ? `${data.gain_gbp >= 0 ? "+" : ""}$${data.gain_gbp.toFixed(2)}`
                     : "—"}
                 </div>
 
@@ -432,7 +432,7 @@ export default function WhatIfSimulator({ mode }: { mode: Mode }) {
         <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
           <div className="mb-2 flex items-center justify-between text-xs text-dark-400">
             <span>Amount</span>
-            <span className="tabular-nums">£{amount}</span>
+            <span className="tabular-nums">${amount}</span>
           </div>
           <input
             type="range"

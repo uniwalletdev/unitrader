@@ -580,8 +580,9 @@ async def get_account_balances(
                 acct.last_known_balance_usd = float(entry["balance"])
                 acct.last_balance_synced_at = now
                 acct.last_synced_at = now
-            if k.exchange == "oanda":
-                entry["currency"] = "GBP"
+            # Standardize display currency to USD across the product.
+            # (Exchange integrations may have native base currencies, but UI displays USD.)
+            entry["currency"] = "USD"
         except Exception as exc:
             logger.warning(
                 "Failed to fetch balance for %s (user %s): %s",
@@ -1714,6 +1715,8 @@ async def performance_summary(
     paper_trades = 0
 
     payload: dict = {
+        # NOTE: Trades are tracked in USD; keep legacy *_gbp fields for backward compatibility.
+        "total_return_usd": round(total_return_gbp, 2),
         "total_return_gbp": round(total_return_gbp, 2),
         "total_return_pct": round(total_return_pct, 2),
         "win_rate": round(win_rate, 1),
@@ -1858,12 +1861,14 @@ async def performance_summary(
             best = {
                 "symbol": best_t.symbol,
                 "pct_gain": float(best_t.profit_percent or 0),
-                "pnl_gbp": round(trade_pnl(best_t), 2),
+                "pnl_usd": round(trade_pnl(best_t), 2),
+                "pnl_gbp": round(trade_pnl(best_t), 2),  # legacy alias
             }
             worst = {
                 "symbol": worst_t.symbol,
                 "pct_loss": float(worst_t.profit_percent or 0),
-                "pnl_gbp": round(trade_pnl(worst_t), 2),
+                "pnl_usd": round(trade_pnl(worst_t), 2),
+                "pnl_gbp": round(trade_pnl(worst_t), 2),  # legacy alias
             }
         payload.update(
             {
@@ -2059,7 +2064,7 @@ async def export_trades_csv(
     )
     trades = result.scalars().all()
 
-    # Existing columns (stable): Date, Symbol, Side, Qty, Entry, Exit, PnL_GBP, PnL_Pct
+    # Existing columns (stable): Date, Symbol, Side, Qty, Entry, Exit, PnL_USD, PnL_Pct
     headers = [
         "Date",
         "Symbol",
@@ -2067,7 +2072,7 @@ async def export_trades_csv(
         "Quantity",
         "Entry Price",
         "Exit Price",
-        "PnL (GBP)",
+        "PnL (USD)",
         "PnL (%)",
         "Account Type",
     ]

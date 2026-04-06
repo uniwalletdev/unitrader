@@ -378,7 +378,7 @@ export default function ExchangeConnectWizard({ exchange, onSuccess, onClose }: 
               <div className="flex items-center justify-between border-t border-dark-700 pt-3">
                 <span className="text-xs text-dark-400">Available balance</span>
                 <span className="text-sm font-semibold text-brand-400">
-                  {currency === "USD" ? "$" : currency === "GBP" ? "£" : currency} {buyingPower.toLocaleString()}
+                  $ {buyingPower.toLocaleString()}
                 </span>
               </div>
             </div>

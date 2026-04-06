@@ -551,9 +551,9 @@ function _LegacyDashboard({ user }: { user: User | null }) {
                 </thead>
                 <tbody className="text-dark-300">
                   {[
-                    ["Management fee", "2%/yr on balance", "£0"],
-                    ["Performance fee", "20% of profits", "£0 — keep everything"],
-                    ["Minimum", "£1,000,000", "No fixed minimum"],
+                    ["Management fee", "2%/yr on balance", "$0"],
+                    ["Performance fee", "20% of profits", "$0 — keep everything"],
+                    ["Minimum", "$1,000,000", "No fixed minimum"],
                     ["Availability", "Invitation only", "Open to everyone"],
                     ["AI technology", "Proprietary", "Claude — same class"],
                   ].map(([item, hf, apex]) => (
