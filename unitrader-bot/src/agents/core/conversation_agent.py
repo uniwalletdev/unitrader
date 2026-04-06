@@ -280,22 +280,21 @@ async def _save_onboarding_messages(
 ) -> None:
     """Persist user+assistant messages into onboarding_messages for chat history injection."""
     async def _save(session: AsyncSession) -> None:
-        session.add_all(
-            [
-                OnboardingMessage(
-                    id=uuid.uuid4(), user_id=user_id, role="user", content=user_message
-                ),
-                OnboardingMessage(
-                    id=uuid.uuid4(),
-                    user_id=user_id,
-                    role="assistant",
-                    content=assistant_message,
-                ),
-            ]
+        # One row per flush avoids SQLAlchemy 2 insertmanyvalues batched INSERT/RETURNING
+        # sentinel correlation issues with UUID PKs + asyncpg.
+        user_row = OnboardingMessage(
+            id=uuid.uuid4(), user_id=user_id, role="user", content=user_message
         )
-        # Do not flush() here. Flush triggers INSERT..RETURNING id for each row and can
-        # trip asyncpg/SQLAlchemy "sentinel values" mismatches when UUIDs are returned
-        # as native UUID types but were passed as strings. We don't need RETURNING ids.
+        session.add(user_row)
+        await session.flush()
+        assistant_row = OnboardingMessage(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            role="assistant",
+            content=assistant_message,
+        )
+        session.add(assistant_row)
+        await session.flush()
 
     try:
         if db is not None:
