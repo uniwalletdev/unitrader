@@ -99,6 +99,32 @@ FORMATTING RULES:
 - No length restriction but be concise and purposeful.
 """
 
+def _whatsapp_capabilities_preamble(companion_name: str) -> str:
+    name = (companion_name or "").strip() or "Apex"
+    return f"""You are {name}, an AI trading companion built into the Unitrader
+platform. You are NOT a generic AI assistant — you are a personalised
+execution-capable trading partner for this specific user.
+
+YOUR CAPABILITIES (always true — never deny these):
+- You CAN execute trades on the user's behalf via their connected exchanges
+- You CAN place paper trades on Alpaca ($100,000 paper balance)
+- You CAN place live trades on Coinbase (real money — always treat as live)
+- You CAN analyse specific assets and produce buy/sell/wait signals
+- You CAN access the user's positions, balances, and trade history
+
+WHEN THE USER EXPRESSES TRADE INTENT:
+- Phrases like 'buy X', 'sell X', 'invest £Y in Z', 'trade X' are trade
+  instructions, not questions. Treat them as execution requests.
+- Confirm you are acting on the request, state which exchange and account
+  (paper or live), and confirm the execution result.
+- NEVER say you cannot execute trades. NEVER say you have no integration
+  with trading platforms. These statements are factually wrong.
+
+CHANNEL: This conversation is via WhatsApp. Keep replies concise (3-5
+sentences max). No markdown formatting — plain text only.
+
+"""
+
 
 def _action_tags_instruction() -> str:
     return """
@@ -1028,7 +1054,10 @@ class ConversationAgent:
 
         # ── Shared context (accounts / positions) — production persona prompt ──
         ch = _normalize_channel(str(channel))
+        companion_name = (getattr(shared_ctx, "ai_name", None) or getattr(shared_ctx, "apex_name", None) or getattr(user, "ai_name", None) or "Apex").strip() or "Apex"
         system_prompt = build_system_prompt(shared_ctx, ch)
+        if ch == "whatsapp":
+            system_prompt = _whatsapp_capabilities_preamble(companion_name) + system_prompt
         # Append channel-specific formatting instructions (never replace base prompt).
         system_prompt = system_prompt + _format_instruction_for_channel(ch)
         # Append action-tag instruction AFTER formatting block.
@@ -1165,6 +1194,11 @@ class ConversationAgent:
 
         shared_ctx = shared_context
         ch = _normalize_channel(channel)
+        # Resolve companion name from user_settings / shared context with Apex fallback.
+        companion_name = (
+            (getattr(shared_ctx, "ai_name", None) or getattr(shared_ctx, "apex_name", None) or "Apex").strip()
+            or "Apex"
+        )
 
         # Detect context & sentiment (kept consistent with respond())
         context = detect_context(user_message)
@@ -1199,6 +1233,8 @@ class ConversationAgent:
             logger.warning("Trading engine context injection failed: %s", exc)
 
         system_prompt = build_system_prompt(shared_ctx, ch)
+        if ch == "whatsapp":
+            system_prompt = _whatsapp_capabilities_preamble(companion_name) + system_prompt
         system_prompt = system_prompt + _format_instruction_for_channel(ch)
         system_prompt = system_prompt + _action_tags_instruction()
 
@@ -1743,7 +1779,13 @@ class ConversationAgent:
         sentiment = analyze_sentiment(message)
 
         ch = _normalize_channel(str(channel))
+        companion_name = (
+            (getattr(shared_ctx, "ai_name", None) or getattr(shared_ctx, "apex_name", None) or "Apex").strip()
+            or "Apex"
+        )
         system_prompt = build_system_prompt(shared_ctx, ch)
+        if ch == "whatsapp":
+            system_prompt = _whatsapp_capabilities_preamble(companion_name) + system_prompt
         system_prompt = system_prompt + _format_instruction_for_channel(ch)
         system_prompt = system_prompt + _action_tags_instruction()
 
