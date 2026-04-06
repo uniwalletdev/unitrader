@@ -32,12 +32,52 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import get_db
-from models import TelegramLinkingCode, User, UserExternalAccount
+from database import AsyncSessionLocal
+from models import BotMessage, OnboardingMessage, TelegramLinkingCode, User, UserExternalAccount
 from routers.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
 _PLATFORM = "whatsapp"
+
+# ─────────────────────────────────────────────
+# Simulated typing indicator (acknowledgement)
+# ─────────────────────────────────────────────
+
+try:
+    from twilio.rest import Client
+except Exception:  # pragma: no cover
+    Client = None  # type: ignore[assignment]
+
+twilio_client = (
+    Client(settings.twilio_account_sid, settings.twilio_auth_token)
+    if Client and settings.whatsapp_enabled
+    else None
+)
+
+TYPING_ACKNOWLEDGEMENTS = [
+    "On it...",
+    "Let me check that for you...",
+    "Thinking...",
+    "Looking into that now...",
+    "Give me a moment...",
+]
+
+
+def _is_genuine_user_text(form: dict) -> bool:
+    """Return True only for inbound user text messages (not delivery/read callbacks)."""
+    body = (form.get("Body") or "").strip()
+    if not body:
+        return False
+    # Twilio status callbacks include MessageStatus/SmsStatus without a real user body.
+    # If present and not "received", treat as non-user event.
+    sms_status = (form.get("SmsStatus") or "").strip().lower()
+    msg_status = (form.get("MessageStatus") or "").strip().lower()
+    if sms_status and sms_status != "received":
+        return False
+    if msg_status and msg_status != "received":
+        return False
+    return True
 
 
 def _twilio_webhook_request_url(request: Request) -> str:
@@ -138,14 +178,79 @@ async def whatsapp_webhook(
         except Exception as exc:
             logger.error("Twilio signature validation error: %s", exc)
 
-    from_field   = form.get("From", "")
-    message_body = form.get("Body", "").strip()
+    from_field = form.get("From", "")
+    message_body = (form.get("Body") or "").strip()
 
     if not from_field:
         return {"status": "ok"}   # empty update — ignore
 
+    # STEP 1 — send acknowledgement instantly for genuine user text messages
+    if _is_genuine_user_text(dict(form)) and twilio_client:
+        try:
+            to = from_field
+            ack = random.choice(TYPING_ACKNOWLEDGEMENTS)
+            # Twilio client is synchronous; send sequentially before AI generation.
+            twilio_client.messages.create(
+                from_=f"whatsapp:{settings.twilio_whatsapp_number}",
+                to=to,
+                body=ack,
+            )
+            # Best-effort: persist acknowledgement as assistant history (linked users only).
+            phone = from_field.removeprefix("whatsapp:").strip()
+            async with AsyncSessionLocal() as db:
+                ext = (
+                    await db.execute(
+                        select(UserExternalAccount).where(
+                            UserExternalAccount.platform == _PLATFORM,
+                            UserExternalAccount.external_id == phone,
+                            UserExternalAccount.is_linked == True,  # noqa: E712
+                        )
+                    )
+                ).scalar_one_or_none()
+                if ext and ext.user_id:
+                    db.add(OnboardingMessage(user_id=str(ext.user_id), role="assistant", content=ack))
+                    await db.commit()
+        except Exception as exc:
+            logger.warning("Failed to send WhatsApp acknowledgement: %s", exc)
+
     try:
         await svc.handle_incoming_message(from_field, message_body)
+        # STEP 4 — log the final bot response to onboarding_messages (assistant)
+        try:
+            phone = from_field.removeprefix("whatsapp:").strip()
+            async with AsyncSessionLocal() as db:
+                ext = (
+                    await db.execute(
+                        select(UserExternalAccount).where(
+                            UserExternalAccount.platform == _PLATFORM,
+                            UserExternalAccount.external_id == phone,
+                            UserExternalAccount.is_linked == True,  # noqa: E712
+                        )
+                    )
+                ).scalar_one_or_none()
+                if ext and ext.user_id:
+                    last = (
+                        await db.execute(
+                            select(BotMessage)
+                            .where(
+                                BotMessage.platform == _PLATFORM,
+                                BotMessage.external_user_id == phone,
+                            )
+                            .order_by(BotMessage.created_at.desc())
+                            .limit(1)
+                        )
+                    ).scalar_one_or_none()
+                    if last and last.bot_response:
+                        db.add(
+                            OnboardingMessage(
+                                user_id=str(ext.user_id),
+                                role="assistant",
+                                content=str(last.bot_response),
+                            )
+                        )
+                        await db.commit()
+        except Exception as exc:
+            logger.warning("Failed to persist WhatsApp bot response history: %s", exc)
     except Exception as exc:
         logger.error("Error handling WhatsApp message from %s: %s", from_field, exc)
         # Don't re-raise — a 500 would cause Twilio to retry indefinitely
