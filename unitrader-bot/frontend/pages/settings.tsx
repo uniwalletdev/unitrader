@@ -396,9 +396,12 @@ export default function SettingsPage() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm text-white">Push notifications</p>
-                      <p className="text-xs text-dark-500">Coming soon on supported devices.</p>
+                      <p className="text-xs text-dark-500">
+                        On the web, alerts use email and linked Telegram/WhatsApp. Native push is available when you use the
+                        mobile app and register a device token (stored as push_token).
+                      </p>
                     </div>
-                    <input type="checkbox" disabled checked={!!settings?.push_token} />
+                    <input type="checkbox" disabled checked={!!settings?.push_token} title="Enabled when a mobile device registers push" />
                   </div>
                 </div>
               </div>

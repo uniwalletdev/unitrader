@@ -221,6 +221,37 @@ async def _resolve_trading_account_for_user(
     return None
 
 
+async def _sync_preferred_trading_account_if_stale(
+    db: AsyncSession,
+    *,
+    user_id: str,
+    connected_account_id: str,
+) -> None:
+    """Set preferred_trading_account_id when missing or pointing at inactive/missing account."""
+    settings_result = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == user_id)
+    )
+    user_settings = settings_result.scalar_one_or_none()
+    if not user_settings:
+        user_settings = UserSettings(user_id=user_id)
+        db.add(user_settings)
+        await db.flush()
+    preferred_id = getattr(user_settings, "preferred_trading_account_id", None)
+    preferred_ok = False
+    if preferred_id:
+        ta_row = await db.execute(
+            select(TradingAccount).where(
+                TradingAccount.id == preferred_id,
+                TradingAccount.user_id == user_id,
+                TradingAccount.is_active == True,  # noqa: E712
+            )
+        )
+        preferred_ok = ta_row.scalar_one_or_none() is not None
+    if not preferred_ok:
+        user_settings.preferred_trading_account_id = connected_account_id
+        await db.commit()
+
+
 # ─────────────────────────────────────────────
 # Validation dispatcher
 # ─────────────────────────────────────────────
@@ -361,6 +392,12 @@ async def connect_exchange(
         db.add(new_key)
         await db.commit()
         await db.refresh(new_key)
+
+        await _sync_preferred_trading_account_if_stale(
+            db,
+            user_id=current_user.id,
+            connected_account_id=account.id,
+        )
     except HTTPException:
         raise
     except Exception as exc:
@@ -1531,6 +1568,14 @@ async def simulate_history(
 
 def _trade_to_dict(trade: Trade) -> dict:
     trading_account = getattr(trade, "trading_account", None)
+    raw_reason = (getattr(trade, "reasoning", None) or "").strip()
+    reasoning_snippet: str | None
+    if not raw_reason:
+        reasoning_snippet = None
+    elif len(raw_reason) <= 200:
+        reasoning_snippet = raw_reason
+    else:
+        reasoning_snippet = raw_reason[:200] + "…"
     return {
         "id": trade.id,
         "trading_account_id": trade.trading_account_id,
@@ -1554,6 +1599,7 @@ def _trade_to_dict(trade: Trade) -> dict:
         "execution_time_ms": trade.execution_time,
         "created_at": trade.created_at.isoformat() if trade.created_at else None,
         "closed_at": trade.closed_at.isoformat() if trade.closed_at else None,
+        "reasoning": reasoning_snippet,
     }
 
 

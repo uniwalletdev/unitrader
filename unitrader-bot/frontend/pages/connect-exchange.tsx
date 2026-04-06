@@ -18,6 +18,7 @@ import {
   Clipboard,
 } from "lucide-react";
 import {
+  authApi,
   exchangeApi,
   type ConnectedExchange,
   type ConnectExchangeResponse,
@@ -257,6 +258,9 @@ export default function ConnectExchangePage() {
         type: "success",
         text: `${data.message}${data.balance_usd != null ? ` Balance: $${data.balance_usd.toLocaleString()}` : ""}`,
       });
+      if (data.trading_account_id) {
+        await authApi.updateSettings({ preferred_trading_account_id: data.trading_account_id }).catch(() => {});
+      }
       resetForm();
       setExpandedId(null);
       await loadConnected();

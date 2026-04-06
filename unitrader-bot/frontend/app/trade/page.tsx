@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { CheckCircle, Loader2 } from "lucide-react";
@@ -178,6 +179,63 @@ function RiskSection({ variant }: { variant: "plain" | "pct" }) {
           ? "Unitrader uses stop-loss and take-profit to manage downside and lock gains."
           : "Stop-loss and take-profit are applied as % distances from entry where possible."}
       </div>
+    </div>
+  );
+}
+
+type OpenPositionRow = {
+  id: string;
+  symbol: string;
+  side?: string | null;
+  quantity?: number | null;
+};
+
+function OpenPositionsPanel({
+  loading,
+  positions,
+  variant,
+}: {
+  loading: boolean;
+  positions: OpenPositionRow[];
+  variant: "compact" | "detailed";
+}) {
+  const count = positions.length;
+  return (
+    <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-white">Open positions</div>
+        <Link href="/positions" className="text-[11px] font-medium text-cyan-400 hover:underline">
+          View all
+        </Link>
+      </div>
+      {loading ? (
+        <div className="mt-2 text-xs text-dark-500">Loading…</div>
+      ) : count === 0 ? (
+        <div className="mt-2 text-sm text-dark-300">No open positions</div>
+      ) : (
+        <>
+          <div className="mt-1 text-2xl font-extrabold tabular-nums text-white">{count}</div>
+          <ul className={variant === "detailed" ? "mt-3 space-y-2" : "mt-2 flex flex-wrap gap-2"}>
+            {positions.slice(0, variant === "detailed" ? 20 : 12).map((p) => (
+              <li
+                key={p.id}
+                className={
+                  variant === "detailed"
+                    ? "rounded-lg border border-dark-800 bg-dark-900/50 px-3 py-2 text-xs text-dark-200"
+                    : "rounded-lg border border-dark-800 bg-dark-900/50 px-2 py-1 text-xs text-dark-200"
+                }
+              >
+                <span className="font-semibold text-white">{p.symbol}</span>
+                {variant === "detailed" && (p.side || p.quantity != null) && (
+                  <span className="ml-2 text-dark-400">
+                    {[p.side, p.quantity != null ? String(p.quantity) : null].filter(Boolean).join(" · ")}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   );
 }
@@ -620,10 +678,21 @@ function TradePage() {
         setAccounts(connected);
 
         const preferred = settings.preferred_trading_account_id ?? null;
+        const preferredInList =
+          !!preferred && connected.some((a) => a.trading_account_id === preferred);
         const resolved =
           (preferred && connected.find((a) => a.trading_account_id === preferred)?.trading_account_id) ||
           connected[0]?.trading_account_id ||
           null;
+
+        if (preferred && !preferredInList && resolved) {
+          await authApi.updateSettings({ preferred_trading_account_id: resolved }).catch(() => {});
+          if (mounted) {
+            setSettings((prev) => (prev ? { ...prev, preferred_trading_account_id: resolved } : prev));
+          }
+        }
+
+        if (!mounted) return;
         setSelectedTradingAccountId(resolved);
 
         // Derive exchange from selected account when connected; otherwise keep current read-only exchange choice.
@@ -644,6 +713,57 @@ function TradePage() {
     if (!selectedTradingAccountId) return null;
     return accounts.find((a) => a.trading_account_id === selectedTradingAccountId) ?? null;
   }, [accounts, selectedTradingAccountId]);
+
+  const buildOpenPositionQuery = useCallback((): {
+    trading_account_id?: string;
+    exchange?: string;
+    is_paper: boolean;
+  } => {
+    const q: { trading_account_id?: string; exchange?: string; is_paper: boolean } = {
+      is_paper: selectedAccount?.is_paper ?? isPaper,
+    };
+    if (selectedTradingAccountId) q.trading_account_id = selectedTradingAccountId;
+    const ex = (selectedAccount?.exchange || exchange || "").trim().toLowerCase();
+    if (ex) q.exchange = ex;
+    return q;
+  }, [selectedTradingAccountId, selectedAccount?.exchange, selectedAccount?.is_paper, exchange, isPaper]);
+
+  const [openPositionsRows, setOpenPositionsRows] = useState<OpenPositionRow[]>([]);
+  const [openPositionsLoading, setOpenPositionsLoading] = useState(false);
+
+  const refreshOpenPositions = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!opts?.silent) setOpenPositionsLoading(true);
+      try {
+        const res = await tradingApi.openPositions(buildOpenPositionQuery());
+        const d = res.data?.data ?? res.data;
+        const positions = Array.isArray(d?.positions) ? d.positions : [];
+        setOpenPositionsRows(
+          positions.map((p: { id: unknown; symbol?: unknown; side?: unknown; quantity?: unknown }) => ({
+            id: String(p.id),
+            symbol: String(p.symbol ?? ""),
+            side: p.side != null ? String(p.side) : null,
+            quantity: p.quantity != null && p.quantity !== "" ? Number(p.quantity) : null,
+          })),
+        );
+        const count = typeof d?.count === "number" ? d.count : positions.length;
+        setPositionsCount(count);
+      } catch {
+        if (!opts?.silent) {
+          setOpenPositionsRows([]);
+        }
+      } finally {
+        if (!opts?.silent) setOpenPositionsLoading(false);
+      }
+    },
+    [buildOpenPositionQuery],
+  );
+
+  useEffect(() => {
+    if (bare) return;
+    if (!authLoaded || !isSignedIn) return;
+    void refreshOpenPositions();
+  }, [bare, authLoaded, isSignedIn, refreshOpenPositions]);
 
   const displayCurrencyCode = useMemo(() => {
     const ex = (selectedAccount?.exchange ?? exchange ?? "alpaca").toLowerCase();
@@ -867,22 +987,7 @@ function TradePage() {
     } else {
       setToast("Trade submitted");
     }
-    // Refresh positions count
-    try {
-      const pos = await tradingApi.openPositions();
-      const d = pos.data?.data ?? pos.data;
-      const count =
-        typeof d?.count === "number"
-          ? d.count
-          : Array.isArray(d?.positions)
-            ? d.positions.length
-            : Array.isArray(d)
-              ? d.length
-              : null;
-      setPositionsCount(count);
-    } catch {
-      // ignore
-    }
+    await refreshOpenPositions({ silent: true });
     return data;
   };
 
@@ -944,13 +1049,7 @@ function TradePage() {
     setModeSaving(true);
     try {
       await signalApi.updateSettings({ signal_stack_mode: mode });
-      // #region agent log
-      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H3',location:'page.tsx:541',message:'signal mode persisted',data:{mode},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-    } catch (error: any) {
-      // #region agent log
-      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H3',location:'page.tsx:544',message:'signal mode persist failed',data:{mode,status:error?.response?.status ?? null,detail:error?.response?.data?.detail ?? null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
+    } catch {
       // non-fatal: keep optimistic UI
     } finally {
       setModeSaving(false);
@@ -1164,6 +1263,7 @@ function TradePage() {
               trustLadderStage={trust?.stage ?? 1}
               exchange={exchange}
               tradingAccountId={selectedTradingAccountId}
+              isPaper={selectedAccount?.is_paper ?? isPaper}
               onSettingsUpdate={(updates) => setSettings((prev) => (prev ? { ...prev, ...(updates as any) } : prev))}
             />
           )}
@@ -1333,9 +1433,11 @@ function TradePage() {
                     />
                   </AIAnalysisCard>
 
-                  <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
-                    Portfolio context (placeholder)
-                  </div>
+                  <OpenPositionsPanel
+                    loading={openPositionsLoading}
+                    positions={openPositionsRows}
+                    variant="compact"
+                  />
                 </div>
               </div>
             )}
@@ -1397,8 +1499,33 @@ function TradePage() {
                     </div>
                   )}
 
-                  <div className="rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
-                    Pro order settings (placeholder)
+                  <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
+                    <div className="text-xs font-semibold text-white">Order summary</div>
+                    <dl className="mt-3 space-y-2 text-xs text-dark-300">
+                      <div className="flex justify-between gap-3">
+                        <dt>Notional</dt>
+                        <dd className="font-medium text-white tabular-nums">
+                          {currencySymbol}
+                          {amount}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <dt>Mode</dt>
+                        <dd className="font-medium text-white">
+                          {(selectedAccount?.is_paper ?? isPaper) ? "Paper" : "Live"}
+                        </dd>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <dt>Risk</dt>
+                        <dd className="text-right">Stop-loss and take-profit from analysis</dd>
+                      </div>
+                    </dl>
+                    <Link
+                      href="/settings"
+                      className="mt-3 inline-block text-[11px] font-medium text-cyan-400 hover:underline"
+                    >
+                      Trading preferences in Settings
+                    </Link>
                   </div>
 
                   <button
@@ -1433,9 +1560,11 @@ function TradePage() {
                     />
                   </AIAnalysisCard>
 
-                  <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-300">
-                    Portfolio context (detailed placeholder)
-                  </div>
+                  <OpenPositionsPanel
+                    loading={openPositionsLoading}
+                    positions={openPositionsRows}
+                    variant="detailed"
+                  />
                 </div>
               </div>
             )}

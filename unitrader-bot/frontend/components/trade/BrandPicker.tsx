@@ -368,6 +368,7 @@ export default function BrandPicker({
 
   const firstTip = useFirstOpenTooltip("unitrader_brandpicker_first_open_v1");
   const didLockCryptoTab = useRef(false);
+  const exchangeTrimmed = (exchange || "").trim();
   const effectiveLower = (resolvedExchange ?? exchange ?? "").toLowerCase();
   const coinbaseMode = effectiveLower === "coinbase";
   const binanceMode = effectiveLower === "binance";
@@ -447,6 +448,14 @@ export default function BrandPicker({
     if (!cryptoOnly) return;
     if (category === "stocks") setCategory("crypto");
   }, [cryptoOnly, category]);
+
+  // No exchange scope yet — do not leave tier1Loading stuck at initial true (parent still resolving account).
+  useEffect(() => {
+    if (exchangeTrimmed) return;
+    setTier1Loading(false);
+    setTier1StockItems(null);
+    setTier1CryptoItems(null);
+  }, [exchangeTrimmed]);
 
   // novice / saver: fetch live AI picks to power the featured row
   useEffect(() => {
@@ -778,24 +787,9 @@ export default function BrandPicker({
           placeholder="AAPL, MSFT, NVDA, BTC/USD (comma-separated)"
           className="min-h-[96px] w-full rounded-xl border border-dark-800 bg-dark-900 px-4 py-3 text-sm text-white outline-none placeholder:text-dark-500 focus:border-brand-500/60"
         />
-        <button
-          type="button"
-          onClick={async () => {
-            const symbols = manualSymbol
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean);
-            if (!symbols.length) return;
-            try {
-              await api.get("/api/trading/bulk-analyze", { params: { symbols: symbols.join(",") } });
-            } catch {
-              // endpoint may not exist yet; no-op
-            }
-          }}
-          className="btn w-full"
-        >
-          Analyse all
-        </button>
+        <p className="text-[11px] leading-relaxed text-dark-500">
+          Analyse one symbol at a time: pick a row in the grid below or type a symbol and use Analyse on the manual trade panel.
+        </p>
       </div>
     );
   }
@@ -806,7 +800,11 @@ export default function BrandPicker({
   }
 
   const noOpportunities =
-    !loadingSettings && !tier1Loading && baseList.length === 0 && !search.trim();
+    !!exchangeTrimmed &&
+    !loadingSettings &&
+    !tier1Loading &&
+    baseList.length === 0 &&
+    !search.trim();
   const noMatches =
     !loadingSettings &&
     !tier1Loading &&
@@ -820,7 +818,7 @@ export default function BrandPicker({
 
   return (
     <div className="space-y-4">
-      {loadingSettings || tier1Loading ? (
+      {loadingSettings || (tier1Loading && !!exchangeTrimmed) ? (
         <div className="space-y-3">
           <div className="text-xs text-dark-400 animate-pulse">Loading tradable assets…</div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -828,6 +826,14 @@ export default function BrandPicker({
               <SkeletonCard key={i} />
             ))}
           </div>
+        </div>
+      ) : !exchangeTrimmed ? (
+        <div className="rounded-xl border border-amber-500/25 bg-dark-900 p-4">
+          <p className="text-sm font-medium text-white">No broker selected yet</p>
+          <p className="mt-1 text-xs text-dark-400">
+            Connect a trading account in Settings, or use the account control in the experienced layout, so
+            the asset grid matches your exchange.
+          </p>
         </div>
       ) : noOpportunities ? (
         <div className="rounded-xl border border-dark-800 bg-dark-900 p-6 text-center">

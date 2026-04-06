@@ -247,7 +247,7 @@ function getLocalResponse(cls: TraderClass, field: string, value: string): strin
       coinbase: "Coinbase Advanced Trade confirmed.",
       kraken:   "Kraken confirmed — I'll trade crypto on your Kraken account.",
       mixed:    "Both markets — I'll diversify across stocks and crypto.",
-      dex:      "DEX noted — I'll use centralised exchanges for now. DEX support coming soon.",
+      dex:      "Noted. Unitrader trades through centralised exchange APIs today.",
     };
     return (exchangeLabels[value] ?? "Exchange noted.") + " You're all set — completing your setup now.";
   }

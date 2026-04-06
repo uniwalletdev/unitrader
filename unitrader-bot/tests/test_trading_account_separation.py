@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -19,7 +20,11 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 
 from database import Base
 from models import Trade, TradingAccount, User, UserSettings
-from routers.trading import _resolve_trading_account_for_user, get_trade_history
+from routers.trading import (
+    _resolve_trading_account_for_user,
+    _sync_preferred_trading_account_if_stale,
+    get_trade_history,
+)
 
 
 _TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -180,3 +185,64 @@ async def test_trade_history_filters_by_trading_account(db: AsyncSession):
     assert len(trades) == 1
     assert trades[0]["trading_account_id"] == paper.id
     assert trades[0]["is_paper"] is True
+
+
+@pytest.mark.asyncio
+async def test_sync_preferred_heals_when_points_at_inactive_account(db: AsyncSession):
+    """Reconnect creates a new TradingAccount; old row is inactive — preferred must update."""
+    await _create_user(db, "heal-user-1")
+    old = TradingAccount(
+        user_id="heal-user-1",
+        exchange="coinbase",
+        is_paper=True,
+        account_label="Coinbase Paper (old)",
+        is_active=False,
+    )
+    new = TradingAccount(
+        user_id="heal-user-1",
+        exchange="coinbase",
+        is_paper=True,
+        account_label="Coinbase Paper (new)",
+        is_active=True,
+    )
+    db.add_all([old, new])
+    await db.flush()
+    db.add(UserSettings(user_id="heal-user-1", preferred_trading_account_id=old.id))
+    await db.commit()
+
+    await _sync_preferred_trading_account_if_stale(
+        db, user_id="heal-user-1", connected_account_id=new.id
+    )
+
+    row = (await db.execute(select(UserSettings).where(UserSettings.user_id == "heal-user-1"))).scalar_one()
+    assert row.preferred_trading_account_id == new.id
+
+
+@pytest.mark.asyncio
+async def test_sync_preferred_unchanged_when_still_valid(db: AsyncSession):
+    await _create_user(db, "heal-user-2")
+    alpaca = TradingAccount(
+        user_id="heal-user-2",
+        exchange="alpaca",
+        is_paper=True,
+        account_label="Alpaca Paper",
+        is_active=True,
+    )
+    coinbase = TradingAccount(
+        user_id="heal-user-2",
+        exchange="coinbase",
+        is_paper=True,
+        account_label="Coinbase Paper",
+        is_active=True,
+    )
+    db.add_all([alpaca, coinbase])
+    await db.flush()
+    db.add(UserSettings(user_id="heal-user-2", preferred_trading_account_id=alpaca.id))
+    await db.commit()
+
+    await _sync_preferred_trading_account_if_stale(
+        db, user_id="heal-user-2", connected_account_id=coinbase.id
+    )
+
+    row = (await db.execute(select(UserSettings).where(UserSettings.user_id == "heal-user-2"))).scalar_one()
+    assert row.preferred_trading_account_id == alpaca.id

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/router";
 import {
   Activity,
   AlertTriangle,
@@ -23,6 +24,7 @@ import {
   type PerformanceData,
 } from "../lib/api";
 import { devLogError } from "../lib/devLog";
+import ExchangeConnections from "@/components/ExchangeConnections";
 
 type Exchange = "Alpaca" | "Coinbase" | "Binance" | "Kraken" | "Oanda";
 type Mode = "paper" | "live";
@@ -172,6 +174,7 @@ function exchangeTone(exchange: Exchange) {
 }
 
 export default function AccountDashboard() {
+  const router = useRouter();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [preferredTradingAccountId, setPreferredTradingAccountId] = useState<string | null>(null);
@@ -782,27 +785,50 @@ export default function AccountDashboard() {
 
       {showAddModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-2xl border border-slate-700 bg-slate-900 p-5 shadow-2xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h4 className="text-lg font-semibold text-white">Add Account</h4>
+          <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-800 px-5 py-4">
+              <div>
+                <h4 className="text-lg font-semibold text-white">Add Account</h4>
+                <p className="mt-0.5 text-xs text-slate-400">
+                  Connect another exchange or add a paper account. Keys are encrypted and never shown again after save.
+                </p>
+              </div>
               <button
                 type="button"
                 className="rounded p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
                 onClick={() => setShowAddModal(false)}
+                aria-label="Close"
               >
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <p className="text-sm text-slate-300">
-              Account onboarding modal stub. Wire this to your account connector flow (exchange selection, key validation, and mode setup).
-            </p>
-            <button
-              type="button"
-              onClick={() => setShowAddModal(false)}
-              className="mt-4 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 hover:border-slate-600"
-            >
-              Close
-            </button>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              <ExchangeConnections
+                onConnected={() => {
+                  setShowAddModal(false);
+                  void fetchAccounts();
+                }}
+              />
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-800 px-5 py-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddModal(false);
+                  void router.push("/connect-exchange");
+                }}
+                className="text-xs text-sky-400 hover:text-sky-300"
+              >
+                Open full connect page
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAddModal(false)}
+                className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-100 hover:border-slate-600"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

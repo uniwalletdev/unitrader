@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, authApi, exchangeApi, tradingApi, type AccountBalance } from "@/lib/api";
 import { useAuth } from "@clerk/nextjs";
 import {
@@ -13,6 +13,7 @@ import {
   X,
 } from "lucide-react";
 import RiskWarning from "@/components/layout/RiskWarning";
+import CumulativePnlChart from "@/components/performance/CumulativePnlChart";
 
 type TraderClass =
   | "complete_novice"
@@ -62,6 +63,7 @@ type TradeRow = {
   id: string;
   symbol: string;
   side: string;
+  quantity?: number | null;
   entry_price: number;
   exit_price: number | null;
   profit: number | null;
@@ -69,6 +71,8 @@ type TradeRow = {
   profit_percent: number | null;
   created_at: string | null;
   closed_at: string | null;
+  claude_confidence?: number | null;
+  reasoning?: string | null;
 };
 
 const BRAND_NAMES: Record<string, string> = {
@@ -130,6 +134,40 @@ function StatCard({ label, value, sub, tone }: { label: string; value: string; s
   );
 }
 
+function RecentAiDecisions({ trades }: { trades: TradeRow[] }) {
+  const recent = useMemo(() => {
+    return [...trades]
+      .filter((t) => t.closed_at || t.created_at)
+      .sort((a, b) => {
+        const da = new Date(a.closed_at || a.created_at || 0).getTime();
+        const db = new Date(b.closed_at || b.created_at || 0).getTime();
+        return db - da;
+      })
+      .slice(0, 10);
+  }, [trades]);
+
+  if (!recent.length) {
+    return <div className="mt-3 text-sm text-dark-400">No closed trades in this period yet.</div>;
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      {recent.map((t) => (
+        <div key={t.id} className="rounded-xl border border-dark-800 bg-dark-950 p-3 text-xs text-dark-300">
+          <span className="font-semibold text-white">{t.side}</span>
+          {t.claude_confidence != null && (
+            <span className="text-dark-400"> · {Number(t.claude_confidence).toFixed(0)}%</span>
+          )}
+          <span className="text-dark-400"> · {t.symbol}</span>
+          {t.reasoning ? (
+            <div className="mt-1 line-clamp-2 text-dark-400">&ldquo;{t.reasoning}&rdquo;</div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function FeedbackThumbs({ tradeId }: { tradeId: string }) {
   const [v, setV] = useState<"up" | "down" | null>(null);
   return (
@@ -177,6 +215,7 @@ export default function PerformancePage() {
     trust_score: number;
     recent_comments: string[];
   } | null>(null);
+  const [shareHint, setShareHint] = useState<string | null>(null);
 
   const load = async (days: number) => {
     setLoading(true);
@@ -186,11 +225,20 @@ export default function PerformancePage() {
       const token = await getToken();
       if (token) api.defaults.headers.common.Authorization = `Bearer ${token}`;
 
+      const since = new Date();
+      since.setDate(since.getDate() - days);
+      const histParams: Record<string, string | number> = {
+        limit: 500,
+        offset: 0,
+        from_date: since.toISOString(),
+      };
+      if (selectedAccountId !== "all") histParams.trading_account_id = selectedAccountId;
+
       const [balancesRes, settingsRes, summaryRes, histRes] = await Promise.all([
         exchangeApi.balances(),
         authApi.getSettings(),
         api.get("/api/performance/summary", { params: { days, ...(selectedAccountId !== "all" ? { trading_account_id: selectedAccountId } : {}) } }),
-        tradingApi.history({ limit: 200, offset: 0, ...(selectedAccountId !== "all" ? { trading_account_id: selectedAccountId } : {}) }),
+        tradingApi.history(histParams),
       ]);
 
       setAccounts(balancesRes.data?.data ?? []);
@@ -227,6 +275,27 @@ export default function PerformancePage() {
       .get("/api/performance/feedback-stats")
       .then((res) => setFeedbackStats(res.data))
       .catch(() => setFeedbackStats(null));
+  }, []);
+
+  const handleShare = useCallback(async () => {
+    const url = typeof window !== "undefined" ? window.location.href : "";
+    if (!url) return;
+    try {
+      if (typeof navigator !== "undefined" && navigator.share) {
+        await navigator.share({ title: "Unitrader Performance", url });
+        setShareHint(null);
+        return;
+      }
+    } catch {
+      // fall through to clipboard
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareHint("Link copied");
+      window.setTimeout(() => setShareHint(null), 2000);
+    } catch {
+      setShareHint(null);
+    }
   }, []);
 
   const layout: "novice" | "self" | "pro" | "crypto" = useMemo(() => {
@@ -327,9 +396,10 @@ export default function PerformancePage() {
             <button type="button" onClick={() => setTaxOpen(true)} className="btn-outline text-xs">
               <Download size={14} /> Tax export
             </button>
-            <button type="button" onClick={() => {}} className="btn-outline text-xs">
+            <button type="button" onClick={() => void handleShare()} className="btn-outline text-xs">
               <Share2 size={14} /> Share
             </button>
+            {shareHint && <span className="text-xs text-dark-400">{shareHint}</span>}
           </div>
         </div>
 
@@ -374,6 +444,13 @@ export default function PerformancePage() {
                 <div className="mt-1 text-xs text-dark-400">
                   Unlocks next in {summary.trust_ladder_summary?.days_until_advance ?? 0} days
                 </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-dark-800 bg-dark-950 p-5">
+              <div className="text-sm font-semibold text-white">Cumulative P&amp;L</div>
+              <div className="mt-3">
+                <CumulativePnlChart trades={trades} height={176} />
               </div>
             </div>
 
@@ -520,10 +597,9 @@ export default function PerformancePage() {
             </div>
 
             <div className="rounded-2xl border border-dark-800 bg-dark-950 p-5">
-              <div className="text-sm font-semibold text-white">Performance chart</div>
-              <div className="mt-3 h-44 rounded-xl border border-dark-800 bg-dark-900/30" />
-              <div className="mt-2 text-xs text-dark-500">
-                Includes comparison line: “if you had held instead” (placeholder).
+              <div className="text-sm font-semibold text-white">Cumulative P&amp;L</div>
+              <div className="mt-3">
+                <CumulativePnlChart trades={trades} height={176} />
               </div>
             </div>
 
@@ -548,14 +624,10 @@ export default function PerformancePage() {
             </div>
 
             <div className="rounded-2xl border border-dark-800 bg-dark-950 p-5">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-semibold text-white">Portfolio value</div>
-                <button type="button" onClick={() => {}} className="btn-outline text-xs">
-                  Log scale
-                </button>
+              <div className="text-sm font-semibold text-white">Cumulative P&amp;L</div>
+              <div className="mt-3">
+                <CumulativePnlChart trades={trades} height={208} />
               </div>
-              <div className="mt-3 h-52 rounded-xl border border-dark-800 bg-dark-900/30" />
-              <div className="mt-2 text-xs text-dark-500">SPY overlay (placeholder).</div>
             </div>
 
             <div className="rounded-2xl border border-dark-800 bg-dark-950 p-5">
@@ -596,16 +668,8 @@ export default function PerformancePage() {
 
             <div className="rounded-2xl border border-dark-800 bg-dark-950 p-5">
               <div className="text-sm font-semibold text-white">Recent AI decisions</div>
-              <div className="mt-2 text-xs text-dark-400">
-                Last 10 decisions with signal/confidence/snippet (placeholder — requires backend endpoint).
-              </div>
-              <div className="mt-3 space-y-2">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} className="rounded-xl border border-dark-800 bg-dark-950 p-3 text-xs text-dark-300">
-                    BUY · 72% · “Momentum improving; risk managed with tight SL.”
-                  </div>
-                ))}
-              </div>
+              <div className="mt-2 text-xs text-dark-400">Last 10 closed trades (side, confidence, reasoning snippet).</div>
+              <RecentAiDecisions trades={trades} />
             </div>
 
             <TradeListPro trades={trades} />
@@ -630,9 +694,10 @@ export default function PerformancePage() {
             </div>
 
             <div className="rounded-2xl border border-dark-800 bg-dark-950 p-5">
-              <div className="text-sm font-semibold text-white">Portfolio chart</div>
-              <div className="mt-3 h-52 rounded-xl border border-dark-800 bg-dark-900/30" />
-              <div className="mt-2 text-xs text-dark-500">BTC reference line (placeholder).</div>
+              <div className="text-sm font-semibold text-white">Cumulative P&amp;L</div>
+              <div className="mt-3">
+                <CumulativePnlChart trades={trades} height={208} />
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -781,37 +846,105 @@ function TradeListSelf({ trades }: { trades: TradeRow[] }) {
   );
 }
 
+type ProSortKey = "date" | "symbol" | "pnl";
+
 function TradeListPro({ trades }: { trades: TradeRow[] }) {
+  const [sortKey, setSortKey] = useState<ProSortKey>("date");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
+  const sorted = useMemo(() => {
+    const copy = [...trades];
+    const dir = sortDir === "asc" ? 1 : -1;
+    copy.sort((a, b) => {
+      if (sortKey === "symbol") {
+        const sa = (a.symbol || "").toUpperCase();
+        const sb = (b.symbol || "").toUpperCase();
+        return sa.localeCompare(sb) * dir;
+      }
+      if (sortKey === "pnl") {
+        const pa = (a.profit || 0) - (a.loss || 0);
+        const pb = (b.profit || 0) - (b.loss || 0);
+        if (pa !== pb) return (pa - pb) * dir;
+      }
+      const ta = new Date(a.closed_at || a.created_at || 0).getTime();
+      const tb = new Date(b.closed_at || b.created_at || 0).getTime();
+      return (ta - tb) * dir;
+    });
+    return copy;
+  }, [trades, sortKey, sortDir]);
+
+  const toggle = (key: ProSortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "date" ? "desc" : "asc");
+    }
+  };
+
+  const sortHint = (key: ProSortKey) =>
+    sortKey !== key ? null : (
+      <span className="ml-1 text-dark-500">{sortDir === "asc" ? "↑" : "↓"}</span>
+    );
+
   return (
     <div className="rounded-2xl border border-dark-800 bg-dark-950">
       <div className="border-b border-dark-800 px-5 py-3">
         <div className="text-sm font-semibold text-white">Trade list</div>
-        <div className="mt-1 text-xs text-dark-500">Sortable columns (placeholder — needs client-side sort state).</div>
+        <div className="mt-1 text-xs text-dark-500">Click column headers to sort.</div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1100px]">
           <thead className="bg-dark-900/40">
             <tr className="text-left text-xs font-semibold text-dark-400">
-              <th className="px-5 py-3">Date</th>
-              <th className="px-5 py-3">Symbol</th>
+              <th className="px-5 py-3">
+                <button
+                  type="button"
+                  onClick={() => toggle("date")}
+                  className="font-semibold text-dark-400 hover:text-white"
+                >
+                  Date{sortHint("date")}
+                </button>
+              </th>
+              <th className="px-5 py-3">
+                <button
+                  type="button"
+                  onClick={() => toggle("symbol")}
+                  className="font-semibold text-dark-400 hover:text-white"
+                >
+                  Symbol{sortHint("symbol")}
+                </button>
+              </th>
               <th className="px-5 py-3">Side</th>
               <th className="px-5 py-3 text-right">Qty</th>
               <th className="px-5 py-3 text-right">Entry</th>
               <th className="px-5 py-3 text-right">Exit</th>
-              <th className="px-5 py-3 text-right">P&L</th>
+              <th className="px-5 py-3 text-right">
+                <button
+                  type="button"
+                  onClick={() => toggle("pnl")}
+                  className="font-semibold text-dark-400 hover:text-white"
+                >
+                  P&L{sortHint("pnl")}
+                </button>
+              </th>
               <th className="px-5 py-3 text-right">P&L %</th>
               <th className="px-5 py-3 text-right">Feedback</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-dark-800">
-            {trades.slice(0, 100).map((t) => {
+            {sorted.slice(0, 100).map((t) => {
               const pnl = (t.profit || 0) - (t.loss || 0);
+              const qty =
+                t.quantity !== null && t.quantity !== undefined && Number.isFinite(Number(t.quantity))
+                  ? String(t.quantity)
+                  : "—";
               return (
                 <tr key={t.id} className="hover:bg-dark-900/30">
                   <td className="px-5 py-3 text-sm text-dark-300">{dateShort(t.closed_at || t.created_at)}</td>
                   <td className="px-5 py-3 text-sm font-semibold text-white">{t.symbol}</td>
                   <td className="px-5 py-3 text-sm text-dark-200">{t.side}</td>
-                  <td className="px-5 py-3 text-right text-sm text-dark-200 tabular-nums">—</td>
+                  <td className="px-5 py-3 text-right text-sm text-dark-200 tabular-nums">{qty}</td>
                   <td className="px-5 py-3 text-right text-sm text-dark-200 tabular-nums">{t.entry_price?.toFixed(2) ?? "—"}</td>
                   <td className="px-5 py-3 text-right text-sm text-dark-200 tabular-nums">{t.exit_price?.toFixed(2) ?? "—"}</td>
                   <td className={clsx("px-5 py-3 text-right text-sm font-bold tabular-nums", pnl >= 0 ? "text-green-300" : "text-red-300")}>{formatGBP(pnl)}</td>
@@ -836,7 +969,6 @@ function TradeListCrypto({ trades }: { trades: TradeRow[] }) {
     <div className="rounded-2xl border border-dark-800 bg-dark-950">
       <div className="border-b border-dark-800 px-5 py-3">
         <div className="text-sm font-semibold text-white">Trades</div>
-        <div className="mt-1 text-xs text-dark-500">Fee impact per trade (placeholder — requires fee fields per trade).</div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[980px]">

@@ -470,6 +470,73 @@ class TestConnectExchangeRequest:
             )
 
 
+class TestTradeToDictReasoning:
+    """_trade_to_dict exposes a truncated reasoning snippet for API consumers."""
+
+    def test_reasoning_truncated_to_200_chars(self):
+        from routers.trading import _trade_to_dict
+
+        long = "x" * 250
+        trade = SimpleNamespace(
+            id="t1",
+            trading_account_id=None,
+            exchange="alpaca",
+            is_paper=True,
+            account_scope="default",
+            symbol="AAPL",
+            side="BUY",
+            quantity=1.0,
+            entry_price=100.0,
+            exit_price=101.0,
+            stop_loss=99.0,
+            take_profit=105.0,
+            profit=1.0,
+            loss=None,
+            profit_percent=1.0,
+            status="closed",
+            claude_confidence=80,
+            market_condition=None,
+            execution_time=None,
+            created_at=datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc),
+            closed_at=datetime(2025, 1, 2, 12, 0, tzinfo=timezone.utc),
+            reasoning=long,
+            trading_account=None,
+        )
+        d = _trade_to_dict(trade)
+        assert d["reasoning"] == "x" * 200 + "…"
+
+    def test_reasoning_omitted_when_empty(self):
+        from routers.trading import _trade_to_dict
+
+        trade = SimpleNamespace(
+            id="t2",
+            trading_account_id=None,
+            exchange="alpaca",
+            is_paper=True,
+            account_scope="default",
+            symbol="AAPL",
+            side="BUY",
+            quantity=1.0,
+            entry_price=100.0,
+            exit_price=None,
+            stop_loss=None,
+            take_profit=None,
+            profit=None,
+            loss=None,
+            profit_percent=None,
+            status="open",
+            claude_confidence=None,
+            market_condition=None,
+            execution_time=None,
+            created_at=datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc),
+            closed_at=None,
+            reasoning="   ",
+            trading_account=None,
+        )
+        d = _trade_to_dict(trade)
+        assert d["reasoning"] is None
+
+
 # ═════════════════════════════════════════════
 # ENCRYPTION ROUND-TRIP
 # ═════════════════════════════════════════════

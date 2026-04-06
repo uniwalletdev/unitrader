@@ -5,7 +5,7 @@ import {
   Lock, Loader2, TrendingUp, TrendingDown, Minus,
   CheckCircle, BarChart2, Bot, Info,
 } from "lucide-react";
-import { api, signalApi } from "@/lib/api";
+import { signalApi, tradingApi } from "@/lib/api";
 import BrandPicker from "@/components/trade/BrandPicker";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,6 +28,7 @@ interface FullAutoPanelProps {
   onSettingsUpdate: (updates: object) => void;
   exchange?: string;
   tradingAccountId?: string | null;
+  isPaper?: boolean;
 }
 
 interface ActivityEntry {
@@ -83,6 +84,7 @@ export default function FullAutoPanel({
   onSettingsUpdate,
   exchange,
   tradingAccountId,
+  isPaper,
 }: FullAutoPanelProps) {
   const [autoEnabled, setAutoEnabled] = useState(false);
   const [threshold, setThreshold] = useState(80);
@@ -91,14 +93,10 @@ export default function FullAutoPanel({
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
   const [activityLoading, setActivityLoading] = useState(true);
   const [toggling, setToggling] = useState(false);
+  const [tradesToday, setTradesToday] = useState(0);
+  const [pnlToday, setPnlToday] = useState<string>("—");
 
   const sliderDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    // #region agent log
-    fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H2',location:'FullAutoPanel.tsx:91',message:'full-auto input types',data:{tradingAccountId:tradingAccountId??null,autoEnabled,trustLadderStage,watchlistLength:watchlist.length},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
-  }, [trustLadderStage, tradingAccountId, autoEnabled, watchlist.length]);
 
   // Load per-account Full Auto settings (NOT user-global)
   useEffect(() => {
@@ -122,31 +120,74 @@ export default function FullAutoPanel({
     };
   }, [tradingAccountId]);
 
-  // ── Stats derived from activity ───────────────────────────────────────────
-  const tradesToday = activity.filter((a) => a.type === "trade").length;
-  const signalsSkipped = activity.filter((a) => a.type === "skipped").length;
-  // P&L would require price data — show placeholder until trade history API provides it
-  const pnlToday = "—";
+  const signalsSkipped = 0;
 
-  // ── Fetch activity log ────────────────────────────────────────────────────
+  // ── Fetch activity log (last 24h closed trades) ───────────────────────────
   const fetchActivity = useCallback(async () => {
     setActivityLoading(true);
     try {
-      const res = await api.get("/api/trading/history?hours=24");
-      const raw: ActivityEntry[] =
-        res.data?.data?.trades ??
-        res.data?.trades ??
-        (Array.isArray(res.data) ? res.data : []);
-      // #region agent log
-      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H1',location:'FullAutoPanel.tsx:114',message:'history response shape',data:{responseKeys:res?.data&&typeof res.data==='object'?Object.keys(res.data).slice(0,8):[],rawIsArray:Array.isArray(raw),rawType:typeof raw,rawLength:Array.isArray(raw)?raw.length:null,dataHasNestedTrades:Boolean(res?.data?.data?.trades),nestedTradesIsArray:Array.isArray(res?.data?.data?.trades)},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-      setActivity(raw);
+      const fromIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const params: Record<string, string | number | boolean> = {
+        from_date: fromIso,
+        limit: 100,
+      };
+      if (tradingAccountId) params.trading_account_id = tradingAccountId;
+      if (exchange?.trim()) params.exchange = exchange.trim().toLowerCase();
+      if (typeof isPaper === "boolean") params.is_paper = isPaper;
+
+      const res = await tradingApi.history(params);
+      const h = res.data?.data ?? res.data;
+      const tradesRaw = Array.isArray(h?.trades) ? h.trades : [];
+      const fromTs = Date.now() - 24 * 60 * 60 * 1000;
+
+      type HistRow = {
+        id: string;
+        symbol?: string;
+        side?: string;
+        status?: string;
+        exit_price?: number;
+        entry_price?: number;
+        closed_at?: string | null;
+        created_at?: string | null;
+        profit?: number | null;
+        loss?: number | null;
+      };
+
+      const closedRecent = tradesRaw.filter((t: HistRow) => {
+        if (t.status && t.status !== "closed") return false;
+        const ts = t.closed_at ? new Date(t.closed_at).getTime() : 0;
+        return ts >= fromTs;
+      });
+
+      const entries: ActivityEntry[] = closedRecent.map((t: HistRow) => ({
+        id: String(t.id),
+        type: "trade",
+        symbol: String(t.symbol ?? "—"),
+        side: t.side,
+        price: t.exit_price ?? t.entry_price,
+        created_at: t.closed_at || t.created_at || new Date().toISOString(),
+      }));
+
+      const pnlSum = closedRecent.reduce(
+        (s: number, t: HistRow) => s + (Number(t.profit ?? 0) - Number(t.loss ?? 0)),
+        0,
+      );
+
+      setActivity(entries);
+      setTradesToday(closedRecent.length);
+      setPnlToday(
+        closedRecent.length === 0
+          ? "—"
+          : `${pnlSum >= 0 ? "+" : "-"}£${Math.abs(pnlSum).toFixed(2)}`,
+      );
     } catch {
       setActivity([]);
+      setTradesToday(0);
+      setPnlToday("—");
     } finally {
       setActivityLoading(false);
     }
-  }, []);
+  }, [tradingAccountId, exchange, isPaper]);
 
   useEffect(() => {
     fetchActivity();
@@ -162,14 +203,8 @@ export default function FullAutoPanel({
       if (tradingAccountId) {
         await signalApi.updateAccountSettings({ trading_account_id: tradingAccountId, auto_trade_enabled: next });
       }
-      // #region agent log
-      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H4',location:'FullAutoPanel.tsx:139',message:'auto-toggle persisted',data:{next},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
       onSettingsUpdate({ auto_trade_enabled: next });
-    } catch (error: any) {
-      // #region agent log
-      fetch('http://127.0.0.1:7831/ingest/2858cb77-c539-428f-882e-63cb43d8ab6e',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'026d4d'},body:JSON.stringify({sessionId:'026d4d',runId:'initial',hypothesisId:'H3',location:'FullAutoPanel.tsx:143',message:'auto-toggle persist failed',data:{status:error?.response?.status ?? null,detail:error?.response?.data?.detail ?? null},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
+    } catch {
       setAutoEnabled(!next); // rollback
     } finally {
       setToggling(false);

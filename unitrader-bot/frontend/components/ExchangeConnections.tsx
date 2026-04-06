@@ -3,7 +3,7 @@ import {
   Link2, Unlink, ChevronDown, ChevronUp, Eye, EyeOff,
   CheckCircle, AlertCircle, Loader2, ExternalLink, Clipboard,
 } from "lucide-react";
-import { exchangeApi } from "@/lib/api";
+import { authApi, exchangeApi } from "@/lib/api";
 import ExchangeApiKeyGuide from "@/components/exchange/ExchangeApiKeyGuide";
 import { getExchangeApiKeyGuide } from "@/lib/exchangeApiKeyGuides";
 
@@ -189,7 +189,11 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
     try {
       const isPaper = connectModes[exchangeId] ?? true;
       const res = await exchangeApi.connect(exchangeId, apiKey, apiSecret, isPaper);
-      const balance = res.data.data?.balance_usd;
+      const payload = res.data.data;
+      const balance = payload?.balance_usd;
+      if (payload?.trading_account_id) {
+        await authApi.updateSettings({ preferred_trading_account_id: payload.trading_account_id }).catch(() => {});
+      }
       setMessage({
         type: "success",
         text: `${exchangeId.charAt(0).toUpperCase() + exchangeId.slice(1)} ${isPaper ? "paper" : "live"} account connected. Balance: $${balance?.toLocaleString() ?? "—"}`,
