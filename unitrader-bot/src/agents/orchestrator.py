@@ -551,7 +551,7 @@ class MasterOrchestrator:
         payload: dict,
         db: AsyncSession,
     ) -> dict:
-        """Route to ConversationAgent.respond() for post-onboarding chats.
+        """Route to ConversationAgent.handle_message() with the route() SharedContext.
 
         Returns a normalised dict with keys the frontend expects:
           response, context_label, message (alias), completed=False
@@ -563,7 +563,8 @@ class MasterOrchestrator:
         conv_agent = ConversationAgent(user_id=user_id)
         # Pass db=None so respond() manages its own sessions — avoids failures
         # if the request-scoped session is in an aborted PG transaction state.
-        result = await conv_agent.respond(message)
+        # Pass ctx from route() so we do not reload SharedMemory and lose market_context.
+        result = await conv_agent.handle_message(message=message, context=ctx, db=None)
 
         # Normalise: expose both 'response' and 'message' so either frontend
         # field read pattern works

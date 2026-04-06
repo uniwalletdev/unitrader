@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import anthropic
+from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import AsyncSessionLocal
 from models import Trade, User, OnboardingMessage, UserSettings
-from src.agents.shared_memory import SharedMemory
+from src.agents.shared_memory import SharedContext, SharedMemory
 from src.services.context_detection import (
     AI_PERFORMANCE,
     EDUCATIONAL,
@@ -194,6 +195,119 @@ def _extract_assets(message: str) -> list[tuple[str, str]]:
 
 
 # ─────────────────────────────────────────────
+# Chat → Orchestrator (analysis & execution intents)
+# ─────────────────────────────────────────────
+
+_CONFIRM_TRADE_CMD_RE = re.compile(
+    r"^\s*CONFIRM\s+(BUY|SELL)\s+([A-Za-z0-9./\-_]+)\s+(\d+(?:\.\d+)?)\s*$",
+    re.I,
+)
+_PROPOSE_TRADE_CMD_RE = re.compile(
+    r"^\s*(BUY|SELL)\s+([A-Za-z0-9./\-_]+)(?:\s+(\d+(?:\.\d+)?))?\s*$",
+    re.I,
+)
+
+
+def _performance_snapshot_for_prompt(context: SharedContext) -> str:
+    return (
+        f"- Closed trades (profile aggregate): {context.total_trades}\n"
+        f"- Win rate: {float(context.win_rate or 0):.1f}%\n"
+        f"- Avg signal confidence: {float(context.avg_confidence or 0):.1f}%"
+    )
+
+
+def _primary_exchange_hint(ctx: SharedContext) -> str:
+    if getattr(ctx, "market_context", None) is not None:
+        return ctx.market_context.exchange.value  # type: ignore[union-attr]
+    accounts = ctx.trading_accounts or []
+    if accounts:
+        return str(accounts[0].get("exchange") or "alpaca").lower()
+    return str(ctx.exchange or "alpaca").lower()
+
+
+def _resolve_symbol_for_trade_cmd(token: str) -> tuple[str | None, str | None]:
+    """Map user token to (symbol, default_exchange)."""
+    raw = token.strip()
+    low = raw.lower()
+    if low in _CRYPTO_ALIASES:
+        return _CRYPTO_ALIASES[low], "binance"
+    for alias, sym in _CRYPTO_ALIASES.items():
+        if low == sym.lower():
+            return sym, "binance"
+    u = raw.upper().replace("/", "")
+    if low in _STOCK_TICKERS:
+        return low.upper(), "alpaca"
+    m = _FOREX_RE.match(raw.upper())
+    if m:
+        return f"{m.group(1)}_{m.group(2)}", "oanda"
+    if re.match(r"^[A-Z0-9]{2,20}$", u):
+        return u, "binance"
+    return None, None
+
+
+def _wants_trading_agent_analysis(message: str, conv_context: str) -> bool:
+    low = message.lower()
+    if re.search(r"\b(analyze|analyse|analysis|outlook|deep dive|breakdown)\b", low):
+        return True
+    if re.search(
+        r"\b(should i (buy|sell)|would you (buy|sell)|worth (buying|selling)|"
+        r"opinion on|thoughts on|what do you think)\b",
+        low,
+    ):
+        return True
+    if conv_context == MARKET_ANALYSIS:
+        return True
+    return False
+
+
+def _http_detail_str(detail: Any) -> str:
+    if isinstance(detail, dict):
+        return str(detail.get("message", detail))
+    return str(detail)
+
+
+def _format_analyze_result_for_chat(result: dict, ctx: SharedContext) -> str:
+    decision = result.get("decision") or "WAIT"
+    if ctx.is_novice() or ctx.is_crypto_native():
+        body = (result.get("simple") or result.get("expert") or "").strip()
+    elif ctx.is_pro() or ctx.is_intermediate():
+        body = (result.get("expert") or result.get("simple") or "").strip()
+    else:
+        body = (result.get("simple") or result.get("expert") or "").strip()
+    parts = [f"**Signal: {decision}**"]
+    if body:
+        parts.append(body[:3500])
+    ep = result.get("entry_price")
+    if ep:
+        parts.append(f"Reference price: ~${float(ep):,.4f}")
+    return "\n\n".join(parts)
+
+
+def _format_execute_result_for_chat(result: dict) -> str:
+    if result.get("success") is False:
+        return f"I couldn't place that order: {result.get('reason', 'Unknown reason')}"
+    if result.get("status") == "rejected":
+        return f"Order not placed: {result.get('reason', 'Unknown')}"
+    if result.get("status") == "executed":
+        msg = result.get("message")
+        if msg:
+            return str(msg)
+        return (
+            f"Executed {result.get('side', '')} {result.get('symbol', '')} "
+            f"(trade id: {result.get('trade_id', 'n/a')})."
+        )
+    return str(result.get("message") or result.get("reason") or "Trade request completed.")
+
+
+async def _orchestrator_route(user_id: str, action: str, payload: dict) -> dict:
+    """Run one orchestrator action on a fresh DB session (avoids poisoning caller txn)."""
+    from src.agents.orchestrator import get_orchestrator
+
+    async with AsyncSessionLocal() as route_db:
+        return await get_orchestrator().route(user_id, action, payload, route_db)
+
+
+# ─────────────────────────────────────────────
 # Live market data injection
 # ─────────────────────────────────────────────
 
@@ -293,8 +407,8 @@ _ONBOARDING_SYSTEM_PROMPT = (
 )
 
 
-def _build_system_prompt(context: str, ai_name: str, user_email: str) -> str:
-    """Return the system prompt for a given context, personalised with the AI name."""
+def _build_tone_system_prompt(context: str, ai_name: str, user_email: str) -> str:
+    """Return tone/style instructions for the detected conversation context."""
 
     base = (
         f"You are {ai_name}, a personal AI trading companion for {user_email}. "
@@ -445,10 +559,194 @@ class ConversationAgent:
         self.user_id = user_id
         self._claude = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
 
+    def _build_system_prompt(self, context: SharedContext) -> str:
+        """Full shared context for Claude — accounts, positions, subscription (truthful data)."""
+        exchange_lines: list[str] = []
+        for acc in context.trading_accounts or []:
+            ex = str(acc.get("exchange", "unknown")).lower()
+            is_paper = acc.get("is_paper")
+            bal = float(acc.get("balance_usd") or 0)
+            mode = "Paper" if is_paper else "LIVE"
+            exchange_lines.append(
+                f"- {ex.title()}: {mode} account, balance ~${bal:.2f}"
+            )
+        exchanges_text = "\n".join(exchange_lines) if exchange_lines else "No exchanges connected yet."
+
+        positions = context.open_positions or []
+        if positions:
+            pos_parts: list[str] = []
+            for p in positions:
+                sym = p.get("symbol") or "—"
+                side = p.get("side") or "—"
+                qty = p.get("qty")
+                try:
+                    qty_s = f"{float(qty):g}" if qty is not None else "—"
+                except (TypeError, ValueError):
+                    qty_s = str(qty) if qty is not None else "—"
+                ep = float(p.get("entry_price") or 0)
+                pos_parts.append(f"- {sym}: {side} {qty_s} @ ${ep:.2f}")
+            positions_text = "\n".join(pos_parts)
+        else:
+            positions_text = "No open positions."
+
+        persona = context.apex_name or "Apex"
+        who = context.user_name or "the user"
+
+        return f"""You are {persona}, the AI trading companion inside Unitrader.
+You are speaking with {who} (trader class: {context.trader_class or 'unknown'}).
+
+CONNECTED EXCHANGES:
+{exchanges_text}
+
+OPEN POSITIONS:
+{positions_text}
+
+TRUST LADDER STAGE: {context.trust_ladder_stage or 1}
+SUBSCRIPTION: {context.subscription_tier or 'free'}
+TRADING PAUSED: {context.trading_paused or False}
+
+PERFORMANCE SNAPSHOT (use for "show my performance", "how am I doing", win rate, P&L overview):
+{_performance_snapshot_for_prompt(context)}
+
+TRADING INTENTS (coordinate with the product — some requests are fulfilled automatically before you reply):
+- If they ask to **analyse** or **analyze** a specific stock/crypto (or ask your **outlook** / **opinion** with a clear symbol), the TradingAgent analysis pipeline may already have run — summarise any analysis block you see and stay consistent with it.
+- If they say **buy** or **sell** with a symbol and size, the system asks them to confirm with `CONFIRM BUY|SELL SYMBOL AMOUNT` (amount = notional in USD). Until they send that exact confirm line, **do not** claim the order is placed; explain the proposal and risks briefly.
+- **Performance** questions: answer from PERFORMANCE SNAPSHOT plus CONNECTED EXCHANGES / OPEN POSITIONS — never invent numbers.
+- **Balance** questions: answer only from CONNECTED EXCHANGES balances above; if an exchange shows $0.00 placeholder, say balances may need a live refresh in Settings.
+
+You have full knowledge of the user's accounts, balances, positions, and trade history.
+Never say you don't have access to their data — you do.
+Never say "as an AI I cannot" — you are {persona}, not a generic assistant.
+Answer questions directly using the context above.
+If they ask what exchange they're connected to, tell them exactly.
+If they ask their balance, tell them from the context above.
+Keep responses concise and direct. Use plain English unless they're an experienced trader."""
+
+    async def _maybe_route_trading_via_orchestrator(
+        self,
+        user_message: str,
+        shared_ctx: SharedContext,
+        conv_context: str,
+    ) -> str | None:
+        """Detect trade analyse / propose / confirm intents and route through MasterOrchestrator.
+
+        Uses a dedicated DB session per orchestrator call. Returns assistant text or None
+        to continue with the normal Claude path.
+        """
+        text = (user_message or "").strip()
+        if not text:
+            return None
+
+        if shared_ctx.trading_paused:
+            return None
+
+        # ── Confirmed execution: CONFIRM BUY BTCUSDT 25 ─────────────────────
+        m = _CONFIRM_TRADE_CMD_RE.match(text)
+        if m:
+            side = m.group(1).upper()
+            raw_sym = m.group(2)
+            try:
+                amount = float(m.group(3))
+            except ValueError:
+                return None
+            sym, _ex = _resolve_symbol_for_trade_cmd(raw_sym)
+            if not sym:
+                return f"I couldn't understand the symbol `{raw_sym}`. Try e.g. BTCUSDT or AAPL."
+            if not shared_ctx.subscription_active:
+                return "A subscription is required to execute trades from chat."
+            try:
+                result = await _orchestrator_route(
+                    self.user_id,
+                    "trade_execute",
+                    {"symbol": sym, "side": side, "amount": amount},
+                )
+                return _format_execute_result_for_chat(result)
+            except HTTPException as e:
+                return _http_detail_str(e.detail)
+            except Exception as exc:
+                logger.exception("trade_execute from chat failed: %s", exc)
+                return (
+                    "I couldn't complete that trade right now. "
+                    "Use the Trade screen in the app or try again shortly."
+                )
+
+        # ── Proposal: BUY BTCUSDT 25 (requires CONFIRM on next turn) ─────────
+        m = _PROPOSE_TRADE_CMD_RE.match(text)
+        if m:
+            side = m.group(1).upper()
+            raw_sym = m.group(2)
+            amt_raw = m.group(3)
+            sym, _ex = _resolve_symbol_for_trade_cmd(raw_sym)
+            if not sym:
+                return f"I couldn't understand the symbol `{raw_sym}`. Try e.g. BTCUSDT or AAPL."
+            if not amt_raw:
+                return (
+                    f"To place a **{side}** on **{sym}**, add a notional size in USD, e.g. "
+                    f"`{side} {sym} 25` — then confirm with `CONFIRM {side} {sym} 25`."
+                )
+            try:
+                amount = float(amt_raw)
+            except ValueError:
+                return None
+            if amount <= 0:
+                return "Use a positive USD amount for the trade size."
+
+            brief = ""
+            if shared_ctx.subscription_active:
+                try:
+                    ar = await _orchestrator_route(
+                        self.user_id,
+                        "trade_analyze",
+                        {"symbol": sym},
+                    )
+                    brief = _format_analyze_result_for_chat(ar, shared_ctx)
+                except HTTPException as e:
+                    brief = f"(Analysis unavailable: {_http_detail_str(e.detail)})"
+                except Exception as exc:
+                    logger.warning("trade_analyze for proposal failed: %s", exc)
+
+            lines = [
+                f"You asked to **{side}** **{sym}** with **${amount:,.2f}** notional.",
+                "",
+                "⚠️ Trades carry risk. Review the summary below, then place the order only if you intend to.",
+            ]
+            if brief:
+                lines.extend(["", "**Trading engine read:**", brief])
+            lines.extend(
+                [
+                    "",
+                    "To **execute**, reply on a single line exactly:",
+                    f"`CONFIRM {side} {sym} {amount:g}`",
+                ]
+            )
+            return "\n".join(lines)
+
+        # ── Deep analysis (symbol required) ───────────────────────────────────
+        assets = _extract_assets(user_message)
+        if assets and _wants_trading_agent_analysis(user_message, conv_context):
+            if not shared_ctx.subscription_active:
+                return None
+            symbol, _ex = assets[0]
+            try:
+                result = await _orchestrator_route(
+                    self.user_id,
+                    "trade_analyze",
+                    {"symbol": symbol},
+                )
+                return _format_analyze_result_for_chat(result, shared_ctx)
+            except HTTPException as e:
+                return _http_detail_str(e.detail)
+            except Exception as exc:
+                logger.warning("trade_analyze from chat failed: %s", exc)
+                return None
+
+        return None
+
     async def respond(
         self,
         user_message: str,
         db: AsyncSession | None = None,
+        shared_context: SharedContext | None = None,
     ) -> dict:
         """Process a user message and return an AI response.
 
@@ -467,6 +765,8 @@ class ConversationAgent:
         Args:
             user_message: The raw text from the user.
             db: Optional injected AsyncSession (for request-scoped sessions).
+            shared_context: If provided (e.g. from Orchestrator.route), used for the system
+                prompt instead of loading SharedMemory again on a new session.
 
         Returns:
             {
@@ -495,9 +795,40 @@ class ConversationAgent:
 
         ai_name = user.ai_name or "Claude"
 
+        if shared_context is not None:
+            shared_ctx = shared_context
+        else:
+            async with AsyncSessionLocal() as _ctx_db:
+                shared_ctx = await SharedMemory.load(self.user_id, _ctx_db)
+
         # ── Detect context & sentiment ─────────────────────────────────────
         context = detect_context(user_message)
         sentiment = analyze_sentiment(user_message)
+
+        routed_reply = await self._maybe_route_trading_via_orchestrator(
+            user_message, shared_ctx, context
+        )
+        if routed_reply is not None:
+            conv = await save_conversation(
+                user_id=self.user_id,
+                message=user_message,
+                response=routed_reply,
+                context=context,
+                sentiment=sentiment,
+                db=db,
+            )
+            from src.services.context_detection import get_context_label
+
+            return {
+                "response": routed_reply,
+                "context": context,
+                "context_label": get_context_label(context),
+                "sentiment": sentiment,
+                "user_ai_name": ai_name,
+                "conversation_id": conv.id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "data_freshness": "orchestrator",
+            }
 
         # ── Extract assets and fetch live market data ──────────────────────
         assets = _extract_assets(user_message)
@@ -515,8 +846,12 @@ class ConversationAgent:
             self.user_id, limit=_HISTORY_TURNS, db=db
         )
 
-        # ── Inject performance summary if relevant ─────────────────────────
-        system_prompt = _build_system_prompt(context, ai_name, user.email)
+        # ── Shared context (accounts / positions) + per-message tone ───────
+        system_prompt = (
+            self._build_system_prompt(shared_ctx)
+            + "\n\n---\n\nMESSAGE TONE:\n"
+            + _build_tone_system_prompt(context, ai_name, user.email)
+        )
 
         if context == AI_PERFORMANCE:
             async with AsyncSessionLocal() as _db2:
@@ -565,6 +900,20 @@ class ConversationAgent:
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "data_freshness": data_freshness,
         }
+
+    async def handle_message(
+        self,
+        *,
+        message: str,
+        context: SharedContext,
+        db: AsyncSession | None = None,
+    ) -> dict:
+        """Preferred entry when SharedContext is already loaded (e.g. Orchestrator.route).
+
+        Forwards to ``respond`` with ``shared_context`` so the system prompt matches the
+        orchestrator snapshot (including ``market_context`` when scoped by trading account).
+        """
+        return await self.respond(message, db=db, shared_context=context)
 
     # ─────────────────────────────────────────
     # ONBOARDING CHAT
@@ -955,11 +1304,18 @@ class ConversationAgent:
 
         ai_name = user.ai_name or "Claude"
 
+        async with AsyncSessionLocal() as _ctx_db:
+            shared_ctx = await SharedMemory.load(self.user_id, _ctx_db)
+
         # Existing context & sentiment detection
         context = detect_context(message)
         sentiment = analyze_sentiment(message)
 
-        system_prompt = _build_system_prompt(context, ai_name, user.email)
+        system_prompt = (
+            self._build_system_prompt(shared_ctx)
+            + "\n\n---\n\nMESSAGE TONE:\n"
+            + _build_tone_system_prompt(context, ai_name, user.email)
+        )
 
         # Performance injection unchanged
         if context == AI_PERFORMANCE:

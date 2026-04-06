@@ -3,7 +3,7 @@ src/integrations/telegram_bot.py — Telegram bot service for Unitrader.
 
 Handles the full lifecycle of bot updates via a webhook:
   - Account linking (web-initiated and bot-initiated via 6-digit OTP)
-  - Portfolio, trade history, and performance queries (direct DB)
+  - Portfolio, trade history, and performance queries (SharedContext + DB on one session)
   - Trade execution and close (calls TradingAgent directly — no HTTP round-trip)
   - AI chat via orchestrator (onboarding vs post-onboarding, same as web)
   - Outbound trade alerts pushed from the backend
@@ -41,15 +41,19 @@ from telegram.ext import (
     filters,
 )
 
+from sqlalchemy import select as sa_select
+
 from config import settings
 from database import AsyncSessionLocal
 from models import (
     BotMessage,
+    ExchangeAPIKey,
     TelegramLinkingCode,
     Trade,
     User,
     UserExternalAccount,
 )
+from src.agents.shared_memory import SharedMemory
 
 logger = logging.getLogger(__name__)
 
@@ -307,50 +311,126 @@ class TelegramBotService:
         await self._reply(update, text, parse_mode="Markdown")
         await self._log(tg_id, "command", "/link", "/link", text, "success")
 
+    # ── Shared text builders (DB session must remain open until returned) ─────
+
+    async def _telegram_portfolio_text(self, db, user: User) -> str:
+        trades = (
+            await db.execute(
+                sa_select(Trade)
+                .where(
+                    Trade.user_id == user.id,
+                    Trade.status == "open",
+                )
+                .order_by(Trade.created_at.desc())
+            )
+        ).scalars().all()
+        if not trades:
+            return (
+                "📊 *No open positions*\n\n"
+                "Start trading with:\n`/trade BUY BTCUSDT 1.5`"
+            )
+        lines = ["📊 *Open Positions*\n"]
+        total_pnl = 0.0
+        for t in trades:
+            pnl = (t.profit or 0) - (t.loss or 0)
+            pct = t.profit_percent or 0
+            em = "📈" if pnl >= 0 else "📉"
+            total_pnl += pnl
+            lines.append(
+                f"{em} *{t.symbol}* — {t.side}\n"
+                f"  Entry: `${t.entry_price:,.4f}`\n"
+                f"  SL: `${t.stop_loss:,.4f}`  TP: `${t.take_profit:,.4f}`\n"
+                f"  P&L: `${pnl:+,.2f}` ({pct:+.2f}%)\n"
+                f"  Size: `{t.quantity}`\n"
+            )
+        pnl_em = "💰" if total_pnl >= 0 else "🔻"
+        lines.append(f"{pnl_em} *Total unrealised P&L: ${total_pnl:+,.2f}*")
+        return "\n".join(lines)
+
+    async def _telegram_history_text(self, db, user: User) -> str:
+        trades = (
+            await db.execute(
+                sa_select(Trade)
+                .where(
+                    Trade.user_id == user.id,
+                    Trade.status == "closed",
+                )
+                .order_by(Trade.closed_at.desc())
+                .limit(10)
+            )
+        ).scalars().all()
+        if not trades:
+            return "📊 *No closed trades yet.*\n\nStart with `/trade BUY BTCUSDT 1.5`"
+        lines = ["📜 *Last 10 Trades*\n"]
+        for i, t in enumerate(trades, 1):
+            pnl = (t.profit or 0) - (t.loss or 0)
+            pct = t.profit_percent or 0
+            em = "✅" if pnl >= 0 else "❌"
+            when = t.closed_at.strftime("%b %d %H:%M") if t.closed_at else "—"
+            lines.append(
+                f"{i}. {em} *{t.symbol}* {t.side}  "
+                f"`${pnl:+,.2f}` ({pct:+.2f}%)  _{when}_"
+            )
+        return "\n".join(lines)
+
+    async def _telegram_performance_text(self, db, user: User) -> str:
+        trades = (
+            await db.execute(
+                sa_select(Trade).where(
+                    Trade.user_id == user.id,
+                    Trade.status == "closed",
+                )
+            )
+        ).scalars().all()
+        if not trades:
+            return "📈 *No closed trades yet.*\n\nYour stats will appear here after your first trade."
+        profits = [(t.profit or 0) - (t.loss or 0) for t in trades]
+        wins = [p for p in profits if p > 0]
+        total = sum(profits)
+        wr = len(wins) / len(profits) * 100
+        best = max(profits)
+        worst = min(profits)
+        avg = total / len(profits)
+        streak = _winning_streak(profits)
+        wr_em = "🔥" if wr >= 60 else ("⚠️" if wr < 40 else "📊")
+        return (
+            f"📈 *{user.ai_name}'s Performance*\n\n"
+            f"{wr_em} Win Rate:        `{wr:.1f}%`\n"
+            f"💰 Total Profit:    `${total:+,.2f}`\n"
+            f"📊 Total Trades:    `{len(profits)}`\n"
+            f"🏆 Best Trade:      `+${best:,.2f}`\n"
+            f"📉 Worst Trade:     `${worst:,.2f}`\n"
+            f"📅 Avg per Trade:   `${avg:+,.2f}`\n"
+            f"🔁 Best Win Streak: `{streak}`"
+        )
+
     # ── /portfolio ────────────────────────────────────────────────────────────
 
     async def cmd_portfolio(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         tg_id = str(update.effective_user.id)
         t0 = time.perf_counter()
 
-        user = await self._require_linked(update, tg_id)
-        if not user:
-            return
-
         await update.message.chat.send_action(ChatAction.TYPING)
 
         async with AsyncSessionLocal() as db:
-            from sqlalchemy import select as sa_select
-            trades = (await db.execute(
-                sa_select(Trade).where(
-                    Trade.user_id == user.id,
-                    Trade.status == "open",
-                ).order_by(Trade.created_at.desc())
-            )).scalars().all()
-
-        if not trades:
-            text = (
-                "📊 *No open positions*\n\n"
-                "Start trading with:\n`/trade BUY BTCUSDT 1.5`"
-            )
-        else:
-            lines = ["📊 *Open Positions*\n"]
-            total_pnl = 0.0
-            for t in trades:
-                pnl = (t.profit or 0) - (t.loss or 0)
-                pct = t.profit_percent or 0
-                em  = "📈" if pnl >= 0 else "📉"
-                total_pnl += pnl
-                lines.append(
-                    f"{em} *{t.symbol}* — {t.side}\n"
-                    f"  Entry: `${t.entry_price:,.4f}`\n"
-                    f"  SL: `${t.stop_loss:,.4f}`  TP: `${t.take_profit:,.4f}`\n"
-                    f"  P&L: `${pnl:+,.2f}` ({pct:+.2f}%)\n"
-                    f"  Size: `{t.quantity}`\n"
+            user = await self._telegram_linked_user(db, tg_id)
+            if not user:
+                await self._reply(
+                    update,
+                    "❌ Your Telegram is not linked to Unitrader.\n\n"
+                    "Use /start to see linking instructions.",
                 )
-            pnl_em = "💰" if total_pnl >= 0 else "🔻"
-            lines.append(f"{pnl_em} *Total unrealised P&L: ${total_pnl:+,.2f}*")
-            text = "\n".join(lines)
+                return
+            shared_context = await SharedMemory.load(str(user.id), db)
+            logger.debug(
+                "telegram /portfolio user=%s shared_context exchanges=%d open_positions=%d",
+                shared_context.user_id,
+                len(shared_context.trading_accounts),
+                len(shared_context.open_positions),
+            )
+            text = await self._telegram_portfolio_text(db, user)
+
+            await db.commit()
 
         ms = int((time.perf_counter() - t0) * 1000)
         await self._reply(update, text, parse_mode="Markdown")
@@ -367,10 +447,6 @@ class TelegramBotService:
         tg_id   = str(update.effective_user.id)
         raw_msg = update.message.text or ""
         t0      = time.perf_counter()
-
-        user = await self._require_linked(update, tg_id)
-        if not user:
-            return
 
         args = ctx.args or []
         if len(args) < 3:
@@ -404,34 +480,63 @@ class TelegramBotService:
 
         await update.message.chat.send_action(ChatAction.TYPING)
 
-        try:
-            # Determine exchange from user's API keys
-            exchange = await self._get_primary_exchange(user.id)
-            if not exchange:
+        async with AsyncSessionLocal() as db:
+            user = await self._telegram_linked_user(db, tg_id)
+            if not user:
                 await self._reply(
                     update,
-                    "❌ No exchange API key configured.\n\n"
-                    f"Add one at {settings.frontend_url}/settings/exchange",
+                    "❌ Your Telegram is not linked to Unitrader.\n\n"
+                    "Use /start to see linking instructions.",
                 )
                 return
+            shared_context = await SharedMemory.load(str(user.id), db)
+            logger.debug(
+                "telegram /trade user=%s shared_context trading_paused=%s",
+                shared_context.user_id,
+                shared_context.trading_paused,
+            )
+            if shared_context.trading_paused:
+                await db.commit()
+                text = (
+                    "⏸ *Trading is paused* in your Unitrader settings.\n\n"
+                    "Resume trading in the web app to place orders from Telegram."
+                )
+                ms = int((time.perf_counter() - t0) * 1000)
+                await self._reply(update, text, parse_mode="Markdown")
+                await self._log(
+                    tg_id, "trade", "/trade", raw_msg, text, "error",
+                    user_id=user.id, response_time_ms=ms,
+                )
+                return
+            exchange = await self._get_primary_exchange_db(db, user.id)
+            await db.commit()
 
+        if not exchange:
+            await self._reply(
+                update,
+                "❌ No exchange API key configured.\n\n"
+                f"Add one at {settings.frontend_url}/settings/exchange",
+            )
+            return
+
+        try:
             from src.agents.core.trading_agent import TradingAgent
             from src.integrations.market_data import full_market_analysis
 
             agent = TradingAgent(user_id=user.id)
 
-            live_data  = await full_market_analysis(symbol, exchange)
-            price      = live_data["price"]
-            sl_dist    = price * 0.02         # 2% default stop
-            tp_dist    = price * 0.04         # 4% default take-profit (2:1 R:R)
-            stop_loss  = (price - sl_dist) if side == "BUY" else (price + sl_dist)
+            live_data = await full_market_analysis(symbol, exchange)
+            price = live_data["price"]
+            sl_dist = price * 0.02
+            tp_dist = price * 0.04
+            stop_loss = (price - sl_dist) if side == "BUY" else (price + sl_dist)
             take_profit = (price + tp_dist) if side == "BUY" else (price - tp_dist)
 
             decision = {
                 "decision": side,
                 "confidence": 70,
                 "entry_price": price,
-                "stop_loss":  round(stop_loss, 8),
+                "stop_loss": round(stop_loss, 8),
                 "take_profit": round(take_profit, 8),
                 "position_size_pct": size,
                 "reasoning": f"Manual trade via Telegram — {side} {symbol} at {size}%",
@@ -440,8 +545,11 @@ class TelegramBotService:
             result = await agent.execute_trade(decision, symbol, exchange, user.ai_name)
 
             if result.get("status") == "executed":
-                rr = round((take_profit - price) / (price - stop_loss), 2) if side == "BUY" \
-                     else round((price - take_profit) / (stop_loss - price), 2)
+                rr = (
+                    round((take_profit - price) / (price - stop_loss), 2)
+                    if side == "BUY"
+                    else round((price - take_profit) / (stop_loss - price), 2)
+                )
                 text = (
                     f"✅ *Trade Executed!*\n\n"
                     f"📊 {side} `{result.get('quantity', '')}` {symbol}\n"
@@ -475,10 +583,6 @@ class TelegramBotService:
         raw_msg = update.message.text or ""
         t0      = time.perf_counter()
 
-        user = await self._require_linked(update, tg_id)
-        if not user:
-            return
-
         args = ctx.args or []
         if not args:
             await self._reply(update, "❌ Usage: `/close BTCUSDT`", parse_mode="Markdown")
@@ -488,17 +592,49 @@ class TelegramBotService:
         await update.message.chat.send_action(ChatAction.TYPING)
 
         try:
-            from sqlalchemy import select as sa_select
             from src.agents.core.trading_agent import TradingAgent
 
             async with AsyncSessionLocal() as db:
-                trade = (await db.execute(
-                    sa_select(Trade).where(
-                        Trade.user_id == user.id,
-                        Trade.symbol == symbol,
-                        Trade.status == "open",
-                    ).order_by(Trade.created_at.desc()).limit(1)
-                )).scalar_one_or_none()
+                user = await self._telegram_linked_user(db, tg_id)
+                if not user:
+                    await self._reply(
+                        update,
+                        "❌ Your Telegram is not linked to Unitrader.\n\n"
+                        "Use /start to see linking instructions.",
+                    )
+                    return
+                shared_context = await SharedMemory.load(str(user.id), db)
+                logger.debug(
+                    "telegram /close user=%s shared_context trading_paused=%s",
+                    shared_context.user_id,
+                    shared_context.trading_paused,
+                )
+                if shared_context.trading_paused:
+                    await db.commit()
+                    text = (
+                        "⏸ *Trading is paused* in your Unitrader settings.\n\n"
+                        "Resume in the web app to manage positions from Telegram."
+                    )
+                    ms = int((time.perf_counter() - t0) * 1000)
+                    await self._reply(update, text, parse_mode="Markdown")
+                    await self._log(
+                        tg_id, "trade", "/close", raw_msg, text, "error",
+                        user_id=user.id, response_time_ms=ms,
+                    )
+                    return
+                trade = (
+                    await db.execute(
+                        sa_select(Trade)
+                        .where(
+                            Trade.user_id == user.id,
+                            Trade.symbol == symbol,
+                            Trade.status == "open",
+                        )
+                        .order_by(Trade.created_at.desc())
+                        .limit(1)
+                    )
+                ).scalar_one_or_none()
+                await db.commit()
 
             if not trade:
                 text = f"❌ No open position found for `{symbol}`."
@@ -540,33 +676,20 @@ class TelegramBotService:
         tg_id = str(update.effective_user.id)
         t0    = time.perf_counter()
 
-        user = await self._require_linked(update, tg_id)
-        if not user:
-            return
-
         async with AsyncSessionLocal() as db:
-            from sqlalchemy import select as sa_select
-            trades = (await db.execute(
-                sa_select(Trade).where(
-                    Trade.user_id == user.id,
-                    Trade.status == "closed",
-                ).order_by(Trade.closed_at.desc()).limit(10)
-            )).scalars().all()
-
-        if not trades:
-            text = "📊 *No closed trades yet.*\n\nStart with `/trade BUY BTCUSDT 1.5`"
-        else:
-            lines = ["📜 *Last 10 Trades*\n"]
-            for i, t in enumerate(trades, 1):
-                pnl = (t.profit or 0) - (t.loss or 0)
-                pct = t.profit_percent or 0
-                em  = "✅" if pnl >= 0 else "❌"
-                when = t.closed_at.strftime("%b %d %H:%M") if t.closed_at else "—"
-                lines.append(
-                    f"{i}. {em} *{t.symbol}* {t.side}  "
-                    f"`${pnl:+,.2f}` ({pct:+.2f}%)  _{when}_"
+            user = await self._telegram_linked_user(db, tg_id)
+            if not user:
+                await self._reply(
+                    update,
+                    "❌ Your Telegram is not linked to Unitrader.\n\n"
+                    "Use /start to see linking instructions.",
                 )
-            text = "\n".join(lines)
+                return
+            shared_context = await SharedMemory.load(str(user.id), db)
+            logger.debug("telegram /history user=%s", shared_context.user_id)
+            text = await self._telegram_history_text(db, user)
+
+            await db.commit()
 
         ms = int((time.perf_counter() - t0) * 1000)
         await self._reply(update, text, parse_mode="Markdown")
@@ -579,41 +702,20 @@ class TelegramBotService:
         tg_id = str(update.effective_user.id)
         t0    = time.perf_counter()
 
-        user = await self._require_linked(update, tg_id)
-        if not user:
-            return
-
         async with AsyncSessionLocal() as db:
-            from sqlalchemy import select as sa_select
-            trades = (await db.execute(
-                sa_select(Trade).where(
-                    Trade.user_id == user.id,
-                    Trade.status == "closed",
+            user = await self._telegram_linked_user(db, tg_id)
+            if not user:
+                await self._reply(
+                    update,
+                    "❌ Your Telegram is not linked to Unitrader.\n\n"
+                    "Use /start to see linking instructions.",
                 )
-            )).scalars().all()
+                return
+            shared_context = await SharedMemory.load(str(user.id), db)
+            logger.debug("telegram /performance user=%s", shared_context.user_id)
+            text = await self._telegram_performance_text(db, user)
 
-        if not trades:
-            text = "📈 *No closed trades yet.*\n\nYour stats will appear here after your first trade."
-        else:
-            profits = [(t.profit or 0) - (t.loss or 0) for t in trades]
-            wins    = [p for p in profits if p > 0]
-            total   = sum(profits)
-            wr      = len(wins) / len(profits) * 100
-            best    = max(profits)
-            worst   = min(profits)
-            avg     = total / len(profits)
-            streak  = _winning_streak(profits)
-            wr_em   = "🔥" if wr >= 60 else ("⚠️" if wr < 40 else "📊")
-            text = (
-                f"📈 *{user.ai_name}'s Performance*\n\n"
-                f"{wr_em} Win Rate:        `{wr:.1f}%`\n"
-                f"💰 Total Profit:    `${total:+,.2f}`\n"
-                f"📊 Total Trades:    `{len(profits)}`\n"
-                f"🏆 Best Trade:      `+${best:,.2f}`\n"
-                f"📉 Worst Trade:     `${worst:,.2f}`\n"
-                f"📅 Avg per Trade:   `${avg:+,.2f}`\n"
-                f"🔁 Best Win Streak: `{streak}`"
-            )
+            await db.commit()
 
         ms = int((time.perf_counter() - t0) * 1000)
         await self._reply(update, text, parse_mode="Markdown")
@@ -627,10 +729,6 @@ class TelegramBotService:
         raw_msg = update.message.text or ""
         t0      = time.perf_counter()
 
-        user = await self._require_linked(update, tg_id)
-        if not user:
-            return
-
         question = " ".join(ctx.args or []).strip()
         if not question:
             await self._reply(
@@ -643,13 +741,35 @@ class TelegramBotService:
 
         await update.message.chat.send_action(ChatAction.TYPING)
 
+        user: User | None = None
         try:
             from src.services.bot_orchestrator_chat import orchestrator_chat_reply
 
-            text = await orchestrator_chat_reply(str(user.id), question)
+            async with AsyncSessionLocal() as db:
+                user = await self._telegram_linked_user(db, tg_id)
+                if not user:
+                    await self._reply(
+                        update,
+                        "❌ Your Telegram is not linked to Unitrader.\n\n"
+                        "Use /start to see linking instructions.",
+                    )
+                    return
+                shared_context = await SharedMemory.load(str(user.id), db)
+                logger.debug(
+                    "telegram /chat user=%s onboarding_complete=%s",
+                    shared_context.user_id,
+                    shared_context.onboarding_complete,
+                )
+                await db.commit()
+                text = await orchestrator_chat_reply(
+                    str(user.id),
+                    question,
+                    db=db,
+                    shared_context=shared_context,
+                )
             status_str = "success"
         except Exception as exc:
-            logger.error("cmd_chat error for user %s: %s", user.id, exc)
+            logger.error("cmd_chat error for user %s: %s", getattr(user, "id", tg_id), exc)
             text = "❌ Could not get an AI response right now. Try again in a moment."
             status_str = "error"
 
@@ -664,9 +784,18 @@ class TelegramBotService:
 
     async def cmd_alerts(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         tg_id = str(update.effective_user.id)
-        user  = await self._require_linked(update, tg_id)
-        if not user:
-            return
+        async with AsyncSessionLocal() as db:
+            user = await self._telegram_linked_user(db, tg_id)
+            if not user:
+                await self._reply(
+                    update,
+                    "❌ Your Telegram is not linked to Unitrader.\n\n"
+                    "Use /start to see linking instructions.",
+                )
+                return
+            shared_context = await SharedMemory.load(str(user.id), db)
+            logger.debug("telegram /alerts user=%s", shared_context.user_id)
+            await db.commit()
         text = (
             "🔔 *Price Alerts* — Coming Soon!\n\n"
             "You'll be able to set alerts like:\n"
@@ -680,9 +809,21 @@ class TelegramBotService:
 
     async def cmd_settings(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         tg_id = str(update.effective_user.id)
-        user  = await self._require_linked(update, tg_id)
-        if not user:
-            return
+        async with AsyncSessionLocal() as db:
+            user = await self._telegram_linked_user(db, tg_id)
+            if not user:
+                await self._reply(
+                    update,
+                    "❌ Your Telegram is not linked to Unitrader.\n\n"
+                    "Use /start to see linking instructions.",
+                )
+                return
+            shared_context = await SharedMemory.load(str(user.id), db)
+            logger.debug("telegram /settings user=%s trading_paused=%s", shared_context.user_id, shared_context.trading_paused)
+            await db.commit()
+        paused_note = ""
+        if shared_context.trading_paused:
+            paused_note = "\n\n⏸ *Trading is currently paused* — resume in the web app."
         text = (
             f"⚙️ *Trading Settings*\n\n"
             f"Manage your settings at:\n{settings.frontend_url}/settings\n\n"
@@ -692,6 +833,7 @@ class TelegramBotService:
             "• Trading hours (UTC)\n"
             "• Approved assets\n"
             "• Notification preferences"
+            f"{paused_note}"
         )
         await self._reply(update, text, parse_mode="Markdown")
         await self._log(tg_id, "command", "/settings", "/settings", text, "success", user_id=user.id)
@@ -785,46 +927,107 @@ class TelegramBotService:
 
     async def handle_message(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         tg_id = str(update.effective_user.id)
-        user  = await self._get_linked_user(tg_id)
-
-        if not user:
-            await self._reply(
-                update,
-                "👋 Use /start to link your Unitrader account and start trading.",
-            )
-            return
-
         raw = (update.message.text or "").strip()
-        t0  = time.perf_counter()
+        t0 = time.perf_counter()
 
         from src.services.bot_intent import classify_natural_intent
         from src.services.bot_orchestrator_chat import orchestrator_chat_reply
 
         intent = classify_natural_intent(raw)
 
-        if intent["route"] == "command":
-            ctx.args = intent.get("args", [])
-            c = intent["command"]
-            if c == "portfolio":
-                await self.cmd_portfolio(update, ctx)
-            elif c == "performance":
-                await self.cmd_performance(update, ctx)
-            elif c == "history":
-                await self.cmd_history(update, ctx)
-            elif c == "trade":
-                await self.cmd_trade(update, ctx)
-            elif c == "close":
-                await self.cmd_close(update, ctx)
-            return
+        async with AsyncSessionLocal() as db:
+            user = await self._telegram_linked_user(db, tg_id)
+            if not user:
+                await self._reply(
+                    update,
+                    "👋 Use /start to link your Unitrader account and start trading.",
+                )
+                return
 
-        await update.message.chat.send_action(ChatAction.TYPING)
-        try:
-            text = await orchestrator_chat_reply(str(user.id), intent["message"])
-            status_str = "success"
-        except Exception as exc:
-            logger.error("handle_message chat error for user %s: %s", user.id, exc)
-            text = "❌ Could not get an AI response right now. Try again in a moment."
-            status_str = "error"
+            shared_context = await SharedMemory.load(str(user.id), db)
+            logger.debug(
+                "telegram handle_message user=%s route=%s",
+                shared_context.user_id,
+                intent.get("route"),
+            )
+
+            if intent["route"] == "command":
+                ctx.args = intent.get("args", [])
+                c = intent["command"]
+                if c == "portfolio":
+                    await update.message.chat.send_action(ChatAction.TYPING)
+                    text = await self._telegram_portfolio_text(db, user)
+                    await db.commit()
+                    ms = int((time.perf_counter() - t0) * 1000)
+                    await self._reply(update, text, parse_mode="Markdown")
+                    await self._log(
+                        tg_id,
+                        "message",
+                        "natural_portfolio",
+                        raw,
+                        text,
+                        "success",
+                        user_id=user.id,
+                        response_time_ms=ms,
+                    )
+                    return
+                if c == "performance":
+                    await update.message.chat.send_action(ChatAction.TYPING)
+                    text = await self._telegram_performance_text(db, user)
+                    await db.commit()
+                    ms = int((time.perf_counter() - t0) * 1000)
+                    await self._reply(update, text, parse_mode="Markdown")
+                    await self._log(
+                        tg_id,
+                        "message",
+                        "natural_performance",
+                        raw,
+                        text,
+                        "success",
+                        user_id=user.id,
+                        response_time_ms=ms,
+                    )
+                    return
+                if c == "history":
+                    await update.message.chat.send_action(ChatAction.TYPING)
+                    text = await self._telegram_history_text(db, user)
+                    await db.commit()
+                    ms = int((time.perf_counter() - t0) * 1000)
+                    await self._reply(update, text, parse_mode="Markdown")
+                    await self._log(
+                        tg_id,
+                        "message",
+                        "natural_history",
+                        raw,
+                        text,
+                        "success",
+                        user_id=user.id,
+                        response_time_ms=ms,
+                    )
+                    return
+                await db.commit()
+                if c == "trade":
+                    await self.cmd_trade(update, ctx)
+                    return
+                if c == "close":
+                    await self.cmd_close(update, ctx)
+                    return
+                return
+
+            await db.commit()
+            await update.message.chat.send_action(ChatAction.TYPING)
+            try:
+                text = await orchestrator_chat_reply(
+                    str(user.id),
+                    intent["message"],
+                    db=db,
+                    shared_context=shared_context,
+                )
+                status_str = "success"
+            except Exception as exc:
+                logger.error("handle_message chat error for user %s: %s", user.id, exc)
+                text = "❌ Could not get an AI response right now. Try again in a moment."
+                status_str = "error"
 
         ms = int((time.perf_counter() - t0) * 1000)
         for chunk in _chunk(text):
@@ -883,50 +1086,50 @@ class TelegramBotService:
 
     # ── Internal helpers ──────────────────────────────────────────────────────
 
-    async def _get_linked_user(self, tg_id: str) -> User | None:
-        """Return the Unitrader User linked to this Telegram ID, or None."""
-        from sqlalchemy import select as sa_select
-        async with AsyncSessionLocal() as db:
-            ext = (await db.execute(
+    async def _telegram_linked_user(self, db, tg_id: str) -> User | None:
+        """Resolve Unitrader User from Telegram id on an open DB session (updates last_used_at)."""
+        ext = (
+            await db.execute(
                 sa_select(UserExternalAccount).where(
                     UserExternalAccount.external_id == tg_id,
                     UserExternalAccount.platform == _PLATFORM,
                     UserExternalAccount.is_linked == True,  # noqa: E712
                 )
-            )).scalar_one_or_none()
-            if not ext:
-                return None
-            # Update last_used_at
-            ext.last_used_at = _now()
-            user = (await db.execute(
-                sa_select(User).where(User.id == ext.user_id)
-            )).scalar_one_or_none()
-            await db.commit()
-            return user if user and user.is_active else None
-
-    async def _require_linked(self, update: Update, tg_id: str) -> User | None:
-        """Return linked user or send an error message and return None."""
-        user = await self._get_linked_user(tg_id)
-        if not user:
-            await self._reply(
-                update,
-                "❌ Your Telegram is not linked to Unitrader.\n\n"
-                "Use /start to see linking instructions.",
             )
+        ).scalar_one_or_none()
+        if not ext:
+            return None
+        ext.last_used_at = _now()
+        user = (
+            await db.execute(sa_select(User).where(User.id == ext.user_id))
+        ).scalar_one_or_none()
+        if not user or not user.is_active:
+            return None
         return user
 
-    async def _get_primary_exchange(self, user_id: str) -> str | None:
-        """Return the name of the first active exchange API key for a user."""
-        from sqlalchemy import select as sa_select
-        from models import ExchangeAPIKey  # noqa: PLC0415 — lazy import avoids circular dep
+    async def _get_linked_user(self, tg_id: str) -> User | None:
+        """Return the Unitrader User linked to this Telegram ID, or None."""
         async with AsyncSessionLocal() as db:
-            key = (await db.execute(
+            user = await self._telegram_linked_user(db, tg_id)
+            await db.commit()
+            return user
+
+    async def _get_primary_exchange_db(self, db, user_id: str) -> str | None:
+        """First active exchange API key for a user (uses caller's session)."""
+        key = (
+            await db.execute(
                 sa_select(ExchangeAPIKey).where(
                     ExchangeAPIKey.user_id == user_id,
                     ExchangeAPIKey.is_active == True,  # noqa: E712
                 ).limit(1)
-            )).scalar_one_or_none()
+            )
+        ).scalar_one_or_none()
         return key.exchange if key else None
+
+    async def _get_primary_exchange(self, user_id: str) -> str | None:
+        """Return the name of the first active exchange API key for a user."""
+        async with AsyncSessionLocal() as db:
+            return await self._get_primary_exchange_db(db, user_id)
 
     async def _reply(
         self, update: Update, text: str, parse_mode: str | None = None

@@ -913,8 +913,97 @@ function TradePage() {
     void handleAnalyse();
   }, [symbol, layout, handleAnalyse]);
 
+  // Class-aware defaults for Signal Stack mode + manual trade expansion
+  useEffect(() => {
+    if (!settings) return;
+    const tc = settings.trader_class ?? "complete_novice";
+    const defaultMode =
+      tc === "experienced" || tc === "semi_institutional" ? "apex_selects" : "browse";
+    setSignalMode(settings.signal_stack_mode ?? defaultMode);
+    const manualDefaultExpanded =
+      tc === "experienced" || tc === "semi_institutional" || tc === "self_taught";
+    setManualExpanded(manualDefaultExpanded);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [settings?.signal_stack_mode, settings?.trader_class]);
+
+  const explanationLevel = useMemo(() => {
+    const level = settings?.explanation_level;
+    if (level === "expert" || level === "simple" || level === "metaphor") return level;
+    if (traderClass === "complete_novice" || traderClass === "curious_saver") return "simple";
+    return "expert";
+  }, [settings?.explanation_level, traderClass]);
+
+  const fullAutoLocked = useMemo(() => {
+    if (traderClass === "experienced" || traderClass === "semi_institutional") return false;
+    const stage = trust?.stage ?? 1;
+    return stage < 3;
+  }, [traderClass, trust?.stage]);
+
+  const modeDescription = useMemo(() => {
+    if (signalMode === "browse") {
+      return `${resolvedBotName} has pre-analysed assets. Best opportunities ranked below.`;
+    }
+    if (signalMode === "apex_selects") {
+      return `Set your parameters. ${resolvedBotName} finds the best match.`;
+    }
+    return `${resolvedBotName} is trading automatically on your schedule.`;
+  }, [resolvedBotName, signalMode]);
+
+  const { signals, isLoading: signalsLoading, isRefreshing, lastScanAt, nextScanInMinutes, assetsScanned, error: signalsError, acceptSignal, skipSignal, refresh } =
+    useSignalStack({ signal_stack_mode: signalMode }, { tradingAccountId: selectedTradingAccountId });
+
+  const maxSignals = useMemo(() => {
+    if (traderClass === "complete_novice") return 3;
+    if (traderClass === "curious_saver") return 5;
+    return 10;
+  }, [traderClass]);
+
+  const browseSignals = useMemo(() => signals.slice(0, maxSignals), [signals, maxSignals]);
+
+  const handleSetMode = async (mode: "browse" | "apex_selects" | "full_auto") => {
+    if (mode === signalMode) return;
+    if (mode === "full_auto" && fullAutoLocked) {
+      setToast("Full Auto is locked — complete the Trust Ladder first.");
+      return;
+    }
+    setSignalMode(mode);
+    setSettings((prev) => (prev ? { ...prev, signal_stack_mode: mode } : prev));
+    setModeSaving(true);
+    try {
+      await signalApi.updateSettings({ signal_stack_mode: mode });
+    } catch {
+      // non-fatal: keep optimistic UI
+    } finally {
+      setModeSaving(false);
+    }
+  };
+
+  const handleAcceptSignal = async (signalId: string): Promise<boolean> => {
+    const sig = signals.find((s) => s.id === signalId);
+    try {
+      const ok = await acceptSignal(signalId);
+      if (ok) {
+        setToast(`${resolvedBotName} is buying ${sig?.asset_name ?? "this asset"}`);
+      }
+      return ok;
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail;
+      if (detail === "risk_disclosure_required" || detail === "risk_disclosure_not_accepted") {
+        if (typeof window !== "undefined") {
+          window.location.href = `/risk-disclosure?next=${encodeURIComponent("/trade")}`;
+        }
+        return false;
+      }
+      return false;
+    }
+  };
+
+  const handleSkipSignal = (signalId: string) => {
+    skipSignal(signalId);
+  };
+
   // Debug isolation toggles (production-safe). Use:
-  // - /trade?debug=bare to bypass complex UI and isolate hook-order crashes.
+  // - /trade?debug=bare to bypass complex UI and isolate child crashes (hooks still run).
   // - /trade?debug=no_sim,no_market,no_picker,no_chart,no_explain to bisect which child triggers it.
   if (bare) {
     const mounts =
@@ -1023,95 +1112,6 @@ function TradePage() {
     }
     await refreshOpenPositions({ silent: true });
     return data;
-  };
-
-  // Class-aware defaults for Signal Stack mode + manual trade expansion
-  useEffect(() => {
-    if (!settings) return;
-    const tc = settings.trader_class ?? "complete_novice";
-    const defaultMode =
-      tc === "experienced" || tc === "semi_institutional" ? "apex_selects" : "browse";
-    setSignalMode(settings.signal_stack_mode ?? defaultMode);
-    const manualDefaultExpanded =
-      tc === "experienced" || tc === "semi_institutional" || tc === "self_taught";
-    setManualExpanded(manualDefaultExpanded);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings?.signal_stack_mode, settings?.trader_class]);
-
-  const explanationLevel = useMemo(() => {
-    const level = settings?.explanation_level;
-    if (level === "expert" || level === "simple" || level === "metaphor") return level;
-    if (traderClass === "complete_novice" || traderClass === "curious_saver") return "simple";
-    return "expert";
-  }, [settings?.explanation_level, traderClass]);
-
-  const fullAutoLocked = useMemo(() => {
-    if (traderClass === "experienced" || traderClass === "semi_institutional") return false;
-    const stage = trust?.stage ?? 1;
-    return stage < 3;
-  }, [traderClass, trust?.stage]);
-
-  const modeDescription = useMemo(() => {
-    if (signalMode === "browse") {
-      return `${resolvedBotName} has pre-analysed assets. Best opportunities ranked below.`;
-    }
-    if (signalMode === "apex_selects") {
-      return `Set your parameters. ${resolvedBotName} finds the best match.`;
-    }
-    return `${resolvedBotName} is trading automatically on your schedule.`;
-  }, [resolvedBotName, signalMode]);
-
-  const { signals, isLoading: signalsLoading, isRefreshing, lastScanAt, nextScanInMinutes, assetsScanned, error: signalsError, acceptSignal, skipSignal, refresh } =
-    useSignalStack({ signal_stack_mode: signalMode }, { tradingAccountId: selectedTradingAccountId });
-
-  const maxSignals = useMemo(() => {
-    if (traderClass === "complete_novice") return 3;
-    if (traderClass === "curious_saver") return 5;
-    return 10;
-  }, [traderClass]);
-
-  const browseSignals = useMemo(() => signals.slice(0, maxSignals), [signals, maxSignals]);
-
-  const handleSetMode = async (mode: "browse" | "apex_selects" | "full_auto") => {
-    if (mode === signalMode) return;
-    if (mode === "full_auto" && fullAutoLocked) {
-      setToast("Full Auto is locked — complete the Trust Ladder first.");
-      return;
-    }
-    setSignalMode(mode);
-    setSettings((prev) => (prev ? { ...prev, signal_stack_mode: mode } : prev));
-    setModeSaving(true);
-    try {
-      await signalApi.updateSettings({ signal_stack_mode: mode });
-    } catch {
-      // non-fatal: keep optimistic UI
-    } finally {
-      setModeSaving(false);
-    }
-  };
-
-  const handleAcceptSignal = async (signalId: string): Promise<boolean> => {
-    const sig = signals.find((s) => s.id === signalId);
-    try {
-      const ok = await acceptSignal(signalId);
-      if (ok) {
-        setToast(`${resolvedBotName} is buying ${sig?.asset_name ?? "this asset"}`);
-      }
-      return ok;
-    } catch (e: any) {
-      const detail = e?.response?.data?.detail;
-      if (detail === "risk_disclosure_required" || detail === "risk_disclosure_not_accepted") {
-        if (typeof window !== "undefined") {
-          window.location.href = `/risk-disclosure?next=${encodeURIComponent("/trade")}`;
-        }
-        return false;
-      }
-      return false;
-    }
-  };
-
-  const handleSkipSignal = (signalId: string) => {
-    skipSignal(signalId);
   };
 
   if (loading) {

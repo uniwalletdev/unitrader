@@ -20,7 +20,7 @@ from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models import Conversation, Trade, User, UserSettings
+from models import Conversation, ExchangeAPIKey, Trade, User, UserSettings
 from src.market_context import MarketContext, resolve_market_context
 
 logger = logging.getLogger(__name__)
@@ -63,6 +63,11 @@ class SharedContext:
     last_signal: Optional[str] = None      # Latest signal from trading agent
     recent_onboarding_messages: list[dict] = field(default_factory=list)
     market_context: Optional[MarketContext] = None
+    # Conversation / chat: connected brokers and live positions (populated in _load_from_db)
+    trading_accounts: list[dict] = field(default_factory=list)
+    open_positions: list[dict] = field(default_factory=list)
+    user_name: Optional[str] = None
+    subscription_tier: str = "free"
 
     @classmethod
     def default(cls, user_id: str) -> "SharedContext":
@@ -93,6 +98,10 @@ class SharedContext:
             last_signal=None,
             recent_onboarding_messages=[],
             market_context=None,
+            trading_accounts=[],
+            open_positions=[],
+            user_name=None,
+            subscription_tier="free",
         )
 
     def is_novice(self) -> bool:
@@ -220,6 +229,55 @@ class SharedMemory:
             )
 
     @staticmethod
+    async def _fetch_trading_accounts_snapshot(user_id: str, db: AsyncSession) -> list[dict]:
+        """Active exchange keys for chat context (balances omitted for latency)."""
+        try:
+            result = await db.execute(
+                select(ExchangeAPIKey).where(
+                    ExchangeAPIKey.user_id == user_id,
+                    ExchangeAPIKey.is_active == True,  # noqa: E712
+                )
+            )
+            keys = result.scalars().all()
+            return [
+                {
+                    "exchange": (k.exchange or "unknown").lower(),
+                    "is_paper": bool(k.is_paper),
+                    "balance_usd": 0.0,
+                }
+                for k in keys
+            ]
+        except Exception as exc:
+            logger.warning("trading_accounts snapshot failed for %s: %s", user_id, exc)
+            return []
+
+    @staticmethod
+    async def _fetch_open_positions_snapshot(user_id: str, db: AsyncSession) -> list[dict]:
+        try:
+            result = await db.execute(
+                select(Trade)
+                .where(
+                    Trade.user_id == user_id,
+                    Trade.status == "open",
+                )
+                .order_by(Trade.created_at.desc())
+                .limit(50)
+            )
+            rows = result.scalars().all()
+            return [
+                {
+                    "symbol": t.symbol,
+                    "side": t.side or "",
+                    "qty": t.quantity,
+                    "entry_price": float(t.entry_price or 0),
+                }
+                for t in rows
+            ]
+        except Exception as exc:
+            logger.warning("open_positions snapshot failed for %s: %s", user_id, exc)
+            return []
+
+    @staticmethod
     async def _load_from_db(
         user_id: str,
         db: AsyncSession,
@@ -264,10 +322,19 @@ class SharedMemory:
                 user_id, db
             )
 
+            trading_accounts = await SharedMemory._fetch_trading_accounts_snapshot(
+                user_id, db
+            )
+            open_positions = await SharedMemory._fetch_open_positions_snapshot(user_id, db)
+
             # Extract favourite symbols from approved_assets
             favourite_symbols = []
             if settings.approved_assets and isinstance(settings.approved_assets, list):
                 favourite_symbols = settings.approved_assets
+
+            primary_exchange = (
+                trading_accounts[0]["exchange"] if trading_accounts else "alpaca"
+            )
 
             # Build SharedContext
             context = SharedContext(
@@ -276,12 +343,12 @@ class SharedMemory:
                 goal=getattr(settings, "financial_goal", None) or "grow_savings",
                 risk_level=getattr(settings, "risk_level_setting", None) or "balanced",
                 max_trade_amount=settings.max_trade_amount or 1000.0,
-                exchange="alpaca",  # Default — could query from ExchangeAPIKey
+                exchange=primary_exchange,
                 explanation_level=settings.explanation_level or "simple",
                 trade_mode=settings.trade_mode or "guided",
                 paper_trading_enabled=True,  # Default — extend with user_settings table if needed
                 trust_ladder_stage=1,  # Default — extend with user_settings table if needed
-                trading_paused=not user.is_active,
+                trading_paused=bool(settings.trading_paused),
                 subscription_active=(
                     user.subscription_tier == "pro"
                     or (
@@ -302,6 +369,10 @@ class SharedMemory:
                 avg_confidence=trade_stats["avg_confidence"],
                 last_signal=None,  # Could query from Conversation.response where context_type="trading"
                 recent_onboarding_messages=onboarding_messages,
+                trading_accounts=trading_accounts,
+                open_positions=open_positions,
+                user_name=user.email,
+                subscription_tier=(user.subscription_tier or "free").lower(),
             )
 
             if trading_account_id:

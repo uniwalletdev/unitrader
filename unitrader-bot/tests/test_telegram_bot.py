@@ -87,6 +87,26 @@ def _bot_service():
     return svc
 
 
+def _mock_async_session():
+    """Async context manager stub for patching AsyncSessionLocal."""
+    mock_session = AsyncMock()
+    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session.__aexit__ = AsyncMock(return_value=False)
+    mock_session.commit = AsyncMock()
+    return mock_session
+
+
+def _fake_shared_context(user: SimpleNamespace) -> MagicMock:
+    """Minimal SharedContext stand-in for Telegram handler tests."""
+    m = MagicMock()
+    m.user_id = user.id
+    m.trading_paused = False
+    m.onboarding_complete = True
+    m.trading_accounts = []
+    m.open_positions = []
+    return m
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # /start — unlinked user
 # ─────────────────────────────────────────────────────────────────────────────
@@ -204,8 +224,10 @@ async def test_portfolio_unlinked():
     """/portfolio before linking returns a link-first error."""
     svc = _bot_service()
     upd = _update("/portfolio")
+    mock_session = _mock_async_session()
 
-    with patch.object(svc, "_get_linked_user", new=AsyncMock(return_value=None)):
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=None)), \
+         patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session):
         await svc.cmd_portfolio(upd, _ctx())
 
     text = upd.message.reply_text.call_args[0][0]
@@ -223,14 +245,13 @@ async def test_portfolio_empty():
     user = _fake_user()
     upd  = _update("/portfolio")
 
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session = _mock_async_session()
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = []
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)), \
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=user)), \
+         patch("src.integrations.telegram_bot.SharedMemory.load", new=AsyncMock(return_value=_fake_shared_context(user))), \
          patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
          patch.object(svc, "_log", new=AsyncMock()):
         await svc.cmd_portfolio(upd, _ctx())
@@ -258,14 +279,13 @@ async def test_portfolio_with_positions():
         created_at=datetime.now(timezone.utc),
     )
 
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session = _mock_async_session()
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = [trade]
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)), \
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=user)), \
+         patch("src.integrations.telegram_bot.SharedMemory.load", new=AsyncMock(return_value=_fake_shared_context(user))), \
          patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
          patch.object(svc, "_log", new=AsyncMock()):
         await svc.cmd_portfolio(upd, _ctx())
@@ -293,8 +313,7 @@ async def test_trade_bad_args(args, expected_fragment):
     user = _fake_user()
     upd  = _update(f"/trade {' '.join(args)}")
 
-    with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)):
-        await svc.cmd_trade(upd, _ctx(args))
+    await svc.cmd_trade(upd, _ctx(args))
 
     text = upd.message.reply_text.call_args[0][0]
     assert expected_fragment.lower() in text.lower()
@@ -311,8 +330,12 @@ async def test_trade_no_exchange():
     user = _fake_user()
     upd  = _update("/trade BUY BTCUSDT 1.5")
 
-    with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)), \
-         patch.object(svc, "_get_primary_exchange", new=AsyncMock(return_value=None)), \
+    mock_session = _mock_async_session()
+
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=user)), \
+         patch("src.integrations.telegram_bot.SharedMemory.load", new=AsyncMock(return_value=_fake_shared_context(user))), \
+         patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
+         patch.object(svc, "_get_primary_exchange_db", new=AsyncMock(return_value=None)), \
          patch.object(svc, "_log", new=AsyncMock()):
         await svc.cmd_trade(upd, _ctx(["BUY", "BTCUSDT", "1.5"]))
 
@@ -331,14 +354,13 @@ async def test_close_no_open_position():
     user = _fake_user()
     upd  = _update("/close BTCUSDT")
 
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session = _mock_async_session()
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = None
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)), \
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=user)), \
+         patch("src.integrations.telegram_bot.SharedMemory.load", new=AsyncMock(return_value=_fake_shared_context(user))), \
          patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
          patch.object(svc, "_log", new=AsyncMock()):
         await svc.cmd_close(upd, _ctx(["BTCUSDT"]))
@@ -358,14 +380,13 @@ async def test_history_empty():
     user = _fake_user()
     upd  = _update("/history")
 
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session = _mock_async_session()
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = []
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)), \
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=user)), \
+         patch("src.integrations.telegram_bot.SharedMemory.load", new=AsyncMock(return_value=_fake_shared_context(user))), \
          patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
          patch.object(svc, "_log", new=AsyncMock()):
         await svc.cmd_history(upd, _ctx())
@@ -401,14 +422,13 @@ async def test_history_with_trades():
         ),
     ]
 
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session = _mock_async_session()
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = trades
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)), \
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=user)), \
+         patch("src.integrations.telegram_bot.SharedMemory.load", new=AsyncMock(return_value=_fake_shared_context(user))), \
          patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
          patch.object(svc, "_log", new=AsyncMock()):
         await svc.cmd_history(upd, _ctx())
@@ -429,14 +449,13 @@ async def test_performance_no_trades():
     user = _fake_user()
     upd  = _update("/performance")
 
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session = _mock_async_session()
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = []
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)), \
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=user)), \
+         patch("src.integrations.telegram_bot.SharedMemory.load", new=AsyncMock(return_value=_fake_shared_context(user))), \
          patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
          patch.object(svc, "_log", new=AsyncMock()):
         await svc.cmd_performance(upd, _ctx())
@@ -459,14 +478,13 @@ async def test_performance_with_trades():
         SimpleNamespace(profit=300.0, loss=0.0),
     ]
 
-    mock_session = AsyncMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__  = AsyncMock(return_value=False)
+    mock_session = _mock_async_session()
     mock_result = MagicMock()
     mock_result.scalars.return_value.all.return_value = trades
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)), \
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=user)), \
+         patch("src.integrations.telegram_bot.SharedMemory.load", new=AsyncMock(return_value=_fake_shared_context(user))), \
          patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
          patch.object(svc, "_log", new=AsyncMock()):
         await svc.cmd_performance(upd, _ctx())
@@ -487,8 +505,7 @@ async def test_chat_no_question():
     user = _fake_user()
     upd  = _update("/chat")
 
-    with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)):
-        await svc.cmd_chat(upd, _ctx([]))
+    await svc.cmd_chat(upd, _ctx([]))
 
     text = upd.message.reply_text.call_args[0][0]
     assert "usage" in text.lower() or "/chat" in text.lower()
@@ -505,7 +522,11 @@ async def test_chat_with_question():
     user = _fake_user()
     upd  = _update("/chat Should I buy Bitcoin?")
 
-    with patch.object(svc, "_require_linked", new=AsyncMock(return_value=user)), \
+    mock_session = _mock_async_session()
+
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=user)), \
+         patch("src.integrations.telegram_bot.SharedMemory.load", new=AsyncMock(return_value=_fake_shared_context(user))), \
+         patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
          patch.object(svc, "_log", new=AsyncMock()), \
          patch(
              "src.services.bot_orchestrator_chat.orchestrator_chat_reply",
@@ -519,19 +540,23 @@ async def test_chat_with_question():
 
 @pytest.mark.asyncio
 async def test_handle_message_natural_portfolio_routes_to_cmd_portfolio():
-    """Free text 'show my portfolio' calls cmd_portfolio when linked."""
+    """Free text 'show my portfolio' uses shared context and portfolio text builder."""
     svc  = _bot_service()
     user = _fake_user()
     upd  = _update("show my portfolio")
-    mock_pf = AsyncMock()
+    mock_pf = AsyncMock(return_value="📊 portfolio ok")
 
     ctx = _ctx()
-    with patch.object(svc, "_get_linked_user", new=AsyncMock(return_value=user)), \
-         patch.object(svc, "cmd_portfolio", new=mock_pf):
+    mock_session = _mock_async_session()
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=user)), \
+         patch("src.integrations.telegram_bot.SharedMemory.load", new=AsyncMock(return_value=_fake_shared_context(user))), \
+         patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
+         patch.object(svc, "_telegram_portfolio_text", new=mock_pf), \
+         patch.object(svc, "_log", new=AsyncMock()):
         await svc.handle_message(upd, ctx)
 
     mock_pf.assert_called_once()
-    assert mock_pf.call_args[0][0] is upd
+    assert mock_pf.call_args[0][1] is user
 
 
 @pytest.mark.asyncio
@@ -542,7 +567,11 @@ async def test_handle_message_freetext_calls_orchestrator():
     upd        = _update("What is RSI?")
     mock_reply = AsyncMock()
 
-    with patch.object(svc, "_get_linked_user", new=AsyncMock(return_value=user)), \
+    mock_session = _mock_async_session()
+
+    with patch.object(svc, "_telegram_linked_user", new=AsyncMock(return_value=user)), \
+         patch("src.integrations.telegram_bot.SharedMemory.load", new=AsyncMock(return_value=_fake_shared_context(user))), \
+         patch("src.integrations.telegram_bot.AsyncSessionLocal", return_value=mock_session), \
          patch.object(svc, "_log", new=AsyncMock()), \
          patch.object(svc, "_reply", new=mock_reply), \
          patch(
