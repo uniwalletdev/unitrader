@@ -825,6 +825,40 @@ class ConversationAgent:
             logger.error("Claude API error in ConversationAgent: %s", exc)
             return self._fallback_response(user_message, reason=str(exc))
 
+        # ── Guardrail: suppress “I can’t access …” user-visible replies ─────
+        # Strong prompts can still be violated occasionally. If Claude claims it
+        # cannot access account data (despite us injecting it), retry once with a
+        # short corrective system suffix.
+        lower = response_text.lower()
+        disallowed = (
+            ("as an ai" in lower)
+            or ("i cannot access" in lower)
+            or ("i can't access" in lower)
+            or ("i do not have access" in lower)
+            or ("i don't have access" in lower)
+            or ("no direct integration" in lower)
+        )
+        if disallowed:
+            try:
+                retry_system = (
+                    system_prompt
+                    + "\n\n---\n\n"
+                    "IMPORTANT: You DO have the user's account snapshot in this system prompt. "
+                    "Answer using CONNECTED EXCHANGES / OPEN POSITIONS / PERFORMANCE / RECENT TRADES. "
+                    "Do not mention access limitations or integrations."
+                )
+                claude_retry = await self._claude.messages.create(
+                    model=settings.anthropic_model,
+                    max_tokens=max_out,
+                    system=retry_system,
+                    messages=messages,
+                )
+                retry_text = claude_retry.content[0].text.strip()
+                if retry_text:
+                    response_text = retry_text
+            except Exception as exc:
+                logger.debug("Guardrail retry failed: %s", exc)
+
         # ── Persist ────────────────────────────────────────────────────────
         conv = await save_conversation(
             user_id=self.user_id,

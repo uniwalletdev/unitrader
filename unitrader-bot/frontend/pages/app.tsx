@@ -601,22 +601,28 @@ function _LegacyDashboard({ user }: { user: User | null }) {
 function Chat({ user }: { user: User | null }) {
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [isNewUser, setIsNewUser] = useState(false);
+  const [bootstrapLoaded, setBootstrapLoaded] = useState(false);
+  const [hasExchangeConnected, setHasExchangeConnected] = useState<boolean | null>(null);
+  const [aiName, setAiName] = useState<string | null>(null);
 
-  const newUserWelcome = `Hi, I'm ${user?.ai_name || "Unitrader"} — your personal AI trader 👋\n\nHere's how to get started:\n\n1. Connect your exchange — go to the Exchanges tab and link Alpaca (free paper trading), Coinbase, Binance or OANDA. Your money always stays in your own account.\n\n2. Set your risk limit — head to Settings and set a daily loss limit so I know how much risk you're comfortable with.\n\n3. Ask me anything — I analyse markets constantly. Try asking: "What should I trade today?" or "Explain RSI to me" or "How does stop-loss work?"\n\nWhat would you like to do first?`;
+  const resolvedAiName = aiName || user?.ai_name || "Apex";
 
-  const returningWelcome = `Hi! I'm ${user?.ai_name || "your AI"}. I can help with market analysis, trade questions, performance reviews, and more. What would you like to know?`;
+  const connectedWelcome = `Hey. I'm ${resolvedAiName}.\n\nI'm already looking at your account snapshot right now.\n\nWhat do you want to check first?`;
 
-  const welcomeMsg: ChatMessage = {
-    role: "assistant",
-    content: isNewUser ? newUserWelcome : returningWelcome,
-  };
-  const [messages, setMessages] = useState<ChatMessage[]>([welcomeMsg]);
+  const notConnectedWelcome = `Hey. I'm ${resolvedAiName}.\n\nConnect an exchange in the Exchanges tab to unlock balances, open positions, and performance inside chat.\n\nUntil then, ask me anything about setups, risk, stop-loss, and how to build a plan.`;
+
+  const returningWelcome = `Hey — ${resolvedAiName} here. What do you want to do?`;
+
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    { role: "assistant", content: returningWelcome },
+  ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (historyLoaded) return;
+    if (!bootstrapLoaded) return;
     chatApi.history(50).then((res) => {
       const convos = res.data.data?.conversations || res.data.data || [];
       if (Array.isArray(convos) && convos.length > 0) {
@@ -633,17 +639,34 @@ function Chat({ user }: { user: User | null }) {
           setMessages([{ role: "assistant", content: returningWelcome }, ...past]);
         } else {
           setIsNewUser(true);
-          setMessages([{ role: "assistant", content: newUserWelcome }]);
+          const w = hasExchangeConnected ? connectedWelcome : notConnectedWelcome;
+          setMessages([{ role: "assistant", content: w }]);
         }
       } else {
         setIsNewUser(true);
-        setMessages([{ role: "assistant", content: newUserWelcome }]);
+        const w = hasExchangeConnected ? connectedWelcome : notConnectedWelcome;
+        setMessages([{ role: "assistant", content: w }]);
       }
     }).catch(() => {
       setIsNewUser(true);
-      setMessages([{ role: "assistant", content: newUserWelcome }]);
+      const w = hasExchangeConnected ? connectedWelcome : notConnectedWelcome;
+      setMessages([{ role: "assistant", content: w }]);
     }).finally(() => setHistoryLoaded(true));
-  }, [historyLoaded]);
+  }, [historyLoaded, bootstrapLoaded, hasExchangeConnected, resolvedAiName]);
+
+  useEffect(() => {
+    if (bootstrapLoaded) return;
+    chatApi.bootstrap()
+      .then((res) => {
+        const d = res.data?.data || {};
+        setAiName((d.ai_name || "").toString() || null);
+        setHasExchangeConnected(Boolean(d.has_exchange_connected));
+      })
+      .catch(() => {
+        setHasExchangeConnected(false);
+      })
+      .finally(() => setBootstrapLoaded(true));
+  }, [bootstrapLoaded]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -667,7 +690,10 @@ function Chat({ user }: { user: User | null }) {
     setLoading(false);
   };
 
-  const SUGGESTIONS = ["Analyse BTC right now", "Show my performance", "What is RSI?", "Am I taking too much risk?"];
+  const SUGGESTIONS = (hasExchangeConnected
+    ? ["What's my balance right now?", "Show my open positions", "Show my performance", "Am I taking too much risk?"]
+    : ["How do I connect an exchange?", "What can you do for me?", "Explain stop-loss like I'm new", "Help me set a risk limit"]
+  );
 
   return (
     <div className="flex h-full flex-col gap-3 animate-fade-in">
@@ -711,7 +737,7 @@ function Chat({ user }: { user: User | null }) {
                     <span className="h-1.5 w-1.5 rounded-full bg-brand-400 animate-pulse" style={{ animationDelay: "150ms" }} />
                     <span className="h-1.5 w-1.5 rounded-full bg-brand-400 animate-pulse" style={{ animationDelay: "300ms" }} />
                   </span>
-                  {user?.ai_name || "AI"} is thinking
+                  {resolvedAiName} is thinking
                 </span>
               </div>
             </div>

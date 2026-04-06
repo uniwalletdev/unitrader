@@ -3,6 +3,7 @@ routers/chat.py — Chat API endpoints for Unitrader.
 
 Endpoints:
     POST /api/chat/message      — Send a message and get an AI response
+    GET  /api/chat/bootstrap    — Lightweight bootstrap for chat UI (connection state, ai_name)
     GET  /api/chat/history      — Retrieve conversation history
     GET  /api/chat/sentiment    — Analyse message sentiment
     POST /api/chat/rate         — Rate a conversation as helpful/not helpful
@@ -71,6 +72,43 @@ def _normalize_action_symbol(tag: str) -> tuple[str, str]:
     if re.match(r"^[A-Z0-9]{2,20}$", compact):
         return compact, "binance"
     return u.replace("-", "/") if "-" in u else u, "alpaca"
+
+
+# ─────────────────────────────────────────────
+# GET /api/chat/bootstrap
+# ─────────────────────────────────────────────
+
+@router.get("/bootstrap")
+async def chat_bootstrap(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return lightweight chat UI bootstrap (no messages).
+
+    Used by the web chat to render the correct welcome + suggestions based on:
+    - whether at least one exchange key is connected (balances/positions available)
+    - the user's personalised AI name
+    """
+    from src.agents.shared_memory import SharedMemory
+
+    ctx = await SharedMemory.load(current_user.id, db)
+    ai_name = (ctx.ai_name or ctx.apex_name or "Apex").strip() or "Apex"
+    accounts = ctx.trading_accounts or []
+    has_exchange_connected = len(accounts) > 0
+    exchanges = []
+    for a in accounts[:5]:
+        ex = str(a.get("exchange") or "unknown").lower()
+        exchanges.append(ex)
+
+    return {
+        "status": "success",
+        "data": {
+            "ai_name": ai_name,
+            "has_exchange_connected": has_exchange_connected,
+            "connected_exchanges": exchanges,
+            "onboarding_complete": bool(getattr(ctx, "onboarding_complete", False)),
+        },
+    }
 
 
 async def process_chat_response(
