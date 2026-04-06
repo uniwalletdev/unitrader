@@ -84,6 +84,20 @@ export function useSignalStack(
   const { mode } = state;
 
   const loadStack = useCallback(async () => {
+    // Guard: do not call the API without a trading_account_id
+    if (!opts?.tradingAccountId) {
+      setState((prev) => ({
+        ...prev,
+        signals: [],
+        isLoading: false,
+        isRefreshing: false,
+        lastScanAt: null,
+        nextScanInMinutes: null,
+        assetsScanned: 0,
+        error: null,
+      }));
+      return;
+    }
     setState((prev) => ({
       ...prev,
       isRefreshing: !prev.isLoading,
