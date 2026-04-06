@@ -16,11 +16,12 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 from typing import Literal
+from typing import Optional
 
 import anthropic
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -98,6 +99,150 @@ FORMATTING RULES:
 - No length restriction but be concise and purposeful.
 """
 
+
+def _action_tags_instruction() -> str:
+    return """
+
+ACTION TAGS:
+When the user's intent clearly calls for a specific action, embed ONE
+action tag in your response using these exact formats:
+
+For market analysis:
+<ACTION type="ANALYSE" asset="SYMBOL" exchange="alpaca|coinbase|oanda" />
+
+For placing or staging a trade:
+<ACTION type="TRADE" asset="SYMBOL" direction="buy|sell" amount="NUMBER"
+exchange="alpaca|coinbase|oanda" confidence="0.0-1.0" />
+
+For setting a price alert:
+<ACTION type="ALERT" asset="SYMBOL" condition="above|below"
+price="NUMBER" exchange="alpaca|coinbase|oanda" />
+
+RULES FOR USING ACTION TAGS:
+- Only embed a tag when the user's intent is unambiguous
+- Never embed a TRADE tag without high confidence (>=0.75)
+- Always include the tag inline within your natural response text,
+  not at the start or end alone
+- Only use ONE action tag per response
+- For stocks use exchange="alpaca", for crypto use exchange="coinbase"
+- Use the raw ticker symbol for asset (AAPL not Apple, BTC not Bitcoin)
+- If uncertain, ask a clarifying question instead of guessing
+- Never fabricate prices or confidence scores
+"""
+
+
+def parse_action_tag(response_text: str) -> tuple[str, Optional[dict]]:
+    """Extract an <ACTION ... /> tag from the response text (best-effort)."""
+    try:
+        pattern = r'<ACTION\s+(.*?)/>'
+        match = re.search(pattern, response_text, re.DOTALL)
+        if not match:
+            return response_text, None
+
+        attr_pattern = r'(\w+)="([^"]*)"'
+        attrs = dict(re.findall(attr_pattern, match.group(1)))
+
+        clean_text = re.sub(pattern, "", response_text, flags=re.DOTALL).strip()
+        clean_text = re.sub(r"\n{3,}", "\n\n", clean_text).strip()
+
+        action = {
+            "type": attrs.get("type"),
+            "asset": attrs.get("asset"),
+            "exchange": attrs.get("exchange"),
+            "direction": attrs.get("direction"),
+            "amount": attrs.get("amount"),
+            "confidence": float(attrs.get("confidence", 0) or 0),
+            "condition": attrs.get("condition"),
+            "price": attrs.get("price"),
+        }
+        return clean_text, action
+    except Exception:
+        return response_text, None
+
+
+async def dispatch_action(
+    *,
+    action: dict,
+    user_id: str,
+    shared_context: SharedContext,
+    db: AsyncSession | None,
+    channel: Channel,
+) -> Optional[str]:
+    """Dispatch a parsed action tag (best-effort, never blocks the response)."""
+    try:
+        action_type = (action.get("type") or "").upper()
+        asset = action.get("asset")
+        exchange = action.get("exchange")
+
+        if action_type == "ANALYSE":
+            from src.agents.core.trading_agent import TradingAgent
+
+            ta = TradingAgent(user_id=user_id)
+            analysis = await ta.analyze(symbol=asset, exchange=exchange, context=shared_context)
+            # Best-effort stringify (TradeAnalysis is a pydantic model in this codebase)
+            try:
+                return analysis.model_dump_json(indent=2)  # type: ignore[attr-defined]
+            except Exception:
+                return str(analysis)
+
+        if action_type == "TRADE":
+            conf = float(action.get("confidence") or 0)
+            direction = action.get("direction")
+            amount = action.get("amount")
+
+            if conf < 0.75:
+                return (
+                    f"My confidence on this trade is only {int(conf * 100)}% — not enough to proceed. "
+                    "I’ll keep watching and let you know if conditions improve."
+                )
+
+            trust_stage = int(getattr(shared_context, "trust_ladder_stage", 1) or 1)
+            if trust_stage < 2:
+                return (
+                    f"You're currently on Trust Ladder Stage {trust_stage}. "
+                    "Complete paper trading milestones first to unlock live trade execution."
+                )
+
+            # This repo does not expose a safe 'stage_trade' API on TradingAgent.
+            # Return a safe, user-facing next step instead of attempting execution here.
+            amt = f" {amount}" if amount else ""
+            return (
+                f"Trade noted: {str(direction).upper()} {asset}{amt} on {exchange}. "
+                "To place it, go to the AI Trader tab (or tell me your exact notional and account)."
+            )
+
+        if action_type == "ALERT":
+            condition = action.get("condition")
+            price = action.get("price")
+            if not (asset and exchange and condition and price):
+                return "I couldn't set that alert — I’m missing a price/condition. Tell me: above/below what price?"
+
+            if db is not None:
+                await db.execute(
+                    text(
+                        """
+                        INSERT INTO price_alerts (user_id, asset, exchange, condition, target_price, active)
+                        VALUES (:user_id, :asset, :exchange, :condition, :target_price, true)
+                        """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "asset": asset,
+                        "exchange": exchange,
+                        "condition": condition,
+                        "target_price": float(price),
+                    },
+                )
+                await db.commit()
+
+            direction_word = "rises above" if condition == "above" else "falls below"
+            return f"Alert set. I'll notify you when {asset} {direction_word} {price}."
+
+    except Exception as exc:
+        logger.warning("dispatch_action failed: %s", exc)
+        return "I tried to run that action but hit an error. Please try again."
+
+    return None
 
 async def _save_onboarding_messages(
     *,
@@ -886,6 +1031,8 @@ class ConversationAgent:
         system_prompt = build_system_prompt(shared_ctx, ch)
         # Append channel-specific formatting instructions (never replace base prompt).
         system_prompt = system_prompt + _format_instruction_for_channel(ch)
+        # Append action-tag instruction AFTER formatting block.
+        system_prompt = system_prompt + _action_tags_instruction()
 
         if context == AI_PERFORMANCE:
             async with AsyncSessionLocal() as _db2:
@@ -949,6 +1096,23 @@ class ConversationAgent:
                     response_text = retry_text
             except Exception as exc:
                 logger.debug("Guardrail retry failed: %s", exc)
+
+        # ── ACTION TAGS: parse + dispatch (never show raw tags) ─────────────
+        clean_response, action = parse_action_tag(response_text)
+        supplementary = None
+        if action and action.get("type"):
+            supplementary = await dispatch_action(
+                action=action,
+                user_id=self.user_id,
+                shared_context=shared_ctx,
+                db=db,
+                channel=ch,
+            )
+        response_text = (
+            f"{clean_response}\n\n{supplementary}".strip()
+            if supplementary
+            else clean_response
+        )
 
         # ── Persist ────────────────────────────────────────────────────────
         conv = await save_conversation(
@@ -1036,6 +1200,7 @@ class ConversationAgent:
 
         system_prompt = build_system_prompt(shared_ctx, ch)
         system_prompt = system_prompt + _format_instruction_for_channel(ch)
+        system_prompt = system_prompt + _action_tags_instruction()
 
         if context == AI_PERFORMANCE:
             async with AsyncSessionLocal() as _db2:
@@ -1056,6 +1221,9 @@ class ConversationAgent:
         messages = [*history, {"role": "user", "content": user_message}]
 
         full_response = ""
+        # Prevent raw <ACTION .../> tags from ever being streamed to the user.
+        in_action_tag = False
+        action_buf = ""
         max_out = _MAX_TOKENS
 
         try:
@@ -1066,8 +1234,35 @@ class ConversationAgent:
                 messages=messages,
             ) as stream:
                 async for text in stream.text_stream:
+                    if not text:
+                        continue
                     full_response += text
-                    yield text
+
+                    chunk = text
+                    while chunk:
+                        if in_action_tag:
+                            action_buf += chunk
+                            end_idx = action_buf.find("/>")
+                            if end_idx != -1:
+                                # Discard the full tag content.
+                                remainder = action_buf[end_idx + 2 :]
+                                action_buf = ""
+                                in_action_tag = False
+                                chunk = remainder
+                                continue
+                            break
+
+                        start_idx = chunk.find("<ACTION")
+                        if start_idx == -1:
+                            yield chunk
+                            break
+
+                        # Yield text before the tag, then enter tag mode.
+                        if start_idx > 0:
+                            yield chunk[:start_idx]
+                        in_action_tag = True
+                        action_buf = chunk[start_idx:]
+                        chunk = ""
         except Exception as exc:
             logger.error("Claude streaming error in ConversationAgent: %s", exc)
             # Let the caller show partial output; append a short notice.
@@ -1075,12 +1270,29 @@ class ConversationAgent:
                 yield "Response interrupted. Please try again."
             return
 
+        # ACTION TAGS: parse + dispatch after stream completes (append supplementary).
+        clean_response, action = parse_action_tag(full_response)
+        supplementary = None
+        if action and action.get("type"):
+            supplementary = await dispatch_action(
+                action=action,
+                user_id=self.user_id,
+                shared_context=shared_context,
+                db=db,
+                channel=ch,
+            )
+        final_response = (
+            f"{clean_response}\n\n{supplementary}".strip()
+            if supplementary
+            else clean_response
+        )
+
         # Persist after successful stream completion
         try:
             await save_conversation(
                 user_id=self.user_id,
                 message=user_message,
-                response=full_response,
+                response=final_response,
                 context=context,
                 sentiment=sentiment,
                 db=db,
@@ -1088,7 +1300,7 @@ class ConversationAgent:
             await _save_onboarding_messages(
                 user_id=self.user_id,
                 user_message=user_message,
-                assistant_message=full_response,
+                assistant_message=final_response,
                 db=db,
             )
         except Exception as exc:
@@ -1533,6 +1745,7 @@ class ConversationAgent:
         ch = _normalize_channel(str(channel))
         system_prompt = build_system_prompt(shared_ctx, ch)
         system_prompt = system_prompt + _format_instruction_for_channel(ch)
+        system_prompt = system_prompt + _action_tags_instruction()
 
         # Performance injection unchanged
         if context == AI_PERFORMANCE:
@@ -1583,6 +1796,23 @@ class ConversationAgent:
             r = self._fallback_response(message, reason=str(exc))
             r.update({"context_used": context_used, "suggested_actions": None, "market_data_freshness": None})
             return r
+
+        # ACTION TAGS: parse + dispatch (never show raw tags)
+        clean_response, action = parse_action_tag(response_text)
+        supplementary = None
+        if action and action.get("type"):
+            supplementary = await dispatch_action(
+                action=action,
+                user_id=self.user_id,
+                shared_context=shared_ctx,
+                db=None,
+                channel=ch,
+            )
+        response_text = (
+            f"{clean_response}\n\n{supplementary}".strip()
+            if supplementary
+            else clean_response
+        )
 
         # Persist conversation (same as respond)
         conv = await save_conversation(
