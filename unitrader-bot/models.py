@@ -336,6 +336,10 @@ class TradingAccount(TimestampMixin, Base):
     last_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    last_known_balance_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_balance_synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # ── Per-account automation settings (Full Auto) ─────────────────────────
     # These MUST be per trading_account_id so multiple accounts can run concurrently.

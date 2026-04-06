@@ -21,7 +21,7 @@ from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from models import Conversation, ExchangeAPIKey, Trade, User, UserSettings
+from models import Conversation, ExchangeAPIKey, Trade, TradingAccount, User, UserSettings
 from security import decrypt_api_key
 from src.integrations.exchange_client import get_exchange_client
 from src.market_context import MarketContext, resolve_market_context
@@ -254,13 +254,24 @@ class SharedMemory:
             )
 
     @staticmethod
-    async def _fetch_one_account_balance(k: ExchangeAPIKey) -> dict:
-        """Single connected exchange row with a live balance fetch (best-effort)."""
+    async def _fetch_one_account_balance(
+        k: ExchangeAPIKey,
+        account: TradingAccount | None,
+        db: AsyncSession,
+        *,
+        now: datetime,
+    ) -> dict:
+        """Single connected exchange row with a live balance fetch (best-effort).
+
+        Persists last-known balances on TradingAccount and falls back to them when
+        the live fetch fails.
+        """
         entry = {
             "exchange": (k.exchange or "unknown").lower(),
             "is_paper": bool(k.is_paper),
             "balance_usd": 0.0,
             "balance_error": None,
+            "balance_note": None,
         }
         try:
             api_key, api_secret = decrypt_api_key(
@@ -272,6 +283,11 @@ class SharedMemory:
             bal = await client.get_account_balance()
             await client.aclose()
             entry["balance_usd"] = round(float(bal), 2)
+            entry["balance_note"] = "live"
+            if account is not None:
+                account.last_known_balance_usd = float(entry["balance_usd"])
+                account.last_balance_synced_at = now
+                account.last_synced_at = now
         except Exception as exc:
             logger.warning(
                 "Balance fetch failed for %s (key %s): %s",
@@ -280,26 +296,50 @@ class SharedMemory:
                 exc,
             )
             entry["balance_error"] = "unavailable"
+            if account is not None and account.last_known_balance_usd is not None:
+                entry["balance_usd"] = float(account.last_known_balance_usd)
+                if account.last_balance_synced_at is not None:
+                    age_s = (now - account.last_balance_synced_at).total_seconds()
+                    mins = max(int(age_s // 60), 0)
+                    entry["balance_note"] = f"cached (last synced {mins}m ago)"
+                else:
+                    entry["balance_note"] = "cached"
+            else:
+                entry["balance_note"] = "not synced"
         return entry
 
     @staticmethod
     async def _fetch_trading_accounts_snapshot(user_id: str, db: AsyncSession) -> list[dict]:
         """Active exchange keys for chat context with live balances (parallel, cached 60s)."""
         try:
+            now = datetime.now(timezone.utc)
             result = await db.execute(
-                select(ExchangeAPIKey).where(
+                select(ExchangeAPIKey, TradingAccount)
+                .outerjoin(
+                    TradingAccount,
+                    ExchangeAPIKey.trading_account_id == TradingAccount.id,
+                )
+                .where(
                     ExchangeAPIKey.user_id == user_id,
                     ExchangeAPIKey.is_active == True,  # noqa: E712
                 )
             )
-            keys = result.scalars().all()
-            if not keys:
+            rows: list[tuple[ExchangeAPIKey, TradingAccount | None]] = list(result.all())
+            if not rows:
                 return []
-            return list(
+            out = list(
                 await asyncio.gather(
-                    *[SharedMemory._fetch_one_account_balance(k) for k in keys]
+                    *[
+                        SharedMemory._fetch_one_account_balance(k, acct, db, now=now)
+                        for (k, acct) in rows
+                    ]
                 )
             )
+            try:
+                await db.commit()
+            except Exception:
+                await db.rollback()
+            return out
         except Exception as exc:
             logger.warning("trading_accounts snapshot failed for %s: %s", user_id, exc)
             return []

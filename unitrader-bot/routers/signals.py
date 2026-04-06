@@ -269,15 +269,28 @@ async def update_trading_account_settings(
 async def get_apex_selects_shortlist(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    trading_account_id: str = Query(...),
+    trading_account_id: str | None = Query(default=None),
 ):
-    market_ctx = await resolve_market_context(
-        db=db, user_id=current_user.id, trading_account_id=trading_account_id
-    )
     settings_result = await db.execute(
         select(UserSettings).where(UserSettings.user_id == current_user.id)
     )
     settings = settings_result.scalar_one_or_none() or UserSettings(user_id=current_user.id)
+
+    if trading_account_id is None:
+        trading_account_id = getattr(settings, "preferred_trading_account_id", None)
+    if trading_account_id is None:
+        return {"status": "success", "data": {"signals": []}}
+
+    try:
+        market_ctx = await resolve_market_context(
+            db=db, user_id=current_user.id, trading_account_id=trading_account_id
+        )
+    except HTTPException as exc:
+        # Treat missing/invalid account selection as an empty state (not an error)
+        if exc.status_code in (400, 404):
+            return {"status": "success", "data": {"signals": []}}
+        raise
+
     threshold = settings.apex_selects_threshold or 75
     max_trades = settings.apex_selects_max_trades or 2
     allowed = settings.apex_selects_asset_classes or ["stocks", "crypto"]

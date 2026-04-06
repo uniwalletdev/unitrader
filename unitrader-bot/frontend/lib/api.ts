@@ -175,6 +175,7 @@ export interface AccountBalance {
   connected_at: string | null;
   last_used: string | null;
   balance: number | null;
+  balance_note?: string | null;
   currency: string;
   error: string | null;
 }

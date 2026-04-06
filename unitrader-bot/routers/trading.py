@@ -536,25 +536,29 @@ async def get_account_balances(
     # IMPORTANT: avoid async lazy-loading relationships inside this endpoint.
     # MissingGreenlet happens when any code path triggers a relationship load.
     result = await db.execute(
-        select(ExchangeAPIKey, TradingAccount.account_label)
+        select(ExchangeAPIKey, TradingAccount)
         .outerjoin(TradingAccount, ExchangeAPIKey.trading_account_id == TradingAccount.id)
         .where(
             ExchangeAPIKey.user_id == current_user.id,
             ExchangeAPIKey.is_active == True,  # noqa: E712
         )
     )
-    key_rows: list[tuple[ExchangeAPIKey, str | None]] = list(result.all())
+    key_rows: list[tuple[ExchangeAPIKey, TradingAccount | None]] = list(result.all())
+    now = datetime.now(timezone.utc)
 
-    async def _fetch_one(k: ExchangeAPIKey, account_label: str | None) -> dict:
+    async def _fetch_one(k: ExchangeAPIKey, acct: TradingAccount | None) -> dict:
         entry = {
             "trading_account_id": k.trading_account_id,
             "exchange": k.exchange,
-            "account_label": account_label or _account_label(k.exchange, k.is_paper),
+            "account_label": (
+                (acct.account_label if acct else None) or _account_label(k.exchange, k.is_paper)
+            ),
             "is_paper": k.is_paper,
             "connected_at": k.created_at.isoformat() if k.created_at else None,
             "last_used": k.last_used_at.isoformat() if k.last_used_at else None,
             "balance": None,
             "currency": "USD",
+            "balance_note": None,
             "error": None,
         }
         try:
@@ -567,6 +571,11 @@ async def get_account_balances(
             balance = await client.get_account_balance()
             await client.aclose()
             entry["balance"] = round(balance, 2)
+            entry["balance_note"] = "live"
+            if acct is not None:
+                acct.last_known_balance_usd = float(entry["balance"])
+                acct.last_balance_synced_at = now
+                acct.last_synced_at = now
             if k.exchange == "oanda":
                 entry["currency"] = "GBP"
         except Exception as exc:
@@ -575,9 +584,21 @@ async def get_account_balances(
                 k.exchange, current_user.id, exc,
             )
             entry["error"] = str(exc)
+            if acct is not None and acct.last_known_balance_usd is not None:
+                entry["balance"] = float(acct.last_known_balance_usd)
+                if acct.last_balance_synced_at is not None:
+                    age_s = (now - acct.last_balance_synced_at).total_seconds()
+                    mins = max(int(age_s // 60), 0)
+                    entry["balance_note"] = f"cached (last synced {mins}m ago)"
+                else:
+                    entry["balance_note"] = "cached"
         return entry
 
-    items = await asyncio.gather(*[_fetch_one(k, label) for (k, label) in key_rows])
+    items = await asyncio.gather(*[_fetch_one(k, acct) for (k, acct) in key_rows])
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
 
     return {"status": "success", "data": list(items)}
 

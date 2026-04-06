@@ -361,6 +361,10 @@ export default function PerformancePage() {
                       )}
                     >
                       {account.account_label || `${account.exchange} ${account.is_paper ? "paper" : "live"}`}
+                      {typeof (account as any).balance_note === "string" &&
+                        (account as any).balance_note.toLowerCase().includes("cached") && (
+                        <span className="ml-2 text-[10px] text-dark-500">(cached)</span>
+                      )}
                     </button>
                   );
                 })}

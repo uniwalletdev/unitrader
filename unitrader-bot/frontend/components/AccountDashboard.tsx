@@ -57,6 +57,7 @@ type Account = {
   mode: Mode;
   status: AccountStatus;
   balance: number;
+  balanceNote?: string | null;
   currency: string;
   apexActive: boolean;
   pnl: number;
@@ -219,6 +220,7 @@ export default function AccountDashboard() {
         const id = b.trading_account_id ?? `${b.exchange}-${mode}`;
         const currency = b.currency || "USD";
         const balance = b.balance ?? 0;
+        const balanceNote = (b as any).balance_note ?? null;
         const perf: PerformanceData = perfResults[index] ?? {};
         const accountTrades = allTrades.filter((trade) => {
           if (b.trading_account_id && trade.trading_account_id) {
@@ -239,6 +241,7 @@ export default function AccountDashboard() {
           mode,
           status: b.error ? "error" as AccountStatus : "connected" as AccountStatus,
           balance,
+          balanceNote,
           currency,
           apexActive: true,
           pnl: Math.round(accountPnl * 100) / 100,
@@ -563,6 +566,11 @@ export default function AccountDashboard() {
                         {account.status}
                       </span>
                     </div>
+                    {account.balanceNote && (
+                      <div className="mt-1 text-[10px] text-slate-500">
+                        {account.balanceNote}
+                      </div>
+                    )}
                     {(account.exchange === "Coinbase" || account.exchange === "Kraken") && (
                       <p className="mt-2 text-left text-[10px] leading-snug text-slate-500">
                         Real balance — your own {account.exchange} account
@@ -647,12 +655,18 @@ export default function AccountDashboard() {
             </div>
 
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              <MetricCard
-                icon={<Wallet className="h-4 w-4" />}
-                label="Balance"
-                value={formatCurrency(selectedAccount.balance, selectedAccount.currency)}
-                tone="text-sky-300"
-              />
+              <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+                <div className="flex items-center gap-2 text-xs uppercase tracking-[0.14em] text-slate-500">
+                  <Wallet className="h-4 w-4" />
+                  Balance
+                </div>
+                <div className="mt-1.5 text-base font-semibold text-sky-300">
+                  {formatCurrency(selectedAccount.balance, selectedAccount.currency)}
+                </div>
+                {selectedAccount.balanceNote && (
+                  <div className="mt-1 text-xs text-slate-500">{selectedAccount.balanceNote}</div>
+                )}
+              </div>
               <MetricCard
                 icon={<BarChart3 className="h-4 w-4" />}
                 label="P&L"

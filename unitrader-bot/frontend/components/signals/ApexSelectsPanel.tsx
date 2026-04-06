@@ -93,11 +93,11 @@ export default function BotSelectsPanel({
         max_trades: String(m),
         asset_classes: ac.join(","),
       });
-      // Backend now scopes Apex Selects to a specific trading account.
-      // If it's missing, the endpoint returns 422.
+      // trading_account_id is optional; backend falls back to preferred account.
       if (tradingAccountId) params.set("trading_account_id", tradingAccountId);
       const res = await api.get(`/api/signals/apex-selects?${params}`);
-      setShortlist(res.data?.signals ?? []);
+      const payload = res.data?.data ?? res.data ?? {};
+      setShortlist(payload?.signals ?? []);
     } catch {
       setShortlist([]);
     } finally {
