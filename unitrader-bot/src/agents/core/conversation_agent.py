@@ -46,6 +46,34 @@ _CLAUDE_MODEL = "claude-3-haiku-20240307"
 _MAX_TOKENS = 1024
 _HISTORY_TURNS = 10  # number of past exchanges to include
 
+
+async def _save_onboarding_messages(
+    *,
+    user_id: str,
+    user_message: str,
+    assistant_message: str,
+    db: AsyncSession | None,
+) -> None:
+    """Persist user+assistant messages into onboarding_messages for chat history injection."""
+    async def _save(session: AsyncSession) -> None:
+        session.add_all(
+            [
+                OnboardingMessage(user_id=user_id, role="user", content=user_message),
+                OnboardingMessage(user_id=user_id, role="assistant", content=assistant_message),
+            ]
+        )
+        await session.flush()
+
+    try:
+        if db is not None:
+            await _save(db)
+            return
+        async with AsyncSessionLocal() as session:
+            await _save(session)
+            await session.commit()
+    except Exception as exc:
+        logger.warning("Failed to persist onboarding_messages history: %s", exc)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Trader Class Detection
 # ─────────────────────────────────────────────────────────────────────────────
@@ -874,6 +902,13 @@ class ConversationAgent:
             response=response_text,
             context=context,
             sentiment=sentiment,
+            db=db,
+        )
+        # Also persist to onboarding_messages so router can inject last 10 turns.
+        await _save_onboarding_messages(
+            user_id=self.user_id,
+            user_message=user_message,
+            assistant_message=response_text,
             db=db,
         )
 

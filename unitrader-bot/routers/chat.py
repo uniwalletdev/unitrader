@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import Conversation
+from models import Conversation, OnboardingMessage
 from routers.auth import get_current_user
 from src.agents.core.conversation_agent import (
     ConversationAgent,
@@ -217,17 +217,16 @@ async def send_message(
         # Inject last 10 turns (max 20 messages) of history for continuity.
         history_rows = (
             await db.execute(
-                select(Conversation)
-                .where(Conversation.user_id == current_user.id)
-                .order_by(Conversation.created_at.desc())
+                select(OnboardingMessage)
+                .where(OnboardingMessage.user_id == current_user.id)
+                .order_by(OnboardingMessage.created_at.desc())
                 .limit(20)
             )
         ).scalars().all()
         history_rows = list(reversed(list(history_rows)))  # oldest -> newest
-        conversation_history: list[dict[str, str]] = []
-        for conv in history_rows:
-            conversation_history.append({"role": "user", "content": conv.message})
-            conversation_history.append({"role": "assistant", "content": conv.response})
+        conversation_history: list[dict[str, str]] = [
+            {"role": str(row.role), "content": str(row.content)} for row in history_rows
+        ]
         # Cap at 10 turns (20 messages) and trim from the oldest end if needed
         if len(conversation_history) > 20:
             conversation_history = conversation_history[-20:]
