@@ -282,8 +282,15 @@ async def _save_onboarding_messages(
     async def _save(session: AsyncSession) -> None:
         session.add_all(
             [
-                OnboardingMessage(user_id=user_id, role="user", content=user_message),
-                OnboardingMessage(user_id=user_id, role="assistant", content=assistant_message),
+                OnboardingMessage(
+                    id=uuid.uuid4(), user_id=user_id, role="user", content=user_message
+                ),
+                OnboardingMessage(
+                    id=uuid.uuid4(),
+                    user_id=user_id,
+                    role="assistant",
+                    content=assistant_message,
+                ),
             ]
         )
         # Do not flush() here. Flush triggers INSERT..RETURNING id for each row and can
