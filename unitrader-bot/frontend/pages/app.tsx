@@ -618,6 +618,7 @@ function Chat({ user }: { user: User | null }) {
   ]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [isTyping, setIsTyping] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -672,20 +673,68 @@ function Chat({ user }: { user: User | null }) {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  const TypingIndicator = () => (
+    <div className="typing-indicator">
+      <span />
+      <span />
+      <span />
+    </div>
+  );
+
   const send = async () => {
     const text = input.trim();
     if (!text || loading) return;
     setInput("");
     setMessages((m) => [...m, { role: "user", content: text }]);
     setLoading(true);
+    setIsTyping(true);
     try {
-      const res = await chatApi.sendMessage(text);
-      const d = res.data.data;
-      const content = d.message || d.response || "";
-      const contextLabel = d.context_label ?? undefined;
-      setMessages((m) => [...m, { role: "assistant", content, context: contextLabel }]);
+      const response = await fetch("/api/chat/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text }),
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error("stream_failed");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let assistantMessage = "";
+      let firstToken = true;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        if (!chunk) continue;
+
+        if (firstToken) {
+          setIsTyping(false);
+          setMessages((m) => [...m, { role: "assistant", content: "" }]);
+          firstToken = false;
+        }
+
+        assistantMessage += chunk;
+        setMessages((prev) => {
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (!last || last.role !== "assistant") return updated;
+          updated[updated.length - 1] = { ...last, content: assistantMessage };
+          return updated;
+        });
+      }
+
+      // If stream ended before any token arrived, clear typing and show fallback.
+      if (firstToken) {
+        setIsTyping(false);
+        setMessages((m) => [...m, { role: "assistant", content: "Response interrupted. Please try again." }]);
+      }
     } catch {
-      setMessages((m) => [...m, { role: "assistant", content: "I'm having trouble connecting. Please try again." }]);
+      setIsTyping(false);
+      setMessages((m) => [...m, { role: "assistant", content: "Response interrupted. Please try again." }]);
     }
     setLoading(false);
   };
@@ -742,6 +791,13 @@ function Chat({ user }: { user: User | null }) {
               </div>
             </div>
           )}
+          {isTyping && !loading && (
+            <div className="flex justify-start">
+              <div className="rounded-2xl bg-dark-800/60 border border-dark-800/80 text-[13px] text-dark-400">
+                <TypingIndicator />
+              </div>
+            </div>
+          )}
           <div ref={bottomRef} />
         </div>
       </div>
@@ -767,11 +823,34 @@ function Chat({ user }: { user: User | null }) {
           onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && send()}
           placeholder={`Message ${user?.ai_name || "your AI"}...`}
           className="input flex-1 text-[13px]"
+          disabled={loading}
         />
         <button onClick={send} disabled={!input.trim() || loading} className="btn-primary px-4 touch-target">
           <Send size={15} />
         </button>
       </div>
+
+      <style jsx>{`
+        .typing-indicator {
+          display: flex;
+          gap: 6px;
+          padding: 12px 16px;
+          align-items: center;
+        }
+        .typing-indicator span {
+          width: 8px;
+          height: 8px;
+          border-radius: 999px;
+          background: rgba(148, 163, 184, 0.9);
+          animation: typing-bounce 1.2s infinite;
+        }
+        .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+        .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typing-bounce {
+          0%, 60%, 100% { opacity: 0.2; transform: translateY(0); }
+          30% { opacity: 1; transform: translateY(-4px); }
+        }
+      `}</style>
     </div>
   );
 }

@@ -15,6 +15,7 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -183,6 +184,10 @@ class ChatMessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
 
 
+class ChatStreamRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
+
+
 class RateConversationRequest(BaseModel):
     conversation_id: str
     is_helpful: bool
@@ -261,6 +266,76 @@ async def send_message(
 
     # Keep the existing API contract: return the conversation payload directly.
     return {"status": "success", "data": result}
+
+
+# ─────────────────────────────────────────────
+# POST /api/chat/stream
+# ─────────────────────────────────────────────
+
+@router.post("/stream")
+async def chat_stream(
+    body: ChatStreamRequest,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Stream the assistant response token-by-token (web only).
+
+    Additive endpoint; does not change /api/chat/message.
+    """
+    from src.agents.shared_memory import SharedMemory
+
+    ctx = await SharedMemory.load(current_user.id, db)
+
+    # Build conversation_history from onboarding_messages (max 20), oldest -> newest
+    history_rows = (
+        await db.execute(
+            select(OnboardingMessage)
+            .where(OnboardingMessage.user_id == current_user.id)
+            .order_by(OnboardingMessage.created_at.desc())
+            .limit(20)
+        )
+    ).scalars().all()
+    history_rows = list(reversed(list(history_rows)))
+    conversation_history: list[dict[str, str]] = [
+        {"role": str(row.role), "content": str(row.content)} for row in history_rows
+    ]
+    if len(conversation_history) > 20:
+        conversation_history = conversation_history[-20:]
+
+    agent = ConversationAgent(user_id=current_user.id)
+
+    async def token_generator():
+        partial = ""
+        try:
+            if not ctx.onboarding_complete:
+                # Fallback: use existing onboarding chat route and yield once.
+                orchestrator = get_orchestrator()
+                res = await orchestrator.route(
+                    user_id=current_user.id,
+                    action="onboarding_chat",
+                    payload={"message": body.message, "channel": "web"},
+                    db=db,
+                )
+                text = (res.get("message") or res.get("response") or "").strip()
+                yield text
+                return
+
+            async for token in agent.generate_response_stream(
+                user_message=body.message,
+                shared_context=ctx,
+                conversation_history=conversation_history,
+                channel="web",
+                db=db,
+            ):
+                partial += token
+                yield token
+        except Exception:
+            if partial:
+                yield "\n\nResponse interrupted. Please try again."
+            else:
+                yield "Response interrupted. Please try again."
+
+    return StreamingResponse(token_generator(), media_type="text/plain")
 
 
 # ─────────────────────────────────────────────

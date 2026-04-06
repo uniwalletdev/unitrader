@@ -980,6 +980,120 @@ class ConversationAgent:
             "data_freshness": data_freshness,
         }
 
+    async def generate_response_stream(
+        self,
+        user_message: str,
+        shared_context: SharedContext,
+        conversation_history: list[dict[str, str]],
+        channel: Channel = "web",
+        db: AsyncSession | None = None,
+    ):
+        """Stream the assistant response token-by-token for web chat.
+
+        Additive to the existing non-streaming flow. Uses the same system prompt
+        construction (base prompt + channel formatting instructions) and the same
+        conversation history injection semantics (max 20 messages).
+        """
+        if not settings.anthropic_api_key:
+            # Yield once so the caller can render something.
+            yield self._fallback_response(user_message).get("response", "")
+            return
+
+        shared_ctx = shared_context
+        ch = _normalize_channel(channel)
+
+        # Detect context & sentiment (kept consistent with respond())
+        context = detect_context(user_message)
+        sentiment = analyze_sentiment(user_message)
+
+        # Live data injections (best-effort, matching respond())
+        assets = _extract_assets(user_message)
+        if not assets and _wants_broad_market_summary(user_message):
+            assets = [("SPY", "alpaca"), ("BTCUSDT", "binance")]
+
+        data_freshness: str | None = None
+        market_block = ""
+        if assets:
+            try:
+                market_block, data_freshness = await _build_market_data_block(assets)
+            except Exception as exc:
+                logger.warning("Market data injection failed: %s", exc)
+
+        marks_block = ""
+        if shared_ctx.open_positions:
+            try:
+                marks_block = await _build_open_positions_marks_block(shared_ctx.open_positions)
+            except Exception as exc:
+                logger.warning("Open position marks injection failed: %s", exc)
+
+        trading_engine_block = ""
+        try:
+            trading_engine_block = await self._build_trading_engine_context_block(
+                user_message, shared_ctx, context
+            )
+        except Exception as exc:
+            logger.warning("Trading engine context injection failed: %s", exc)
+
+        system_prompt = build_system_prompt(shared_ctx, ch)
+        system_prompt = system_prompt + _format_instruction_for_channel(ch)
+
+        if context == AI_PERFORMANCE:
+            async with AsyncSessionLocal() as _db2:
+                perf = await _get_performance_summary(self.user_id, _db2)
+            system_prompt += f"\n\nCURRENT PERFORMANCE DATA:\n{perf}"
+
+        if marks_block:
+            system_prompt += marks_block
+        if trading_engine_block:
+            system_prompt += trading_engine_block
+        if market_block:
+            system_prompt += market_block
+
+        history = list(conversation_history or [])
+        if len(history) > 20:
+            history = history[-20:]
+
+        messages = [*history, {"role": "user", "content": user_message}]
+
+        full_response = ""
+        max_out = _MAX_TOKENS
+
+        try:
+            async with self._claude.messages.stream(
+                model=settings.anthropic_model or _CLAUDE_MODEL,
+                max_tokens=max_out,
+                system=system_prompt,
+                messages=messages,
+            ) as stream:
+                async for text in stream.text_stream:
+                    full_response += text
+                    yield text
+        except Exception as exc:
+            logger.error("Claude streaming error in ConversationAgent: %s", exc)
+            # Let the caller show partial output; append a short notice.
+            if not full_response:
+                yield "Response interrupted. Please try again."
+            return
+
+        # Persist after successful stream completion
+        try:
+            await save_conversation(
+                user_id=self.user_id,
+                message=user_message,
+                response=full_response,
+                context=context,
+                sentiment=sentiment,
+                db=db,
+            )
+            await _save_onboarding_messages(
+                user_id=self.user_id,
+                user_message=user_message,
+                assistant_message=full_response,
+                db=db,
+            )
+        except Exception as exc:
+            logger.warning("Failed to persist streamed conversation: %s", exc)
+
     async def handle_message(
         self,
         *,
