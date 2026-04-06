@@ -23,6 +23,7 @@ from database import get_db
 from models import Conversation
 from routers.auth import get_current_user
 from src.agents.core.conversation_agent import (
+    ConversationAgent,
     _format_analyze_result_for_chat,
     _http_detail_str,
     _orchestrator_route,
@@ -206,24 +207,49 @@ async def send_message(
     - Refers to itself by your custom AI name
     - Saves the exchange to the database
     """
-    orchestrator = get_orchestrator()
-
     # Route to the correct agent based on whether onboarding is complete.
     # Onboarding-incomplete users get the tool-based profile-collection flow.
     # Everyone else gets the full trading conversation agent.
     from src.agents.shared_memory import SharedMemory
 
     ctx = await SharedMemory.load(current_user.id, db)
-    action = "chat" if ctx.onboarding_complete else "onboarding_chat"
+    if ctx.onboarding_complete:
+        # Inject last 10 turns (max 20 messages) of history for continuity.
+        history_rows = (
+            await db.execute(
+                select(Conversation)
+                .where(Conversation.user_id == current_user.id)
+                .order_by(Conversation.created_at.desc())
+                .limit(20)
+            )
+        ).scalars().all()
+        history_rows = list(reversed(list(history_rows)))  # oldest -> newest
+        conversation_history: list[dict[str, str]] = []
+        for conv in history_rows:
+            conversation_history.append({"role": "user", "content": conv.message})
+            conversation_history.append({"role": "assistant", "content": conv.response})
+        # Cap at 10 turns (20 messages) and trim from the oldest end if needed
+        if len(conversation_history) > 20:
+            conversation_history = conversation_history[-20:]
 
-    result = await orchestrator.route(
-        user_id=current_user.id,
-        action=action,
-        payload={"message": body.message, "channel": "web_app"},
-        db=db,
-    )
+        agent = ConversationAgent(user_id=current_user.id)
+        result = await agent.handle_message(
+            message=body.message,
+            context=ctx,
+            db=db,
+            conversation_history=conversation_history,
+            channel="web_app",
+        )
+    else:
+        orchestrator = get_orchestrator()
+        result = await orchestrator.route(
+            user_id=current_user.id,
+            action="onboarding_chat",
+            payload={"message": body.message, "channel": "web_app"},
+            db=db,
+        )
 
-    if ctx.onboarding_complete and action == "chat":
+    if ctx.onboarding_complete:
         raw = (result.get("response") or result.get("message") or "").strip()
         parsed = await process_chat_response(raw, ctx, body.message, db)
         result["response"] = parsed["response"]

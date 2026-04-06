@@ -669,6 +669,7 @@ class ConversationAgent:
         user_message: str,
         db: AsyncSession | None = None,
         shared_context: SharedContext | None = None,
+        conversation_history: list[dict[str, str]] | None = None,
         channel: str = "web_app",
     ) -> dict:
         """Process a user message and return an AI response.
@@ -789,9 +790,16 @@ class ConversationAgent:
             logger.warning("Trading engine context injection failed: %s", exc)
 
         # ── Build message history for Claude ──────────────────────────────
-        history = await get_recent_messages_for_claude(
-            self.user_id, limit=_HISTORY_TURNS, db=db
-        )
+        # If the router provides an explicit history list, prefer it (and cap to 10 turns / 20 msgs).
+        history: list[dict[str, str]]
+        if conversation_history is not None:
+            history = conversation_history
+            if len(history) > 20:
+                history = history[-20:]
+        else:
+            history = await get_recent_messages_for_claude(
+                self.user_id, limit=_HISTORY_TURNS, db=db
+            )
 
         # ── Shared context (accounts / positions) — production persona prompt ──
         system_prompt = build_system_prompt(shared_ctx, channel)
@@ -888,6 +896,7 @@ class ConversationAgent:
         message: str,
         context: SharedContext,
         db: AsyncSession | None = None,
+        conversation_history: list[dict[str, str]] | None = None,
         channel: str = "web_app",
     ) -> dict:
         """Preferred entry when SharedContext is already loaded (e.g. Orchestrator.route).
@@ -896,7 +905,11 @@ class ConversationAgent:
         orchestrator snapshot (including ``market_context`` when scoped by trading account).
         """
         return await self.respond(
-            message, db=db, shared_context=context, channel=channel
+            message,
+            db=db,
+            shared_context=context,
+            conversation_history=conversation_history,
+            channel=channel,
         )
 
     async def generate_first_message(self, context: SharedContext) -> str:
