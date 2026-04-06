@@ -7,6 +7,7 @@ Run with:  python -m uvicorn main:app --reload
 
 import asyncio
 import logging
+import os
 import secrets
 import sys
 import time
@@ -257,24 +258,30 @@ async def lifespan(app: FastAPI):
             "If using Supabase, also set SUPABASE_SERVICE_ROLE_KEY."
         )
 
-    # 4. Launch background loops
-    trading_task  = asyncio.create_task(_trading_loop(),             name="trading_loop")
-    monitor_task  = asyncio.create_task(monitor_loop(),              name="monitor_loop")
-    content_task  = asyncio.create_task(_content_scheduler(),        name="content_scheduler")
-    email_task    = asyncio.create_task(_email_scheduler(),          name="email_scheduler")
-    learning_task = asyncio.create_task(_learning_scheduler(),       name="learning_scheduler")
-    goals_task    = asyncio.create_task(_goals_scheduler(),          name="goals_scheduler")
-    full_auto_task = asyncio.create_task(full_auto_scanner_loop(),   name="full_auto_scanner_loop")
-    apex_selects_task = asyncio.create_task(apex_selects_scanner_loop(), name="apex_selects_scanner_loop")
-    morning_briefing_task = asyncio.create_task(morning_briefing_loop(), name="morning_briefing_loop")
-    daily_digest_task = asyncio.create_task(daily_digest_loop(),     name="daily_digest_loop")
-    logger.info(
-        "Background loops started "
-        "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly, goals=weekly@8am, full_auto=30min, apex_selects=30min, morning_briefing=hourly, daily_digest=8am)"
-    )
+    # 4. Launch background loops (skip in tests / CI to prevent hanging workers)
+    _disable_loops = bool(settings.disable_background_loops) or ("PYTEST_CURRENT_TEST" in os.environ)
+    if _disable_loops:
+        trading_task = monitor_task = content_task = email_task = learning_task = goals_task = None
+        full_auto_task = apex_selects_task = morning_briefing_task = daily_digest_task = None
+        logger.info("Background loops disabled (tests/CI mode)")
+    else:
+        trading_task  = asyncio.create_task(_trading_loop(),             name="trading_loop")
+        monitor_task  = asyncio.create_task(monitor_loop(),              name="monitor_loop")
+        content_task  = asyncio.create_task(_content_scheduler(),        name="content_scheduler")
+        email_task    = asyncio.create_task(_email_scheduler(),          name="email_scheduler")
+        learning_task = asyncio.create_task(_learning_scheduler(),       name="learning_scheduler")
+        goals_task    = asyncio.create_task(_goals_scheduler(),          name="goals_scheduler")
+        full_auto_task = asyncio.create_task(full_auto_scanner_loop(),   name="full_auto_scanner_loop")
+        apex_selects_task = asyncio.create_task(apex_selects_scanner_loop(), name="apex_selects_scanner_loop")
+        morning_briefing_task = asyncio.create_task(morning_briefing_loop(), name="morning_briefing_loop")
+        daily_digest_task = asyncio.create_task(daily_digest_loop(),     name="daily_digest_loop")
+        logger.info(
+            "Background loops started "
+            "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly, goals=weekly@8am, full_auto=30min, apex_selects=30min, morning_briefing=hourly, daily_digest=8am)"
+        )
 
     # 5. Initialise Telegram bot (optional — disabled if token not set)
-    if settings.telegram_enabled:
+    if (not _disable_loops) and settings.telegram_enabled:
         try:
             from src.integrations.telegram_bot import TelegramBotService
             _tg_bot = TelegramBotService(token=settings.telegram_bot_token)
@@ -307,7 +314,7 @@ async def lifespan(app: FastAPI):
     logger.info("Unitrader notifications engine initialised")
 
     # 6. Initialise WhatsApp bot (optional — disabled if Twilio creds not set)
-    if settings.whatsapp_enabled:
+    if (not _disable_loops) and settings.whatsapp_enabled:
         try:
             from src.integrations.whatsapp_bot import WhatsAppBotService
             _wa_bot = WhatsAppBotService(
@@ -354,19 +361,22 @@ async def lifespan(app: FastAPI):
         morning_briefing_task,
         daily_digest_task,
     ):
-        task.cancel()
+        if task is not None:
+            task.cancel()
     try:
         await asyncio.gather(
-            trading_task,
-            monitor_task,
-            content_task,
-            email_task,
-            learning_task,
-            goals_task,
-            full_auto_task,
-            apex_selects_task,
-            morning_briefing_task,
-            daily_digest_task,
+            *[t for t in (
+                trading_task,
+                monitor_task,
+                content_task,
+                email_task,
+                learning_task,
+                goals_task,
+                full_auto_task,
+                apex_selects_task,
+                morning_briefing_task,
+                daily_digest_task,
+            ) if t is not None],
             return_exceptions=True,
         )
     except Exception:

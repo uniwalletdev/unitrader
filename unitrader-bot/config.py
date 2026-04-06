@@ -228,6 +228,14 @@ class Settings(BaseSettings):
     feature_email_verification: bool = True
     feature_stripe_billing: bool = False  # enable when Stripe is configured
     testing_mode: str = "false"  # Set to "true" to bypass trade limits
+    disable_background_loops: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "UNITRADER_DISABLE_BACKGROUND_LOOPS",
+            "DISABLE_BACKGROUND_LOOPS",
+            "disable_background_loops",
+        ),
+    )
 
     # ─────────────────────────────────────────────
     # Validators

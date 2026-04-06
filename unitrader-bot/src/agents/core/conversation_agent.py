@@ -285,7 +285,9 @@ async def _save_onboarding_messages(
                 OnboardingMessage(user_id=user_id, role="assistant", content=assistant_message),
             ]
         )
-        await session.flush()
+        # Do not flush() here. Flush triggers INSERT..RETURNING id for each row and can
+        # trip asyncpg/SQLAlchemy "sentinel values" mismatches when UUIDs are returned
+        # as native UUID types but were passed as strings. We don't need RETURNING ids.
 
     try:
         if db is not None:
