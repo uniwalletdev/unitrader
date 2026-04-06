@@ -187,7 +187,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
     setSubmitting(true);
     setMessage(null);
     try {
-      const isPaper = connectModes[exchangeId] ?? true;
+      const isPaper = exchangeId === "coinbase" ? false : (connectModes[exchangeId] ?? true);
       const res = await exchangeApi.connect(exchangeId, apiKey, apiSecret, isPaper);
       const payload = res.data.data;
       const balance = payload?.balance_usd;
@@ -215,8 +215,14 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
   };
 
   const handleDisconnect = async (connection: ConnectedExchange) => {
-    if (!confirm(`Disconnect ${connection.account_label || `${connection.exchange} ${connection.is_paper ? "paper" : "live"}`}? You can reconnect later.`)) return;
-    const targetId = connection.trading_account_id || `${connection.exchange}-${connection.is_paper ? "paper" : "live"}`;
+    const displayMode =
+      String(connection.exchange || "").toLowerCase() === "coinbase"
+        ? "live"
+        : connection.is_paper
+          ? "paper"
+          : "live";
+    if (!confirm(`Disconnect ${connection.account_label || `${connection.exchange} ${displayMode}`}? You can reconnect later.`)) return;
+    const targetId = connection.trading_account_id || `${connection.exchange}-${displayMode}`;
     setDisconnecting(targetId);
     setMessage(null);
     try {
@@ -224,7 +230,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
         trading_account_id: connection.trading_account_id || undefined,
         is_paper: connection.is_paper,
       });
-      setMessage({ type: "success", text: `${connection.account_label || `${connection.exchange} ${connection.is_paper ? "paper" : "live"}`} disconnected.` });
+      setMessage({ type: "success", text: `${connection.account_label || `${connection.exchange} ${displayMode}`} disconnected.` });
       await loadConnected();
     } catch {
       setMessage({ type: "error", text: "Failed to disconnect. Please try again." });
@@ -323,12 +329,18 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
               <div className="border-t border-dark-800 px-4 py-2">
                 <div className="space-y-2 text-[10px] text-dark-500">
                   {connInfo.map((connection) => {
-                    const targetId = connection.trading_account_id || `${connection.exchange}-${connection.is_paper ? "paper" : "live"}`;
+                    const displayMode =
+                      String(connection.exchange || "").toLowerCase() === "coinbase"
+                        ? "live"
+                        : connection.is_paper
+                          ? "paper"
+                          : "live";
+                    const targetId = connection.trading_account_id || `${connection.exchange}-${displayMode}`;
                     return (
                       <div key={targetId} className="flex items-center justify-between gap-3 rounded-lg border border-dark-800 bg-dark-900/40 px-2.5 py-2">
                         <div>
                           <div className="text-dark-300">
-                            {connection.account_label || `${exchange.name} ${connection.is_paper ? "paper" : "live"}`}
+                            {connection.account_label || `${exchange.name} ${displayMode}`}
                           </div>
                           <div>
                             Connected {connection.connected_at ? new Date(connection.connected_at).toLocaleDateString() : ""}
@@ -358,15 +370,21 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                     <div className="text-xs font-medium text-white">Connection mode</div>
                     <div className="text-[10px] text-dark-500">Keep paper and live accounts separate per exchange.</div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setConnectModes((prev) => ({ ...prev, [exchange.id]: !(prev[exchange.id] ?? true) }))
-                    }
-                    className="rounded-lg border border-dark-700 px-2.5 py-1 text-[11px] text-dark-200"
-                  >
-                    {(connectModes[exchange.id] ?? true) ? "Paper" : "Live"}
-                  </button>
+                  {exchange.id === "coinbase" ? (
+                    <span className="rounded-lg border border-dark-800 bg-dark-950 px-2.5 py-1 text-[11px] text-dark-400">
+                      Live
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setConnectModes((prev) => ({ ...prev, [exchange.id]: !(prev[exchange.id] ?? true) }))
+                      }
+                      className="rounded-lg border border-dark-700 px-2.5 py-1 text-[11px] text-dark-200"
+                    >
+                      {(connectModes[exchange.id] ?? true) ? "Paper" : "Live"}
+                    </button>
+                  )}
                 </div>
                 {exchange.id === "coinbase" ? (
                   <>

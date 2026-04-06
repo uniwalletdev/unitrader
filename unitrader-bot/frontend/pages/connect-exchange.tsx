@@ -274,13 +274,19 @@ export default function ConnectExchangePage() {
   };
 
   const handleDisconnect = async (connection: ConnectedExchange) => {
+    const displayMode =
+      String(connection.exchange || "").toLowerCase() === "coinbase"
+        ? "live"
+        : connection.is_paper
+          ? "paper"
+          : "live";
     const label =
       connection.account_label ||
-      `${connection.exchange} ${connection.is_paper ? "paper" : "live"}`;
+      `${connection.exchange} ${displayMode}`;
     if (!confirm(`Disconnect ${label}? You can reconnect later.`)) return;
     const targetId =
       connection.trading_account_id ||
-      `${connection.exchange}-${connection.is_paper ? "paper" : "live"}`;
+      `${connection.exchange}-${displayMode}`;
     setDisconnecting(targetId);
     setMessage(null);
     try {

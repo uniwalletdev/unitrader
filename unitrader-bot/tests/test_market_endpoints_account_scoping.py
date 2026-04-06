@@ -80,8 +80,8 @@ async def test_exchange_assets_resolves_exchange_from_trading_account_id(db: Asy
     acct = TradingAccount(
         user_id="market-user-1",
         exchange="coinbase",
-        is_paper=True,
-        account_label="Coinbase Paper",
+        is_paper=False,
+        account_label="Coinbase Live",
         is_active=True,
     )
     db.add(acct)
@@ -110,8 +110,8 @@ async def test_market_top_uses_account_exchange_for_cache_key(db: AsyncSession):
     acct = TradingAccount(
         user_id="market-user-2",
         exchange="coinbase",
-        is_paper=True,
-        account_label="Coinbase Paper",
+        is_paper=False,
+        account_label="Coinbase Live",
         is_active=True,
     )
     db.add(acct)

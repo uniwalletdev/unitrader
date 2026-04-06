@@ -1490,7 +1490,14 @@ function TradePage() {
                       >
                         {accounts.map((a) => (
                           <option key={a.trading_account_id} value={a.trading_account_id}>
-                            {a.account_label || `${a.exchange} ${a.is_paper ? "Paper" : "Live"}`}
+                            {a.account_label ||
+                              `${a.exchange} ${
+                                String(a.exchange || "").toLowerCase() === "coinbase"
+                                  ? "Live"
+                                  : a.is_paper
+                                    ? "Paper"
+                                    : "Live"
+                              }`}
                           </option>
                         ))}
                       </select>

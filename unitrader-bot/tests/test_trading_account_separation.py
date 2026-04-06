@@ -194,15 +194,15 @@ async def test_sync_preferred_heals_when_points_at_inactive_account(db: AsyncSes
     old = TradingAccount(
         user_id="heal-user-1",
         exchange="coinbase",
-        is_paper=True,
-        account_label="Coinbase Paper (old)",
+        is_paper=False,
+        account_label="Coinbase Live (old)",
         is_active=False,
     )
     new = TradingAccount(
         user_id="heal-user-1",
         exchange="coinbase",
-        is_paper=True,
-        account_label="Coinbase Paper (new)",
+        is_paper=False,
+        account_label="Coinbase Live (new)",
         is_active=True,
     )
     db.add_all([old, new])
@@ -231,8 +231,8 @@ async def test_sync_preferred_unchanged_when_still_valid(db: AsyncSession):
     coinbase = TradingAccount(
         user_id="heal-user-2",
         exchange="coinbase",
-        is_paper=True,
-        account_label="Coinbase Paper",
+        is_paper=False,
+        account_label="Coinbase Live",
         is_active=True,
     )
     db.add_all([alpaca, coinbase])

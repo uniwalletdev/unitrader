@@ -382,7 +382,13 @@ export default function PositionsPage() {
               All accounts
             </button>
             {accounts.map((account) => {
-              const accountId = account.trading_account_id ?? `${account.exchange}-${account.is_paper ? "paper" : "live"}`;
+              const displayMode =
+                String(account.exchange || "").toLowerCase() === "coinbase"
+                  ? "live"
+                  : account.is_paper
+                    ? "paper"
+                    : "live";
+              const accountId = account.trading_account_id ?? `${account.exchange}-${displayMode}`;
               return (
                 <button
                   key={accountId}
@@ -395,7 +401,7 @@ export default function PositionsPage() {
                       : "border-dark-800 bg-dark-950 text-dark-300",
                   )}
                 >
-                  {account.account_label || `${account.exchange} ${account.is_paper ? "paper" : "live"}`}
+                  {account.account_label || `${account.exchange} ${displayMode}`}
                   {typeof (account as any).balance_note === "string" &&
                     (account as any).balance_note.toLowerCase().includes("cached") && (
                     <span className="ml-2 text-[10px] text-dark-500">(cached)</span>

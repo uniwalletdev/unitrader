@@ -77,8 +77,8 @@ async def test_resolve_market_context_enforces_ownership(db: AsyncSession):
     acct = TradingAccount(
         user_id="ws-user-1",
         exchange="coinbase",
-        is_paper=True,
-        account_label="Coinbase Paper",
+        is_paper=False,
+        account_label="Coinbase Live",
         is_active=True,
     )
     db.add(acct)
@@ -86,7 +86,7 @@ async def test_resolve_market_context_enforces_ownership(db: AsyncSession):
 
     ctx = await resolve_market_context(db=db, user_id="ws-user-1", trading_account_id=acct.id)
     assert ctx.exchange.value == "coinbase"
-    assert ctx.is_paper is True
+    assert ctx.is_paper is False
 
     with pytest.raises(HTTPException) as exc:
         await resolve_market_context(db=db, user_id="ws-user-OTHER", trading_account_id=acct.id)

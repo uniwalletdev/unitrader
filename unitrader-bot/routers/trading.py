@@ -351,8 +351,12 @@ async def connect_exchange(
     Keys are encrypted with Fernet and never returned after saving.
     """
     exchange = body.exchange.lower()
+    is_paper = body.is_paper
+    # Coinbase has no paper/sandbox trading; force live to prevent bad labels & mode splits.
+    if exchange == "coinbase":
+        is_paper = False
 
-    balance = await _validate_exchange_keys(exchange, body.api_key, body.api_secret, body.is_paper)
+    balance = await _validate_exchange_keys(exchange, body.api_key, body.api_secret, is_paper)
 
     try:
         enc_key, enc_secret = encrypt_api_key(body.api_key, body.api_secret)
@@ -362,14 +366,14 @@ async def connect_exchange(
             db,
             user_id=current_user.id,
             exchange=exchange,
-            is_paper=body.is_paper,
+            is_paper=is_paper,
         )
 
         existing = await db.execute(
             select(ExchangeAPIKey).where(
                 ExchangeAPIKey.user_id == current_user.id,
                 ExchangeAPIKey.exchange == exchange,
-                ExchangeAPIKey.is_paper == body.is_paper,
+                ExchangeAPIKey.is_paper == is_paper,
                 ExchangeAPIKey.is_active == True,  # noqa: E712
             )
         )
@@ -387,7 +391,7 @@ async def connect_exchange(
             encrypted_api_secret=enc_secret,
             key_hash=key_hash_val,
             is_active=True,
-            is_paper=body.is_paper,
+            is_paper=is_paper,
         )
         db.add(new_key)
         await db.commit()
@@ -415,7 +419,7 @@ async def connect_exchange(
             "trading_account_id": account.id,
             "account_label": account.account_label,
             "connected_at": new_key.created_at.isoformat() if new_key.created_at else now.isoformat(),
-            "is_paper": body.is_paper,
+            "is_paper": is_paper,
             "balance_usd": round(balance, 2),
             "message": f"{exchange.title()} connected successfully",
         },
