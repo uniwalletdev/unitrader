@@ -238,6 +238,26 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Anthropic API key: NOT configured — AI features disabled")
 
+    # 2b. Alpaca (paper + optional live) — same booleans market_data uses for data API headers
+    _alpaca_paper_key = bool((settings.alpaca_paper_api_key or "").strip())
+    _alpaca_paper_secret = bool((settings.alpaca_paper_api_secret or "").strip())
+    logger.info(
+        "Alpaca paper: Key configured=%s, Secret configured=%s (set on the Python API service in Railway; redeploy after changing variables)",
+        _alpaca_paper_key,
+        _alpaca_paper_secret,
+    )
+    if not _alpaca_paper_key or not _alpaca_paper_secret:
+        logger.warning(
+            "Alpaca paper credentials missing — stock/crypto market data and server-side Alpaca calls will fail until "
+            "ALPACA_PAPER_API_KEY and ALPACA_PAPER_API_SECRET (or legacy ALPACA_API_KEY / ALPACA_API_SECRET) are set."
+        )
+    _alpaca_live_key = bool((settings.alpaca_live_api_key or "").strip())
+    _alpaca_live_secret = bool((settings.alpaca_live_api_secret or "").strip())
+    if _alpaca_live_key and _alpaca_live_secret:
+        logger.info("Alpaca live: Key configured=True, Secret configured=True")
+    elif _alpaca_live_key or _alpaca_live_secret:
+        logger.warning("Alpaca live: incomplete — set both ALPACA_LIVE_API_KEY and ALPACA_LIVE_API_SECRET for live trading")
+
     # 3. Verify database configuration
     _db_url_display = settings.database_url[:40] + "..." if len(settings.database_url) > 40 else settings.database_url
     if "sqlite" in settings.database_url:

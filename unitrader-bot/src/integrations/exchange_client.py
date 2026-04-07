@@ -309,8 +309,8 @@ class AlpacaClient(BaseExchangeClient):
             raw_url = raw_url[:-3]
         self._base_url = raw_url
         _common_headers = {
-            "APCA-API-KEY-ID": api_key,
-            "APCA-API-SECRET-KEY": api_secret,
+            "APCA-API-KEY-ID": eff_key,
+            "APCA-API-SECRET-KEY": eff_secret,
             "Content-Type": "application/json",
         }
         self._http = httpx.AsyncClient(

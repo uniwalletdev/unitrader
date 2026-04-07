@@ -285,14 +285,15 @@ async def _save_onboarding_messages(
         uid_fk = (
             _uuid.UUID(str(user_id)) if not isinstance(user_id, _uuid.UUID) else user_id
         )
+        user_id_str = str(uid_fk)
         user_row = OnboardingMessage(
-            id=_uuid.uuid4(), user_id=uid_fk, role="user", content=user_message
+            id=_uuid.uuid4(), user_id=user_id_str, role="user", content=user_message
         )
         session.add(user_row)
         await session.flush()
         assistant_row = OnboardingMessage(
             id=_uuid.uuid4(),
-            user_id=uid_fk,
+            user_id=user_id_str,
             role="assistant",
             content=assistant_message,
         )

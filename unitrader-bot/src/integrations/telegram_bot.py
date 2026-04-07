@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction
+from telegram.error import BadRequest
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -969,7 +970,8 @@ class TelegramBotService:
                 )
                 return
 
-            shared_context = await SharedMemory.load(str(user.id), db)
+            linked_user_id = str(user.id)
+            shared_context = await SharedMemory.load(linked_user_id, db)
             logger.debug(
                 "telegram handle_message user=%s route=%s",
                 shared_context.user_id,
@@ -992,7 +994,7 @@ class TelegramBotService:
                         raw,
                         text,
                         "success",
-                        user_id=user.id,
+                        user_id=linked_user_id,
                         response_time_ms=ms,
                     )
                     return
@@ -1009,7 +1011,7 @@ class TelegramBotService:
                         raw,
                         text,
                         "success",
-                        user_id=user.id,
+                        user_id=linked_user_id,
                         response_time_ms=ms,
                     )
                     return
@@ -1026,7 +1028,7 @@ class TelegramBotService:
                         raw,
                         text,
                         "success",
-                        user_id=user.id,
+                        user_id=linked_user_id,
                         response_time_ms=ms,
                     )
                     return
@@ -1043,30 +1045,32 @@ class TelegramBotService:
             await update.message.chat.send_action(ChatAction.TYPING)
             try:
                 text = await self._telegram_orchestrator_chat_text(
-                    str(user.id),
+                    linked_user_id,
                     intent["message"],
                     db,
                     shared_context,
                 )
                 status_str = "success"
             except Exception as exc:
-                logger.error("handle_message chat error for user %s: %s", user.id, exc)
+                logger.error(
+                    "handle_message chat error for user %s: %s", linked_user_id, exc
+                )
                 text = "❌ Could not get an AI response right now. Try again in a moment."
                 status_str = "error"
 
-        ms = int((time.perf_counter() - t0) * 1000)
-        for chunk in _chunk(text):
-            await self._reply(update, chunk, parse_mode="Markdown")
-        await self._log(
-            tg_id,
-            "message",
-            "free_text",
-            raw,
-            text,
-            status_str,
-            user_id=user.id,
-            response_time_ms=ms,
-        )
+            ms = int((time.perf_counter() - t0) * 1000)
+            for chunk in _chunk(text):
+                await self._reply(update, chunk, parse_mode="Markdown")
+            await self._log(
+                tg_id,
+                "message",
+                "free_text",
+                raw,
+                text,
+                status_str,
+                user_id=linked_user_id,
+                response_time_ms=ms,
+            )
 
     # ── Outbound: trade alert ─────────────────────────────────────────────────
 
@@ -1166,6 +1170,15 @@ class TelegramBotService:
     ) -> None:
         try:
             await update.message.reply_text(text, parse_mode=parse_mode)
+        except BadRequest as exc:
+            err = str(exc).lower()
+            if parse_mode and ("entity" in err or "parse" in err):
+                try:
+                    await update.message.reply_text(text, parse_mode=None)
+                except Exception as exc2:
+                    logger.error("Failed to send reply (plain fallback): %s", exc2)
+            else:
+                logger.error("Failed to send reply: %s", exc)
         except Exception as exc:
             logger.error("Failed to send reply: %s", exc)
 
