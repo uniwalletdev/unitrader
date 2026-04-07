@@ -13,6 +13,7 @@ so responses reference real numbers.
 import asyncio
 import logging
 import re
+import uuid
 import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -287,12 +288,12 @@ async def _save_onboarding_messages(
         )
         user_id_str = str(uid_fk)
         user_row = OnboardingMessage(
-            id=_uuid.uuid4(), user_id=user_id_str, role="user", content=user_message
+            id=uuid.uuid4(), user_id=user_id_str, role="user", content=user_message
         )
         session.add(user_row)
         await session.flush()
         assistant_row = OnboardingMessage(
-            id=_uuid.uuid4(),
+            id=uuid.uuid4(),
             user_id=user_id_str,
             role="assistant",
             content=assistant_message,
@@ -1496,7 +1497,7 @@ class ConversationAgent:
                     else self.user_id
                 )
                 user_om = OnboardingMessage(
-                    user_id=_uid,
+                    user_id=str(_uid),
                     role="user",
                     content=user_message,
                 )
@@ -1600,7 +1601,7 @@ class ConversationAgent:
                     else self.user_id
                 )
                 om = OnboardingMessage(
-                    user_id=_uid,
+                    user_id=str(_uid),
                     role="assistant",
                     content=assistant_message,
                 )
@@ -1653,7 +1654,7 @@ class ConversationAgent:
                     else self.user_id
                 )
                 om = OnboardingMessage(
-                    user_id=_uid,
+                    user_id=str(_uid),
                     role="system",
                     content=f"extracted:{field}={value}",
                 )

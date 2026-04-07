@@ -970,11 +970,13 @@ class TelegramBotService:
                 )
                 return
 
-            linked_user_id = str(user.id)
-            shared_context = await SharedMemory.load(linked_user_id, db)
+            user_id = user.id
+            user_email = user.email
+            shared_context = await SharedMemory.load(str(user_id), db)
             logger.debug(
-                "telegram handle_message user=%s route=%s",
+                "telegram handle_message user=%s email=%s route=%s",
                 shared_context.user_id,
+                user_email,
                 intent.get("route"),
             )
 
@@ -994,7 +996,7 @@ class TelegramBotService:
                         raw,
                         text,
                         "success",
-                        user_id=linked_user_id,
+                        user_id=user_id,
                         response_time_ms=ms,
                     )
                     return
@@ -1011,7 +1013,7 @@ class TelegramBotService:
                         raw,
                         text,
                         "success",
-                        user_id=linked_user_id,
+                        user_id=user_id,
                         response_time_ms=ms,
                     )
                     return
@@ -1028,7 +1030,7 @@ class TelegramBotService:
                         raw,
                         text,
                         "success",
-                        user_id=linked_user_id,
+                        user_id=user_id,
                         response_time_ms=ms,
                     )
                     return
@@ -1045,7 +1047,7 @@ class TelegramBotService:
             await update.message.chat.send_action(ChatAction.TYPING)
             try:
                 text = await self._telegram_orchestrator_chat_text(
-                    linked_user_id,
+                    str(user_id),
                     intent["message"],
                     db,
                     shared_context,
@@ -1053,7 +1055,7 @@ class TelegramBotService:
                 status_str = "success"
             except Exception as exc:
                 logger.error(
-                    "handle_message chat error for user %s: %s", linked_user_id, exc
+                    "handle_message chat error for user %s: %s", user_id, exc
                 )
                 text = "❌ Could not get an AI response right now. Try again in a moment."
                 status_str = "error"
@@ -1068,7 +1070,7 @@ class TelegramBotService:
                 raw,
                 text,
                 status_str,
-                user_id=linked_user_id,
+                user_id=user_id,
                 response_time_ms=ms,
             )
 

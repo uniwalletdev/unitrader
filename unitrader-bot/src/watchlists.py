@@ -168,6 +168,8 @@ async def _score_stocks_alpaca(universe: list[str], top_n: int = 10) -> list[str
 
     # Normalise volume to 0–1 percentile across the universe
     volumes = [r[2] for r in raw]
+    if not volumes:
+        return []
     max_vol = max(volumes) if max(volumes) > 0 else 1.0
 
     scored = []

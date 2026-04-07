@@ -44,6 +44,7 @@ _subscription_lock = asyncio.Lock()
 
 # Alpaca client for REST API calls
 alpaca = None
+_warned_missing_alpaca_data_creds = False
 
 
 def _get_alpaca_client() -> Any:
@@ -60,8 +61,8 @@ def _get_alpaca_client() -> Any:
     if not AlpacaREST:
         raise ValueError("alpaca_trade_api not installed")
 
-    api_key = settings.alpaca_paper_api_key or os.getenv("APCA_API_KEY_ID", "")
-    api_secret = settings.alpaca_paper_api_secret or os.getenv("APCA_API_SECRET_KEY", "")
+    api_key = (settings.alpaca_paper_api_key or "").strip()
+    api_secret = (settings.alpaca_paper_api_secret or "").strip()
     base_url = settings.alpaca_paper_base_url or os.getenv(
         "APCA_API_BASE_URL", "https://paper-api.alpaca.markets"
     )
@@ -353,10 +354,19 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
         return await _fetch_binance_price(sym)
 
     # Alpaca (crypto or stock)
-    api_key = settings.alpaca_paper_api_key or os.getenv("APCA_API_KEY_ID", "")
-    api_secret = settings.alpaca_paper_api_secret or os.getenv("APCA_API_SECRET_KEY", "")
+    global _warned_missing_alpaca_data_creds
+    api_key = (settings.alpaca_paper_api_key or "").strip()
+    api_secret = (settings.alpaca_paper_api_secret or "").strip()
 
     if not api_key or not api_secret:
+        if not _warned_missing_alpaca_data_creds:
+            _warned_missing_alpaca_data_creds = True
+            logger.warning(
+                "Alpaca market data credentials missing. "
+                "configured_key=%s configured_secret=%s",
+                bool(api_key),
+                bool(api_secret),
+            )
         raise ValueError("Alpaca credentials not configured for price stream")
 
     headers = {
