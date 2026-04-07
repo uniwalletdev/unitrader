@@ -60,15 +60,15 @@ def _get_alpaca_client() -> Any:
     if not AlpacaREST:
         raise ValueError("alpaca_trade_api not installed")
 
-    api_key = settings.alpaca_api_key or os.getenv("APCA_API_KEY_ID", "")
-    api_secret = settings.alpaca_api_secret or os.getenv("APCA_API_SECRET_KEY", "")
-    base_url = settings.alpaca_base_url or os.getenv(
+    api_key = settings.alpaca_paper_api_key or os.getenv("APCA_API_KEY_ID", "")
+    api_secret = settings.alpaca_paper_api_secret or os.getenv("APCA_API_SECRET_KEY", "")
+    base_url = settings.alpaca_paper_base_url or os.getenv(
         "APCA_API_BASE_URL", "https://paper-api.alpaca.markets"
     )
 
     if not api_key or not api_secret:
         raise ValueError(
-            "Alpaca client not initialized: missing ALPACA_API_KEY/ALPACA_API_SECRET configuration"
+            "Alpaca client not initialized: missing ALPACA_PAPER_API_KEY (or ALPACA_API_KEY) / secret configuration"
         )
 
     try:
@@ -353,8 +353,8 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
         return await _fetch_binance_price(sym)
 
     # Alpaca (crypto or stock)
-    api_key = settings.alpaca_api_key or os.getenv("APCA_API_KEY_ID", "")
-    api_secret = settings.alpaca_api_secret or os.getenv("APCA_API_SECRET_KEY", "")
+    api_key = settings.alpaca_paper_api_key or os.getenv("APCA_API_KEY_ID", "")
+    api_secret = settings.alpaca_paper_api_secret or os.getenv("APCA_API_SECRET_KEY", "")
 
     if not api_key or not api_secret:
         raise ValueError("Alpaca credentials not configured for price stream")

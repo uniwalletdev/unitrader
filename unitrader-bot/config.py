@@ -145,9 +145,30 @@ class Settings(BaseSettings):
     binance_api_secret: str = ""
     binance_base_url: str = "https://api.binance.com"
 
-    alpaca_api_key: str = ""
-    alpaca_api_secret: str = ""
-    alpaca_base_url: str = "https://paper-api.alpaca.markets"
+    alpaca_paper_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("ALPACA_PAPER_API_KEY", "ALPACA_API_KEY"),
+    )
+    alpaca_paper_api_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("ALPACA_PAPER_API_SECRET", "ALPACA_API_SECRET"),
+    )
+    alpaca_paper_base_url: str = Field(
+        default="https://paper-api.alpaca.markets",
+        validation_alias=AliasChoices("ALPACA_PAPER_BASE_URL", "ALPACA_BASE_URL"),
+    )
+    alpaca_live_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("ALPACA_LIVE_API_KEY"),
+    )
+    alpaca_live_api_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("ALPACA_LIVE_API_SECRET"),
+    )
+    alpaca_live_base_url: str = Field(
+        default="https://api.alpaca.markets",
+        validation_alias=AliasChoices("ALPACA_LIVE_BASE_URL"),
+    )
     alpaca_data_url: str = "https://data.alpaca.markets"
     alpha_vantage_api_key: str = ""
 

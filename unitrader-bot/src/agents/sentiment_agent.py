@@ -49,7 +49,7 @@ class SentimentAgent:
             alpaca_base_url: Alpaca base URL (defaults to paper trading)
         """
         self.alpaca_api_key = alpaca_api_key
-        self.alpaca_base_url = alpaca_base_url or "https://paper-api.alpaca.markets"
+        self.alpaca_base_url = alpaca_base_url or settings.alpaca_paper_base_url
         self.claude_client = anthropic.AsyncAnthropic()
 
     async def get_sentiment(self, symbol: str, ctx: SharedContext) -> dict:
@@ -190,8 +190,8 @@ class SentimentAgent:
         # Normalize symbol for Alpaca API
         alpaca_symbol = symbol.replace("/", "")  # BTC/USD -> BTCUSD
 
-        api_key = self.alpaca_api_key or settings.alpaca_api_key
-        api_secret = getattr(settings, "alpaca_api_secret", None)
+        api_key = self.alpaca_api_key or settings.alpaca_paper_api_key
+        api_secret = settings.alpaca_paper_api_secret or None
         if not api_key:
             logger.warning(f"No Alpaca API key available — skipping news fetch for {symbol}")
             return []

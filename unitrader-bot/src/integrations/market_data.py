@@ -396,10 +396,10 @@ async def _fetch_alpaca_crypto(symbol: str) -> dict:
     
     base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
     headers = {}
-    if getattr(settings, "alpaca_api_key", None):
-        headers["APCA-API-KEY-ID"] = settings.alpaca_api_key
-    if getattr(settings, "alpaca_api_secret", None):
-        headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
+    if getattr(settings, "alpaca_paper_api_key", None):
+        headers["APCA-API-KEY-ID"] = settings.alpaca_paper_api_key
+    if getattr(settings, "alpaca_paper_api_secret", None):
+        headers["APCA-API-SECRET-KEY"] = settings.alpaca_paper_api_secret
     
     if not headers:
         logger.warning("No Alpaca API credentials configured for crypto fetch of %s", symbol)
@@ -467,10 +467,10 @@ async def _fetch_alpaca_stock(symbol: str) -> dict:
     
     base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
     headers = {}
-    if getattr(settings, "alpaca_api_key", None):
-        headers["APCA-API-KEY-ID"] = settings.alpaca_api_key
-    if getattr(settings, "alpaca_api_secret", None):
-        headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
+    if getattr(settings, "alpaca_paper_api_key", None):
+        headers["APCA-API-KEY-ID"] = settings.alpaca_paper_api_key
+    if getattr(settings, "alpaca_paper_api_secret", None):
+        headers["APCA-API-SECRET-KEY"] = settings.alpaca_paper_api_secret
     
     if not headers:
         logger.warning("No Alpaca API credentials configured for stock fetch of %s", symbol)
@@ -611,10 +611,10 @@ async def _fetch_kraken_closes(symbol: str, limit: int) -> list[float]:
 async def _fetch_alpaca_crypto_closes(symbol: str, limit: int) -> list[float]:
     base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
     headers = {}
-    if getattr(settings, "alpaca_api_key", None):
-        headers["APCA-API-KEY-ID"] = settings.alpaca_api_key
-    if getattr(settings, "alpaca_api_secret", None):
-        headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
+    if getattr(settings, "alpaca_paper_api_key", None):
+        headers["APCA-API-KEY-ID"] = settings.alpaca_paper_api_key
+    if getattr(settings, "alpaca_paper_api_secret", None):
+        headers["APCA-API-SECRET-KEY"] = settings.alpaca_paper_api_secret
     async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
         resp = await _alpaca_get_with_retry(
             client,
@@ -628,10 +628,10 @@ async def _fetch_alpaca_crypto_closes(symbol: str, limit: int) -> list[float]:
 async def _fetch_alpaca_stock_closes(symbol: str, limit: int) -> list[float]:
     base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
     headers = {}
-    if getattr(settings, "alpaca_api_key", None):
-        headers["APCA-API-KEY-ID"] = settings.alpaca_api_key
-    if getattr(settings, "alpaca_api_secret", None):
-        headers["APCA-API-SECRET-KEY"] = settings.alpaca_api_secret
+    if getattr(settings, "alpaca_paper_api_key", None):
+        headers["APCA-API-KEY-ID"] = settings.alpaca_paper_api_key
+    if getattr(settings, "alpaca_paper_api_secret", None):
+        headers["APCA-API-SECRET-KEY"] = settings.alpaca_paper_api_secret
     async with httpx.AsyncClient(timeout=_TIMEOUT, headers=headers or None) as client:
         resp = await _alpaca_get_with_retry(
             client,

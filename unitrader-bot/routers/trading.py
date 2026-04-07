@@ -1489,8 +1489,11 @@ async def simulate_history(
         api_key, api_secret = decrypt_api_key(
             key_row.encrypted_api_key, key_row.encrypted_api_secret
         )
-    elif settings.alpaca_api_key and settings.alpaca_api_secret:
-        api_key, api_secret = settings.alpaca_api_key, settings.alpaca_api_secret
+    elif settings.alpaca_paper_api_key and settings.alpaca_paper_api_secret:
+        api_key, api_secret = (
+            settings.alpaca_paper_api_key,
+            settings.alpaca_paper_api_secret,
+        )
 
     if not api_key:
         raise HTTPException(

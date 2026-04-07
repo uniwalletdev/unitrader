@@ -268,13 +268,43 @@ class BinanceClient(BaseExchangeClient):
 class AlpacaClient(BaseExchangeClient):
     """Alpaca Markets REST API client (US equities + crypto).
 
-    Supports paper trading via ALPACA_BASE_URL=https://paper-api.alpaca.markets
+    Trading base URL defaults from settings (paper vs live) via ``is_paper``.
+    If ``api_key`` and ``api_secret`` are both non-empty (e.g. user keys from DB), those
+    are used; otherwise credentials come from the matching paper/live settings.
+    Optional ``base_url`` overrides the default URL when non-empty.
     Docs: https://docs.alpaca.markets/reference/
     """
 
-    def __init__(self, api_key: str, api_secret: str, base_url: str | None = None):
-        super().__init__(api_key, api_secret)
-        raw_url = (base_url or settings.alpaca_base_url).rstrip("/")
+    def __init__(
+        self,
+        api_key: str,
+        api_secret: str,
+        base_url: str | None = None,
+        *,
+        is_paper: bool = True,
+    ):
+        if is_paper:
+            sk, ss, default_base = (
+                settings.alpaca_paper_api_key,
+                settings.alpaca_paper_api_secret,
+                settings.alpaca_paper_base_url,
+            )
+        else:
+            sk, ss, default_base = (
+                settings.alpaca_live_api_key,
+                settings.alpaca_live_api_secret,
+                settings.alpaca_live_base_url,
+            )
+        # Prefer decrypted user keys from the factory when present; otherwise paper/live env settings.
+        if api_key and api_secret:
+            eff_key, eff_secret = api_key, api_secret
+        else:
+            eff_key, eff_secret = sk, ss
+        eff_base = default_base
+        if base_url and str(base_url).strip():
+            eff_base = str(base_url).strip()
+        super().__init__(eff_key, eff_secret)
+        raw_url = eff_base.rstrip("/")
         if raw_url.endswith("/v2"):
             raw_url = raw_url[:-3]
         self._base_url = raw_url
@@ -991,13 +1021,12 @@ def get_exchange_client(
     if exchange == "binance":
         return BinanceClient(api_key, api_secret, base_url=kwargs.get("base_url"))
     if exchange == "alpaca":
-        base_url = kwargs.get("base_url")
-        if not base_url:
-            base_url = (
-                "https://paper-api.alpaca.markets" if is_paper
-                else "https://api.alpaca.markets"
-            )
-        return AlpacaClient(api_key, api_secret, base_url=base_url)
+        return AlpacaClient(
+            api_key,
+            api_secret,
+            base_url=kwargs.get("base_url"),
+            is_paper=is_paper,
+        )
     if exchange == "oanda":
         return OandaClient(api_key, api_secret, account_id=kwargs.get("account_id"))
     if exchange == "coinbase":
