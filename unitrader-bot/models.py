@@ -629,7 +629,7 @@ class OnboardingMessage(Base):
 
     __tablename__ = "onboarding_messages"
 
-    id: Mapped[str] = mapped_column(PgUUID(as_uuid=False), primary_key=True, default=_uuid)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     user_id: Mapped[str] = mapped_column(
         String(36),
         ForeignKey("users.id", ondelete="CASCADE"),
