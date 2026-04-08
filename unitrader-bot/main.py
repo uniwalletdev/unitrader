@@ -252,35 +252,37 @@ async def lifespan(app: FastAPI):
             "ALPACA_PAPER_API_KEY and ALPACA_PAPER_API_SECRET (or legacy ALPACA_API_KEY / ALPACA_API_SECRET) are set."
         )
     else:
-        # Probe Alpaca with a single lightweight request to detect invalid keys early
-        try:
-            import httpx as _httpx
-            _probe_headers = {
-                "APCA-API-KEY-ID": settings.alpaca_paper_api_key.strip(),
-                "APCA-API-SECRET-KEY": settings.alpaca_paper_api_secret.strip(),
-            }
-            _probe_url = (
-                (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
-                + "/v2/stocks/AAPL/quotes/latest"
-            )
-            async with _httpx.AsyncClient(timeout=8.0, headers=_probe_headers) as _probe_client:
-                _probe_resp = await _probe_client.get(_probe_url)
-            if _probe_resp.status_code == 401:
-                from src.integrations.alpaca_circuit_breaker import alpaca_breaker
-                alpaca_breaker.record_auth_failure("Startup probe: 401 Unauthorized")
-                alpaca_breaker.record_auth_failure("Startup probe: 401 Unauthorized")
-                alpaca_breaker.record_auth_failure("Startup probe: 401 Unauthorized")
-                logger.error(
-                    "ALPACA CREDENTIALS INVALID — startup probe returned 401. "
-                    "Circuit breaker is now OPEN. Fix ALPACA_PAPER_API_KEY / ALPACA_PAPER_API_SECRET "
-                    "in Railway env vars and redeploy."
+        # Probe Massive (primary market data provider) to detect invalid keys early.
+        # Alpaca is now used for trade execution only — Massive handles all market data.
+        _massive_key = (settings.massive_api_key or "").strip()
+        if _massive_key:
+            try:
+                import httpx as _httpx
+                _probe_url = (
+                    (settings.massive_base_url or "https://api.massive.com").rstrip("/")
+                    + "/v2/aggs/ticker/AAPL/prev"
                 )
-            elif _probe_resp.status_code == 200:
-                logger.info("Alpaca credentials validated — startup probe OK (AAPL quote)")
-            else:
-                logger.warning("Alpaca startup probe returned HTTP %d (non-fatal)", _probe_resp.status_code)
-        except Exception as _probe_exc:
-            logger.warning("Alpaca startup probe failed (non-fatal): %s", _probe_exc)
+                _probe_headers = {"Authorization": f"Bearer {_massive_key}"}
+                async with _httpx.AsyncClient(timeout=8.0, headers=_probe_headers) as _probe_client:
+                    _probe_resp = await _probe_client.get(_probe_url)
+                if _probe_resp.status_code == 200:
+                    logger.info("Massive API key validated — startup probe OK (AAPL prev-close)")
+                elif _probe_resp.status_code == 403:
+                    logger.warning("Massive startup probe returned 403 — check plan/key (non-fatal)")
+                elif _probe_resp.status_code == 401:
+                    logger.error(
+                        "MASSIVE API KEY INVALID — startup probe returned 401. "
+                        "Fix MASSIVE_API_KEY in Railway env vars and redeploy."
+                    )
+                else:
+                    logger.warning("Massive startup probe returned HTTP %d (non-fatal)", _probe_resp.status_code)
+            except Exception as _probe_exc:
+                logger.warning("Massive startup probe failed (non-fatal): %s", _probe_exc)
+        else:
+            logger.warning(
+                "MASSIVE_API_KEY not set — market data will fall back to Alpaca. "
+                "Set MASSIVE_API_KEY in Railway env vars for reliable market data."
+            )
     _alpaca_live_key = bool((settings.alpaca_live_api_key or "").strip())
     _alpaca_live_secret = bool((settings.alpaca_live_api_secret or "").strip())
     if _alpaca_live_key and _alpaca_live_secret:
