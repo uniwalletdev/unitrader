@@ -1745,3 +1745,147 @@ async def admin_delete_user(
 
     logger.info("Admin deleted account: user_id=%s email=%s", user_id, body.email)
     return SuccessResponse(message=f"User {body.email} permanently deleted")
+
+
+# ─────────────────────────────────────────────
+# POST /api/auth/generate-claim-token
+# ─────────────────────────────────────────────
+
+class ClaimTokenResponse(BaseModel):
+    claim_url: str
+    expires_in_minutes: int = 60
+
+
+@router.post("/generate-claim-token", response_model=ClaimTokenResponse)
+async def generate_claim_token(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a one-time claim URL for upgrading a provisional (chat-created) account.
+
+    Only callable by provisional users (email ending in @provisional.unitrader.app).
+    Returns a URL the user can tap to set up a full web account.
+    """
+    from src.services.provisional_user import is_provisional
+
+    if not is_provisional(current_user):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Account is already a full account",
+        )
+
+    token = generate_secure_token(48)
+    current_user.email_verification_token = token
+    current_user.password_reset_expires = datetime.now(timezone.utc) + timedelta(hours=1)
+    await db.commit()
+
+    claim_url = f"{settings.frontend_url}/claim/{token}"
+    return ClaimTokenResponse(claim_url=claim_url)
+
+
+# ─────────────────────────────────────────────
+# POST /api/auth/claim
+# ─────────────────────────────────────────────
+
+class ClaimAccountRequest(BaseModel):
+    claim_token: str
+    clerk_token: str
+
+
+@router.post("/claim")
+async def claim_provisional_account(
+    body: ClaimAccountRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Merge a provisional (chat-created) account with a Clerk web identity.
+
+    The provisional user keeps all their data (trades, conversations, settings,
+    external accounts). Their email gets upgraded to the Clerk identity.
+    """
+    from src.services.provisional_user import PROVISIONAL_DOMAIN
+
+    prov = (await db.execute(
+        select(User).where(
+            User.email_verification_token == body.claim_token,
+            User.email.endswith(f"@{PROVISIONAL_DOMAIN}"),
+        )
+    )).scalar_one_or_none()
+
+    if not prov:
+        raise HTTPException(status_code=400, detail="Invalid or expired claim token")
+
+    if prov.password_reset_expires and prov.password_reset_expires < datetime.now(timezone.utc):
+        raise HTTPException(status_code=400, detail="Claim token has expired")
+
+    # Decode Clerk JWT to extract email (unverified decode — Clerk handles auth)
+    import jwt as _jwt
+
+    try:
+        claims = _jwt.decode(body.clerk_token, options={"verify_signature": False})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid Clerk token")
+
+    email: str = claims.get("email", "")
+    if not email and "email_addresses" in claims:
+        addresses = claims["email_addresses"]
+        if addresses and isinstance(addresses, list):
+            email = addresses[0].get("email_address", "")
+    if not email:
+        raise HTTPException(status_code=400, detail="Could not extract email from Clerk token")
+
+    # Check if a full account with this email already exists
+    from sqlalchemy import update as sa_update
+    from models import Conversation, Trade
+
+    existing = (await db.execute(
+        select(User).where(User.email == email, User.id != prov.id)
+    )).scalar_one_or_none()
+
+    if existing:
+        # Merge: move all provisional user's data to the existing account
+        for model_cls in (Trade, Conversation, UserExternalAccount, ExchangeAPIKey):
+            await db.execute(
+                sa_update(model_cls)
+                .where(model_cls.user_id == prov.id)
+                .values(user_id=existing.id)
+            )
+        # Copy AI name if the existing account hasn't set one
+        if not existing.ai_name or existing.ai_name in ("Claude", "Apex"):
+            existing.ai_name = prov.ai_name
+        # Delete provisional user + their settings (CASCADE)
+        await db.delete(prov)
+        target_user = existing
+    else:
+        # Upgrade the provisional user in-place
+        prov.email = email
+        prov.email_verified = True
+        prov.email_verification_token = None
+        prov.password_reset_expires = None
+        target_user = prov
+
+    await db.commit()
+
+    access_token = create_access_token(target_user.id)
+    refresh_token_str, refresh_expires = create_refresh_token(target_user.id)
+
+    rt = RefreshToken(
+        token=refresh_token_str,
+        user_id=target_user.id,
+        expires_at=refresh_expires,
+    )
+    db.add(rt)
+    await db.commit()
+
+    logger.info("Provisional account claimed: user_id=%s email=%s", target_user.id, email)
+
+    return {
+        "status": "claimed",
+        "access_token": access_token,
+        "refresh_token": refresh_token_str,
+        "token_type": "bearer",
+        "user": {
+            "id": str(target_user.id),
+            "email": target_user.email,
+            "ai_name": target_user.ai_name,
+        },
+    }

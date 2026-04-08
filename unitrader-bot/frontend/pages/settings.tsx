@@ -356,7 +356,23 @@ export default function SettingsPage() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => router.push("/app")}
+                        onClick={async () => {
+                          try {
+                            const [infoRes, codeRes] = await Promise.all([
+                              authApi.botInfo(),
+                              authApi.telegramCode(),
+                            ]);
+                            const bot = infoRes.data?.telegram_bot_username;
+                            const code = codeRes.data?.code;
+                            if (bot && code) {
+                              window.open(`https://t.me/${bot}?start=link_${code}`, "_blank");
+                            } else {
+                              setError("Telegram is not configured. Please try again later.");
+                            }
+                          } catch {
+                            setError("Could not generate linking code. Please try again.");
+                          }
+                        }}
                         className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400"
                       >
                         Connect Telegram
@@ -385,7 +401,24 @@ export default function SettingsPage() {
                     ) : (
                       <button
                         type="button"
-                        onClick={() => router.push("/link-whatsapp")}
+                        onClick={async () => {
+                          try {
+                            const [infoRes, codeRes] = await Promise.all([
+                              authApi.botInfo(),
+                              authApi.whatsappCode(),
+                            ]);
+                            const num = infoRes.data?.whatsapp_number;
+                            const code = codeRes.data?.code;
+                            if (num && code) {
+                              const clean = num.replace(/\D/g, "");
+                              window.open(`https://wa.me/${clean}?text=${encodeURIComponent("LINK " + code)}`, "_blank");
+                            } else {
+                              setError("WhatsApp is not configured. Please try again later.");
+                            }
+                          } catch {
+                            setError("Could not generate linking code. Please try again.");
+                          }
+                        }}
                         className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400"
                       >
                         Connect WhatsApp

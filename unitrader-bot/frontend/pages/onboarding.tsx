@@ -7,7 +7,7 @@ import { useAuth } from "@clerk/nextjs";
 import Head from "next/head";
 import { useRouter } from "next/router";
 import { useState, useEffect, useCallback } from "react";
-import { ArrowRight, Zap, RefreshCw } from "lucide-react";
+import { ArrowRight, Zap, RefreshCw, MessageCircle, Send } from "lucide-react";
 import GalaxyLoader from "@/components/layout/GalaxyLoader";
 import { authApi } from "@/lib/api";
 
@@ -96,6 +96,107 @@ function ContextStep({ onContinue }: { onContinue: () => void }) {
 }
 
 // ─────────────────────────────────────────────
+// Step 2 — Connect Chat (optional)
+// ─────────────────────────────────────────────
+
+function ConnectChatStep({ aiName, onSkip }: { aiName: string; onSkip: () => void }) {
+  const [botInfo, setBotInfo] = useState<{
+    whatsapp_number?: string;
+    telegram_bot_username?: string;
+    whatsapp_enabled?: boolean;
+    telegram_enabled?: boolean;
+  } | null>(null);
+  const [linkingCode, setLinkingCode] = useState("");
+  const [loadingBot, setLoadingBot] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const [infoRes, codeRes] = await Promise.all([
+          authApi.botInfo(),
+          authApi.telegramCode(),
+        ]);
+        setBotInfo(infoRes.data);
+        setLinkingCode(codeRes.data?.code || "");
+      } catch {
+        // Non-critical — user can skip
+      } finally {
+        setLoadingBot(false);
+      }
+    })();
+  }, []);
+
+  const whatsappUrl =
+    botInfo?.whatsapp_enabled && botInfo.whatsapp_number
+      ? `https://wa.me/${botInfo.whatsapp_number.replace(/\D/g, "")}?text=${encodeURIComponent("LINK " + linkingCode)}`
+      : null;
+
+  const telegramUrl =
+    botInfo?.telegram_enabled && botInfo.telegram_bot_username
+      ? `https://t.me/${botInfo.telegram_bot_username}?start=link_${linkingCode}`
+      : null;
+
+  return (
+    <div className="min-h-screen bg-dark-950 flex flex-col items-center justify-center px-4">
+      <div className="w-full max-w-md animate-fade-in">
+        <div className="flex items-center gap-2.5 mb-8 justify-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-galaxy.png" alt="Unitrader" className="w-9 h-9 object-contain" />
+          <span className="text-white font-bold text-xl tracking-tight">Unitrader</span>
+        </div>
+
+        <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-8 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-brand-500/10 flex items-center justify-center mx-auto mb-5">
+            <MessageCircle size={28} className="text-brand-400" />
+          </div>
+
+          <h1 className="text-2xl font-bold tracking-tight text-white mb-2">
+            Chat with {aiName}
+          </h1>
+          <p className="text-dark-400 text-sm mb-6 leading-relaxed">
+            Get alerts, ask questions, and trade — right from your favourite messaging app. Optional, you can do this later.
+          </p>
+
+          {loadingBot ? (
+            <p className="text-dark-500 text-sm mb-6">Loading…</p>
+          ) : (
+            <div className="space-y-3 mb-6">
+              {whatsappUrl && (
+                <a
+                  href={whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 w-full rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm font-medium text-emerald-400 hover:bg-emerald-500/20 transition"
+                >
+                  <Send size={16} /> Connect WhatsApp
+                </a>
+              )}
+              {telegramUrl && (
+                <a
+                  href={telegramUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 w-full rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-3 text-sm font-medium text-sky-400 hover:bg-sky-500/20 transition"
+                >
+                  <Send size={16} /> Connect Telegram
+                </a>
+              )}
+              {!whatsappUrl && !telegramUrl && (
+                <p className="text-dark-500 text-xs">Chat channels are not configured yet.</p>
+              )}
+            </div>
+          )}
+
+          <button onClick={onSkip} className="btn-primary w-full">
+            Continue to Dashboard <ArrowRight size={16} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // Main onboarding page
 // ─────────────────────────────────────────────
 
@@ -103,8 +204,9 @@ export default function OnboardingPage() {
   const { getToken, isLoaded, isSignedIn } = useAuth();
   const router = useRouter();
 
-  const [step, setStep] = useState(0); // 0 = context, 1 = name AI
+  const [step, setStep] = useState(0); // 0 = context, 1 = name AI, 2 = connect chat
   const [aiName, setAiName] = useState("");
+  const [savedAiName, setSavedAiName] = useState("");
   const [formError, setFormError] = useState("");
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(true);
@@ -164,7 +266,8 @@ export default function OnboardingPage() {
     try {
       const res = await authApi.clerkSetup(userId, trimmed);
       localStorage.setItem("access_token", res.data.access_token);
-      router.replace("/app");
+      setSavedAiName(trimmed);
+      setStep(2);
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
       setFormError(msg || "Something went wrong. Please try again.");
@@ -210,6 +313,19 @@ export default function OnboardingPage() {
           <link rel="icon" type="image/png" href="/logo-galaxy.png" />
         </Head>
         <ContextStep onContinue={() => setStep(1)} />
+      </>
+    );
+  }
+
+  // Step 2 — Connect Chat (optional)
+  if (step === 2) {
+    return (
+      <>
+        <Head>
+          <title>Connect Chat — Unitrader</title>
+          <link rel="icon" type="image/png" href="/logo-galaxy.png" />
+        </Head>
+        <ConnectChatStep aiName={savedAiName} onSkip={() => router.replace("/app")} />
       </>
     );
   }

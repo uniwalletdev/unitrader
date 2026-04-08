@@ -241,6 +241,35 @@ class WhatsAppBotService:
         user = await self._get_linked_user(phone)
         already_sent = False
 
+        # ── Intercept: conversational onboarding in progress ──────────────
+        from src.services.bot_onboarding_state import get_onboarding_step
+
+        onb = await get_onboarding_step(phone)
+        if onb and user:
+            try:
+                response = await self._onboarding_handle_step(
+                    phone, user, (body or "").strip(), onb
+                )
+                log_command = "onboarding"
+                status = "success"
+            except Exception as exc:
+                logger.error("WhatsApp onboarding error for %s: %s", phone, exc)
+                response = "Something went wrong. Let's try again — what would you like to name your AI trader?"
+                status = "error"
+            ms = int((time.perf_counter() - t0) * 1000)
+            await self.send_message(phone, _trunc(response))
+            await self._log(
+                external_user_id=phone,
+                message_type="command",
+                command=log_command,
+                user_message=body,
+                bot_response=response,
+                status=status,
+                user_id=user.id if user else None,
+                response_time_ms=ms,
+            )
+            return
+
         try:
             pending_reply: str | None = None
             if user:
@@ -350,6 +379,19 @@ class WhatsAppBotService:
 
     async def _cmd_start(self, user: User | None, phone: str) -> str:
         if user:
+            # If user hasn't named their AI, kick off onboarding
+            if not user.ai_name or user.ai_name in ("your AI", "Apex"):
+                from src.services.bot_onboarding_state import (
+                    STEP_AWAITING_AI_NAME,
+                    set_onboarding_step,
+                )
+                await set_onboarding_step(phone, STEP_AWAITING_AI_NAME)
+                return (
+                    "👋 Welcome back! Let's finish setting up.\n\n"
+                    "What would you like to name your AI trader? "
+                    "(e.g. Apex, Nova, Max)\n\n"
+                    "Just type a name:"
+                )
             return (
                 f"👋 Welcome back, *{user.ai_name}* is ready!\n\n"
                 "Quick commands:\n"
@@ -359,10 +401,35 @@ class WhatsAppBotService:
                 "Or ask in plain English (e.g. show my portfolio).\n"
                 "HELP — all commands"
             )
+        # Create a provisional (chat-only) account so the user can start immediately
+        from src.services.provisional_user import create_provisional_user
+        from database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            new_user = await create_provisional_user(
+                db, platform="whatsapp", external_id=phone, external_username=phone,
+            )
+
+        if new_user:
+            from src.services.bot_onboarding_state import (
+                STEP_AWAITING_AI_NAME,
+                set_onboarding_step,
+            )
+            await set_onboarding_step(phone, STEP_AWAITING_AI_NAME)
+            return (
+                "👋 Welcome to *Unitrader*!\n\n"
+                "I'm your personal AI trading assistant. "
+                "Let's get you set up in 30 seconds.\n\n"
+                "First — what would you like to name your AI trader? "
+                "(e.g. Apex, Nova, Max)\n\n"
+                "Just type a name:"
+            )
+
+        # Fallback — provisional creation failed (rare edge case)
         return (
             "👋 Welcome to *Unitrader*!\n\n"
             "To start trading, link this WhatsApp number to your account:\n\n"
-            f"1. Log in at {settings.frontend_url}\n"
+            f"1. Sign up at {settings.frontend_url}/register\n"
             "2. Go to Settings → Connected Accounts\n"
             "3. Copy your 6-digit code\n"
             "4. Reply: LINK 123456\n\n"
@@ -441,8 +508,23 @@ class WhatsAppBotService:
                 fetched = (await db.execute(
                     sa_select(User).where(User.id == user_id)
                 )).scalar_one_or_none()
-                ai_name = fetched.ai_name if fetched else "your AI"
+                ai_name = fetched.ai_name if fetched else None
                 await db.commit()
+
+            # If user hasn't named their AI yet, start onboarding
+            if not ai_name or ai_name in ("your AI", "Apex"):
+                from src.services.bot_onboarding_state import (
+                    STEP_AWAITING_AI_NAME,
+                    set_onboarding_step,
+                )
+                await set_onboarding_step(phone, STEP_AWAITING_AI_NAME)
+                return (
+                    "✅ Linked successfully!\n\n"
+                    "Let's set up your AI trader.\n\n"
+                    "First — what would you like to name your AI? "
+                    "(e.g. Apex, Nova, Max)\n\n"
+                    "Just type a name:"
+                )
 
             return (
                 f"✅ Linked successfully!\n\n"
@@ -740,6 +822,195 @@ class WhatsAppBotService:
             "CLOSE BTCUSDT\n"
             "CHAT Should I buy Bitcoin?\n\n"
             f"Help: {settings.frontend_url.rstrip('/')}/help"
+        )
+
+    # ── Conversational onboarding step handlers ───────────────────────────────
+
+    async def _onboarding_handle_step(
+        self, phone: str, user: User, text: str, onb: dict
+    ) -> str:
+        """Route to the correct onboarding step handler."""
+        from src.services.bot_onboarding_state import (
+            STEP_AWAITING_AI_NAME,
+            STEP_AWAITING_TRADER_CLASS,
+        )
+
+        step = onb["step"]
+        if step == STEP_AWAITING_AI_NAME:
+            return await self._onboarding_set_name(phone, user, text)
+        if step == STEP_AWAITING_TRADER_CLASS:
+            return await self._onboarding_set_trader_class(phone, user, text)
+        # Shouldn't reach here — clear stale state
+        from src.services.bot_onboarding_state import clear_onboarding
+        await clear_onboarding(phone)
+        return "Setup complete! Send HELP to see what I can do."
+
+    async def _onboarding_set_name(
+        self, phone: str, user: User, text: str
+    ) -> str:
+        """Handle the user's AI name choice."""
+        from src.services.bot_onboarding_state import (
+            STEP_AWAITING_TRADER_CLASS,
+            set_onboarding_step,
+        )
+
+        name = text.strip()
+
+        # Let them skip / bail out
+        if name.lower() in ("skip", "cancel"):
+            from src.services.bot_onboarding_state import clear_onboarding
+            await clear_onboarding(phone)
+            return "No problem! You can name your AI later in Settings.\n\nSend HELP to see commands."
+
+        if not 2 <= len(name) <= 20:
+            return "Name must be 2-20 characters. Try again:"
+
+        if not name.replace(" ", "").isalpha():
+            return "Name can only contain letters (and spaces). Try again:"
+
+        # Persist to User + UserSettings
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select as sa_select, update as sa_update
+            from models import UserSettings
+
+            await db.execute(
+                sa_update(User).where(User.id == user.id).values(ai_name=name)
+            )
+
+            us = (await db.execute(
+                sa_select(UserSettings).where(UserSettings.user_id == user.id)
+            )).scalar_one_or_none()
+            if us:
+                await db.execute(
+                    sa_update(UserSettings)
+                    .where(UserSettings.user_id == user.id)
+                    .values(ai_name=name)
+                )
+            else:
+                db.add(UserSettings(user_id=user.id, ai_name=name))
+                await db.flush()
+            await db.commit()
+
+        # Generate first chat message
+        try:
+            from src.agents.core.conversation_agent import ConversationAgent
+            from src.agents.shared_memory import SharedMemory
+            from src.services.context_detection import GENERAL
+            from src.services.conversation_memory import save_conversation
+
+            SharedMemory.invalidate(user.id)
+            async with AsyncSessionLocal() as db:
+                sc = await SharedMemory.load(user.id, db)
+                agent = ConversationAgent(user.id)
+                first_msg = await agent.generate_first_message(sc)
+                await save_conversation(
+                    user_id=user.id,
+                    message="You named your AI companion.",
+                    response=first_msg,
+                    context=GENERAL,
+                    sentiment="neutral",
+                    db=db,
+                )
+                await db.commit()
+        except Exception as exc:
+            logger.warning("Onboarding first message failed for %s: %s", user.id, exc)
+
+        # Advance to trader class step
+        await set_onboarding_step(phone, STEP_AWAITING_TRADER_CLASS)
+        return (
+            f"Nice to meet you! *{name}* is locked in. 🎯\n\n"
+            "Now, which best describes your trading experience?\n\n"
+            "1️⃣ Complete novice — never traded\n"
+            "2️⃣ Curious saver — interested but cautious\n"
+            "3️⃣ Self-taught — done some research\n"
+            "4️⃣ Experienced — active trader\n"
+            "5️⃣ Crypto native — DeFi / on-chain\n\n"
+            "Reply with a number (1-5):"
+        )
+
+    async def _onboarding_set_trader_class(
+        self, phone: str, user: User, text: str
+    ) -> str:
+        """Handle the user's trader class selection."""
+        from src.services.bot_onboarding_state import (
+            clear_onboarding,
+            parse_trader_class_choice,
+        )
+
+        choice = parse_trader_class_choice(text)
+        if not choice:
+            return (
+                "I didn't catch that. Reply with a number 1-5:\n\n"
+                "1️⃣ Complete novice\n"
+                "2️⃣ Curious saver\n"
+                "3️⃣ Self-taught\n"
+                "4️⃣ Experienced\n"
+                "5️⃣ Crypto native"
+            )
+
+        # Persist trader class
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select as sa_select, update as sa_update
+            from models import UserSettings
+
+            us = (await db.execute(
+                sa_select(UserSettings).where(UserSettings.user_id == user.id)
+            )).scalar_one_or_none()
+            if us:
+                await db.execute(
+                    sa_update(UserSettings)
+                    .where(UserSettings.user_id == user.id)
+                    .values(
+                        trader_class=choice,
+                        class_detected_at=_now(),
+                        class_detection_method="whatsapp_onboarding",
+                        onboarding_complete=True,
+                    )
+                )
+            else:
+                db.add(UserSettings(
+                    user_id=user.id,
+                    trader_class=choice,
+                    class_detected_at=_now(),
+                    class_detection_method="whatsapp_onboarding",
+                    onboarding_complete=True,
+                ))
+                await db.flush()
+            await db.commit()
+
+        # Clear onboarding state
+        await clear_onboarding(phone)
+
+        # Tailor response by experience level
+        _LABEL = {
+            "complete_novice": "Complete novice",
+            "curious_saver": "Curious saver",
+            "self_taught": "Self-taught researcher",
+            "experienced": "Experienced trader",
+            "crypto_native": "Crypto native",
+        }
+        label = _LABEL.get(choice, choice)
+
+        # Include web CTA for provisional (chat-only) users
+        from src.services.provisional_user import is_provisional
+
+        web_hint = ""
+        if is_provisional(user):
+            web_hint = (
+                f"\n\n🌐 Want the full web dashboard + live trading?\n"
+                f"Tap: {settings.frontend_url}/register"
+            )
+
+        return (
+            f"Got it — *{label}*. Your AI will adapt its style and risk levels accordingly.\n\n"
+            "✅ Setup complete! Here's what you can do:\n\n"
+            "💬 Just type naturally — ask questions, get analysis\n"
+            "📊 PORTFOLIO — see open positions\n"
+            f"⚙️ Settings: {settings.frontend_url}/settings\n\n"
+            "To connect an exchange for live trading, visit:\n"
+            f"{settings.frontend_url}/settings/exchange"
+            f"{web_hint}\n\n"
+            "Or just ask me anything to get started! 🚀"
         )
 
     # ── Outbound: trade alert ─────────────────────────────────────────────────

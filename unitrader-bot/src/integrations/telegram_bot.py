@@ -148,40 +148,69 @@ class TelegramBotService:
         tg_name = update.effective_user.username or update.effective_user.first_name or "Trader"
         t0 = time.perf_counter()
 
+        # ── Deep-link: /start link_<code>  (one-tap from web) ─────────────
+        args = ctx.args or []
+        if args and args[0].lower().startswith("link_"):
+            code = args[0][5:].strip().upper()
+            if code:
+                ctx.args = [code]
+                await self.cmd_link(update, ctx)
+                return
+
         user = await self._get_linked_user(tg_id)
 
         if user:
-            text = (
-                f"👋 Welcome back, *{tg_name}*!\n\n"
-                f"Your AI trading companion *{user.ai_name}* is ready.\n\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n"
-                "📊 `/portfolio` — open positions\n"
-                "📈 `/trade BUY BTCUSDT 1.5` — execute trade\n"
-                "❌ `/close BTCUSDT` — close position\n"
-                "📜 `/history` — last 10 trades\n"
-                "🏆 `/performance` — your stats\n"
-                "💬 `/chat <question>` — ask your AI\n"
-                "⚙️ `/settings` — manage settings\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n"
-                "Type /help for the full command list."
-            )
+            # If user hasn't named their AI, kick off onboarding
+            if not user.ai_name or user.ai_name in ("your AI", "Apex"):
+                from src.services.bot_onboarding_state import (
+                    STEP_AWAITING_AI_NAME,
+                    set_onboarding_step,
+                )
+                await set_onboarding_step(tg_id, STEP_AWAITING_AI_NAME)
+                text = (
+                    f"👋 Welcome back, *{tg_name}*! Let's finish setting up.\n\n"
+                    "What would you like to name your AI trader?\n"
+                    "(e.g. Apex, Nova, Max)\n\n"
+                    "Just type a name:"
+                )
+            else:
+                text = (
+                    f"👋 Welcome back, *{tg_name}*!\n\n"
+                    f"Your AI trading companion *{user.ai_name}* is ready.\n\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "📊 `/portfolio` — open positions\n"
+                    "📈 `/trade BUY BTCUSDT 1.5` — execute trade\n"
+                    "❌ `/close BTCUSDT` — close position\n"
+                    "📜 `/history` — last 10 trades\n"
+                    "🏆 `/performance` — your stats\n"
+                    "💬 `/chat <question>` — ask your AI\n"
+                    "⚙️ `/settings` — manage settings\n"
+                    "━━━━━━━━━━━━━━━━━━━━━\n"
+                    "Type /help for the full command list."
+                )
         else:
-            frontend = settings.frontend_url
+            # ── No account — create a provisional one and start onboarding ─
+            from src.services.bot_onboarding_state import (
+                STEP_AWAITING_AI_NAME,
+                set_onboarding_step,
+            )
+            from src.services.provisional_user import create_provisional_user
+
+            async with AsyncSessionLocal() as db:
+                user = await create_provisional_user(
+                    db,
+                    platform=_PLATFORM,
+                    external_id=tg_id,
+                    external_username=tg_name,
+                )
+
+            await set_onboarding_step(tg_id, STEP_AWAITING_AI_NAME)
             text = (
-                f"👋 Welcome to *Unitrader Bot*, {tg_name}!\n\n"
-                "To start trading, link this Telegram account to your Unitrader profile.\n\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n"
-                "📱 *Option 1 — Web-initiated (recommended)*\n"
-                f"1. Log in at {frontend}\n"
-                "2. Go to Settings → Connected Accounts → Link Telegram\n"
-                "3. You'll receive a 6-digit code\n"
-                "4. Send me: `/link 123456`\n\n"
-                "📝 *Option 2 — Bot-initiated*\n"
-                "1. Send me `/link` (no code)\n"
-                "2. I'll generate a code for you\n"
-                f"3. Enter it at {frontend}/link-telegram\n"
-                "━━━━━━━━━━━━━━━━━━━━━\n"
-                f"Need help? Visit {frontend.rstrip('/')}/help"
+                f"👋 Welcome to *Unitrader*, {tg_name}!\n\n"
+                "I'm your personal AI trading companion. Let's get you set up.\n\n"
+                "First — what would you like to name me?\n"
+                "(e.g. Apex, Nova, Max)\n\n"
+                "Just type a name:"
             )
 
         ms = int((time.perf_counter() - t0) * 1000)
@@ -272,16 +301,33 @@ class TelegramBotService:
                 user = (await db.execute(
                     sa_select(User).where(User.id == user_id)
                 )).scalar_one_or_none()
-                ai_name = user.ai_name if user else "your AI"
+                ai_name = user.ai_name if user else None
 
-            await self._reply(
-                update,
-                f"🎉 *Linked successfully!*\n\n"
-                f"Your Telegram is now connected to your Unitrader account.\n"
-                f"Your AI companion *{ai_name}* is ready to trade.\n\n"
-                "Type /help to see available commands.",
-                parse_mode="Markdown",
-            )
+            # If user hasn't named their AI yet, start onboarding
+            if not ai_name or ai_name in ("your AI", "Apex"):
+                from src.services.bot_onboarding_state import (
+                    STEP_AWAITING_AI_NAME,
+                    set_onboarding_step,
+                )
+                await set_onboarding_step(tg_id, STEP_AWAITING_AI_NAME)
+                await self._reply(
+                    update,
+                    "🎉 *Linked successfully!*\n\n"
+                    "Let's set up your AI trader.\n\n"
+                    "First — what would you like to name your AI?\n"
+                    "(e.g. Apex, Nova, Max)\n\n"
+                    "Just type a name:",
+                    parse_mode="Markdown",
+                )
+            else:
+                await self._reply(
+                    update,
+                    f"🎉 *Linked successfully!*\n\n"
+                    f"Your Telegram is now connected to your Unitrader account.\n"
+                    f"Your AI companion *{ai_name}* is ready to trade.\n\n"
+                    "Type /help to see available commands.",
+                    parse_mode="Markdown",
+                )
             await self._log(tg_id, "command", "/link", f"/link {code}",
                             "Account linked", "success", user_id=user_id)
             return
@@ -957,6 +1003,30 @@ class TelegramBotService:
         raw = (update.message.text or "").strip()
         t0 = time.perf_counter()
 
+        # ── Intercept: conversational onboarding in progress ──────────────
+        from src.services.bot_onboarding_state import get_onboarding_step
+
+        onb = await get_onboarding_step(tg_id)
+        if onb:
+            user = await self._get_linked_user(tg_id)
+            if user:
+                try:
+                    response = await self._onboarding_handle_step(
+                        update, tg_id, user, raw, onb
+                    )
+                    status = "success"
+                except Exception as exc:
+                    logger.error("Telegram onboarding error for %s: %s", tg_id, exc)
+                    response = "Something went wrong. Let's try again — what would you like to name your AI trader?"
+                    status = "error"
+                ms = int((time.perf_counter() - t0) * 1000)
+                await self._reply(update, response, parse_mode="Markdown")
+                await self._log(
+                    tg_id, "message", "onboarding", raw, response, status,
+                    user_id=user.id, response_time_ms=ms,
+                )
+                return
+
         from src.services.bot_intent import classify_natural_intent
 
         intent = classify_natural_intent(raw)
@@ -1073,6 +1143,189 @@ class TelegramBotService:
                 user_id=user_id,
                 response_time_ms=ms,
             )
+
+    # ── Conversational onboarding step handlers ─────────────────────────────
+
+    async def _onboarding_handle_step(
+        self, update: Update, tg_id: str, user: User, text: str, onb: dict
+    ) -> str:
+        """Route to the correct onboarding step handler."""
+        from src.services.bot_onboarding_state import (
+            STEP_AWAITING_AI_NAME,
+            STEP_AWAITING_TRADER_CLASS,
+        )
+
+        step = onb["step"]
+        if step == STEP_AWAITING_AI_NAME:
+            return await self._onboarding_set_name(update, tg_id, user, text)
+        if step == STEP_AWAITING_TRADER_CLASS:
+            return await self._onboarding_set_trader_class(update, tg_id, user, text)
+        from src.services.bot_onboarding_state import clear_onboarding
+        await clear_onboarding(tg_id)
+        return "Setup complete! Type /help to see what I can do."
+
+    async def _onboarding_set_name(
+        self, update: Update, tg_id: str, user: User, text: str
+    ) -> str:
+        """Handle the user's AI name choice."""
+        from src.services.bot_onboarding_state import (
+            STEP_AWAITING_TRADER_CLASS,
+            set_onboarding_step,
+        )
+
+        name = text.strip()
+
+        if name.lower() in ("skip", "cancel", "/skip", "/cancel"):
+            from src.services.bot_onboarding_state import clear_onboarding
+            await clear_onboarding(tg_id)
+            return "No problem! You can name your AI later in /settings.\n\nType /help to see commands."
+
+        if not 2 <= len(name) <= 20:
+            return "Name must be 2-20 characters. Try again:"
+
+        if not name.replace(" ", "").isalpha():
+            return "Name can only contain letters (and spaces). Try again:"
+
+        # Persist to User + UserSettings
+        from models import UserSettings
+        from sqlalchemy import update as sa_update
+
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                sa_update(User).where(User.id == user.id).values(ai_name=name)
+            )
+            us = (await db.execute(
+                sa_select(UserSettings).where(UserSettings.user_id == user.id)
+            )).scalar_one_or_none()
+            if us:
+                await db.execute(
+                    sa_update(UserSettings)
+                    .where(UserSettings.user_id == user.id)
+                    .values(ai_name=name)
+                )
+            else:
+                db.add(UserSettings(user_id=user.id, ai_name=name))
+                await db.flush()
+            await db.commit()
+
+        # Generate first chat message
+        try:
+            from src.agents.core.conversation_agent import ConversationAgent
+            from src.services.context_detection import GENERAL
+            from src.services.conversation_memory import save_conversation
+
+            SharedMemory.invalidate(user.id)
+            async with AsyncSessionLocal() as db:
+                sc = await SharedMemory.load(user.id, db)
+                agent = ConversationAgent(user.id)
+                first_msg = await agent.generate_first_message(sc)
+                await save_conversation(
+                    user_id=user.id,
+                    message="You named your AI companion.",
+                    response=first_msg,
+                    context=GENERAL,
+                    sentiment="neutral",
+                    db=db,
+                )
+                await db.commit()
+        except Exception as exc:
+            logger.warning("Telegram onboarding first message failed for %s: %s", user.id, exc)
+
+        # Advance to trader class step
+        await set_onboarding_step(tg_id, STEP_AWAITING_TRADER_CLASS)
+        return (
+            f"Nice to meet you! *{name}* is locked in. 🎯\n\n"
+            "Now, which best describes your trading experience?\n\n"
+            "1️⃣ Complete novice — never traded\n"
+            "2️⃣ Curious saver — interested but cautious\n"
+            "3️⃣ Self-taught — done some research\n"
+            "4️⃣ Experienced — active trader\n"
+            "5️⃣ Crypto native — DeFi / on-chain\n\n"
+            "Reply with a number (1-5):"
+        )
+
+    async def _onboarding_set_trader_class(
+        self, update: Update, tg_id: str, user: User, text: str
+    ) -> str:
+        """Handle the user's trader class selection."""
+        from src.services.bot_onboarding_state import (
+            clear_onboarding,
+            parse_trader_class_choice,
+        )
+
+        choice = parse_trader_class_choice(text)
+        if not choice:
+            return (
+                "I didn't catch that. Reply with a number 1-5:\n\n"
+                "1️⃣ Complete novice\n"
+                "2️⃣ Curious saver\n"
+                "3️⃣ Self-taught\n"
+                "4️⃣ Experienced\n"
+                "5️⃣ Crypto native"
+            )
+
+        # Persist trader class
+        from models import UserSettings
+        from sqlalchemy import update as sa_update
+
+        async with AsyncSessionLocal() as db:
+            us = (await db.execute(
+                sa_select(UserSettings).where(UserSettings.user_id == user.id)
+            )).scalar_one_or_none()
+            if us:
+                await db.execute(
+                    sa_update(UserSettings)
+                    .where(UserSettings.user_id == user.id)
+                    .values(
+                        trader_class=choice,
+                        class_detected_at=_now(),
+                        class_detection_method="telegram_onboarding",
+                        onboarding_complete=True,
+                    )
+                )
+            else:
+                db.add(UserSettings(
+                    user_id=user.id,
+                    trader_class=choice,
+                    class_detected_at=_now(),
+                    class_detection_method="telegram_onboarding",
+                    onboarding_complete=True,
+                ))
+                await db.flush()
+            await db.commit()
+
+        await clear_onboarding(tg_id)
+
+        _LABEL = {
+            "complete_novice": "Complete novice",
+            "curious_saver": "Curious saver",
+            "self_taught": "Self-taught researcher",
+            "experienced": "Experienced trader",
+            "crypto_native": "Crypto native",
+        }
+        label = _LABEL.get(choice, choice)
+
+        # Include web CTA for provisional (chat-only) users
+        from src.services.provisional_user import is_provisional
+
+        web_hint = ""
+        if is_provisional(user):
+            web_hint = (
+                f"\n\n🌐 Want the full web dashboard + live trading?\n"
+                f"Tap: {settings.frontend_url}/register"
+            )
+
+        return (
+            f"Got it — *{label}*. Your AI will adapt its style and risk levels accordingly.\n\n"
+            "✅ Setup complete! Here's what you can do:\n\n"
+            "💬 Just type naturally — ask questions, get analysis\n"
+            "📊 `/portfolio` — see open positions\n"
+            f"⚙️ Settings: {settings.frontend_url}/settings\n\n"
+            "To connect an exchange for live trading, visit:\n"
+            f"{settings.frontend_url}/settings/exchange"
+            f"{web_hint}\n\n"
+            "Or just ask me anything to get started! 🚀"
+        )
 
     # ── Outbound: trade alert ─────────────────────────────────────────────────
 

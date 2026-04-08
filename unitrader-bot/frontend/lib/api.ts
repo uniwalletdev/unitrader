@@ -115,6 +115,9 @@ export const authApi = {
     trader_class?: string;
   }) => api.post("/api/onboarding/complete-wizard", data ?? {}),
   skipOnboarding: () => api.post("/api/onboarding/skip", {}),
+  botInfo: () => api.get("/health/bot-info"),
+  claim: (claim_token: string, clerk_token: string) =>
+    api.post("/api/auth/claim", { claim_token, clerk_token }),
 };
 
 // ── Trading ──────────────────────────────────────────────────────────────────

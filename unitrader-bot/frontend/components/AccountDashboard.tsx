@@ -66,28 +66,24 @@ type Account = {
   oandaSubtype?: "Practice" | "Live";
 };
 
-/** Badge display only — Coinbase is always live; paper only when API says paper (e.g. Alpaca paper). */
+/** Badge display only — generic is_paper check for all exchanges. */
 type TradingAccountBadgeInput = { exchange: string; is_paper: boolean };
 
 function getAccountBadge(account: TradingAccountBadgeInput) {
-  if (account.exchange.toLowerCase() === "coinbase") {
-    return { label: "Live" as const, color: "green" as const };
-  }
   if (account.is_paper) {
     return { label: "Paper" as const, color: "amber" as const };
   }
   return { label: "Live" as const, color: "green" as const };
 }
 
-/** Dashboard capital totals: live = Coinbase or any account with is_paper false. */
+/** Dashboard capital totals: any account with is_paper false counts as live capital. */
 function countsTowardLiveCapital(account: Account): boolean {
-  if (account.rawExchange.toLowerCase() === "coinbase") return true;
   return !account.isPaperFromApi;
 }
 
-/** Paper summary total: Alpaca paper only. */
+/** Paper summary total: any paper account across all exchanges. */
 function countsTowardPaperValue(account: Account): boolean {
-  return account.rawExchange.toLowerCase() === "alpaca" && account.isPaperFromApi;
+  return account.isPaperFromApi;
 }
 
 function isDisplayPaper(account: Account): boolean {
@@ -102,7 +98,7 @@ function mapExchangeName(raw: string): Exchange {
     kraken: "Kraken",
     oanda: "Oanda",
   };
-  return m[raw.toLowerCase()] ?? ("Alpaca" as Exchange);
+  return m[raw.toLowerCase()] ?? (raw as Exchange);
 }
 
 function backendTradeToTrade(t: BackendTrade): Trade {

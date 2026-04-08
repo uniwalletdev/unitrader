@@ -81,6 +81,7 @@ class SharedContext:
     performance: dict = field(default_factory=dict)
     recent_trades: list[dict] = field(default_factory=list)
     execution_venue: Optional[ExecutionVenue] = None
+    account_balance_usd: float = 0.0  # Primary account balance for chat context
 
     @classmethod
     def default(cls, user_id: str) -> "SharedContext":
@@ -523,6 +524,14 @@ class SharedMemory:
                 trading_accounts[0]["exchange"] if trading_accounts else "alpaca"
             )
 
+            # Surface primary account balance for chat context
+            primary_balance = 0.0
+            for acct in trading_accounts:
+                bal = acct.get("balance_usd", 0.0)
+                if bal and bal > 0:
+                    primary_balance = bal
+                    break
+
             settings_ai = (getattr(settings, "ai_name", None) or "").strip()
             user_ai = (getattr(user, "ai_name", None) or "").strip()
             resolved_ai = settings_ai or user_ai or "Apex"
@@ -577,6 +586,7 @@ class SharedMemory:
                 recent_closed_trades=closed_insights["recent_closed_trades"],
                 performance=performance,
                 recent_trades=recent_trades,
+                account_balance_usd=primary_balance,
             )
 
             if trading_account_id:

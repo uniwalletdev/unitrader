@@ -29,6 +29,22 @@ router = APIRouter(prefix="/health", tags=["Health"])
 
 
 # ─────────────────────────────────────────────
+# GET /health/bot-info  (public, no auth)
+# ─────────────────────────────────────────────
+
+@router.get("/bot-info", summary="Public bot contact info for deep-link generation")
+async def bot_info():
+    """Return WhatsApp number and Telegram bot username so the frontend can
+    build one-tap deep links (wa.me / t.me) without hardcoding values."""
+    return {
+        "whatsapp_number": settings.twilio_whatsapp_number or None,
+        "telegram_bot_username": settings.telegram_bot_username or None,
+        "whatsapp_enabled": settings.whatsapp_enabled,
+        "telegram_enabled": settings.telegram_enabled,
+    }
+
+
+# ─────────────────────────────────────────────
 # GET /health
 # ─────────────────────────────────────────────
 

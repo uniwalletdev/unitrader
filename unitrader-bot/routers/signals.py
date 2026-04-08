@@ -125,7 +125,16 @@ async def get_signal_stack(
         settings = settings_result.scalar_one_or_none()
         trading_account_id = getattr(settings, "preferred_trading_account_id", None) if settings else None
     if trading_account_id is None:
-        raise HTTPException(status_code=400, detail="trading_account_id_required")
+        return {
+            "status": "success",
+            "data": {
+                "signals": [],
+                "reason": "no_account",
+                "last_scan_at": None,
+                "next_scan_in_minutes": 30,
+                "assets_scanned": 0,
+            },
+        }
 
     market_ctx = await resolve_market_context(
         db=db, user_id=current_user.id, trading_account_id=trading_account_id
