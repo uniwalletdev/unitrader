@@ -34,12 +34,19 @@ router = APIRouter(prefix="/health", tags=["Health"])
 @router.get("", response_model=HealthResponse, summary="Application liveness")
 async def health_check():
     """Return basic application status. Always 200 if the server is running."""
+    alpaca_key_set = bool((settings.alpaca_paper_api_key or "").strip())
+    alpaca_secret_set = bool((settings.alpaca_paper_api_secret or "").strip())
     return HealthResponse(
         status="healthy",
         timestamp=datetime.now(timezone.utc),
         alpaca_rate_limiter={
             "waiting": alpaca_limiter.waiting,
             "tokens": round(alpaca_limiter.tokens, 2),
+        },
+        alpaca_credentials={
+            "paper_key_configured": alpaca_key_set,
+            "paper_secret_configured": alpaca_secret_set,
+            "status": "ok" if (alpaca_key_set and alpaca_secret_set) else "missing",
         },
     )
 

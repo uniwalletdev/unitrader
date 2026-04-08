@@ -248,6 +248,7 @@ class HealthResponse(BaseModel):
     timestamp: datetime
     services: dict[str, ServiceStatus] | None = None
     alpaca_rate_limiter: dict[str, Any] | None = None
+    alpaca_credentials: dict[str, Any] | None = None
 
 
 # ─────────────────────────────────────────────

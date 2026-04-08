@@ -785,7 +785,11 @@ async def _run_auto_scan_for_account(trading_account: TradingAccount, settings_r
             logger.info("Full Auto skipping %s for %s due to exchange backoff", symbol, user.id)
             continue
 
-        analysis = await _analyse_symbol_for_mode(symbol, db, exchange_override=trading_account.exchange)
+        try:
+            analysis = await _analyse_symbol_for_mode(symbol, db, exchange_override=trading_account.exchange)
+        except Exception as exc:
+            logger.warning("Full Auto: skipping %s for %s — analysis failed: %s", symbol, user.id, exc)
+            continue
         db.add(_signal_row_from_analysis(analysis, run_id))
         convergence = analysis["convergence"]
         confidence = convergence["confidence"]
@@ -892,7 +896,11 @@ async def _run_apex_selects_for_user(settings_row: UserSettings, user: User, db)
     run_id = uuid.uuid4()
 
     for symbol in watchlist:
-        analysis = await _analyse_symbol_for_mode(symbol, db)
+        try:
+            analysis = await _analyse_symbol_for_mode(symbol, db)
+        except Exception as exc:
+            logger.warning("Apex Selects: skipping %s for %s — analysis failed: %s", symbol, user.id, exc)
+            continue
         db.add(_signal_row_from_analysis(analysis, run_id))
         if analysis["asset_class"] not in allowed_classes:
             continue

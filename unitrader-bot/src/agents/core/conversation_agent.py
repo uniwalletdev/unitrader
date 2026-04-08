@@ -14,7 +14,6 @@ import asyncio
 import logging
 import re
 import uuid
-import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Any
 from typing import Literal
@@ -283,10 +282,7 @@ async def _save_onboarding_messages(
     async def _save(session: AsyncSession) -> None:
         # One row per flush avoids SQLAlchemy 2 insertmanyvalues batched INSERT/RETURNING
         # sentinel correlation issues with UUID PKs + asyncpg.
-        uid_fk = (
-            _uuid.UUID(str(user_id)) if not isinstance(user_id, _uuid.UUID) else user_id
-        )
-        user_id_str = str(uid_fk)
+        user_id_str = str(user_id)
         user_row = OnboardingMessage(
             id=uuid.uuid4(), user_id=user_id_str, role="user", content=user_message
         )
@@ -1491,13 +1487,8 @@ class ConversationAgent:
         # Persist the user message so history is complete for future turns
         try:
             async with AsyncSessionLocal() as _db:
-                _uid = (
-                    _uuid.UUID(str(self.user_id))
-                    if not isinstance(self.user_id, _uuid.UUID)
-                    else self.user_id
-                )
                 user_om = OnboardingMessage(
-                    user_id=str(_uid),
+                    user_id=str(self.user_id),
                     role="user",
                     content=user_message,
                 )
@@ -1595,13 +1586,8 @@ class ConversationAgent:
         # 'assistant', 'system'));` in Supabase SQL editor if saves keep failing.
         try:
             async with AsyncSessionLocal() as _db:
-                _uid = (
-                    _uuid.UUID(str(self.user_id))
-                    if not isinstance(self.user_id, _uuid.UUID)
-                    else self.user_id
-                )
                 om = OnboardingMessage(
-                    user_id=str(_uid),
+                    user_id=str(self.user_id),
                     role="assistant",
                     content=assistant_message,
                 )
@@ -1648,13 +1634,8 @@ class ConversationAgent:
         """Save an extracted profile field to onboarding_messages and shared_memory."""
         try:
             async with AsyncSessionLocal() as _db:
-                _uid = (
-                    _uuid.UUID(str(self.user_id))
-                    if not isinstance(self.user_id, _uuid.UUID)
-                    else self.user_id
-                )
                 om = OnboardingMessage(
-                    user_id=str(_uid),
+                    user_id=str(self.user_id),
                     role="system",
                     content=f"extracted:{field}={value}",
                 )
