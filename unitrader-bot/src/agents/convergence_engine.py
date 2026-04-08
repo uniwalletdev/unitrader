@@ -123,7 +123,8 @@ class ConvergenceEngine:
         macd_info = indicators.get("macd", {}) or {}
         macd_signal = self._classify_macd(macd_info)
         volume = market_data.get("volume")
-        volume_ratio = self._volume_ratio(volume)
+        avg_volume = market_data.get("avg_volume")
+        volume_ratio = self._volume_ratio(volume, avg_volume)
         score = 50
 
         if rsi < 30:
@@ -363,11 +364,16 @@ Return JSON only:
             return "bearish"
         return "neutral"
 
-    def _volume_ratio(self, volume: float | None) -> float:
-        if volume is None:
-            return 1.0
-        if volume <= 0:
-            return 0.0
+    def _volume_ratio(self, volume: float | None, avg_volume: float | None = None) -> float:
+        """Compute current volume relative to average.
+
+        If avg_volume is provided, returns volume / avg_volume.
+        Otherwise falls back to 1.0 (neutral).
+        """
+        if volume is None or volume <= 0:
+            return 0.0 if volume is not None and volume <= 0 else 1.0
+        if avg_volume and avg_volume > 0:
+            return round(volume / avg_volume, 2)
         return 1.0
 
     def _days_until_earnings(self, earnings_date: str | None) -> int | None:
@@ -395,8 +401,34 @@ Return JSON only:
         if cached_at and datetime.now(timezone.utc) - cached_at < _STOCK_FEAR_GREED_TTL:
             return int(_STOCK_FEAR_GREED_CACHE["value"])
 
-        # v1 fallback: neutral stock-market mood until a reliable stock source is added.
-        _STOCK_FEAR_GREED_CACHE["value"] = 50
-        _STOCK_FEAR_GREED_CACHE["label"] = "Neutral"
-        _STOCK_FEAR_GREED_CACHE["cached_at"] = datetime.now(timezone.utc)
-        return 50
+        # Try live CNN Fear & Greed Index — fire-and-forget with fallback
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            future = loop.create_task(self._fetch_stock_fear_greed())
+            # Don't await here — update cache async; return cached/fallback now
+        except Exception:
+            pass
+
+        # Return last cached value or neutral fallback
+        return int(_STOCK_FEAR_GREED_CACHE.get("value", 50))
+
+    async def _fetch_stock_fear_greed(self) -> int:
+        """Fetch CNN Fear & Greed Index for stocks and update the module cache."""
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get("https://production.dataviz.cnn.io/index/fearandgreed/graphdata")
+                resp.raise_for_status()
+                data = resp.json()
+                score = data.get("fear_and_greed", {}).get("score")
+                if score is not None:
+                    value = int(round(float(score)))
+                    _STOCK_FEAR_GREED_CACHE["value"] = value
+                    _STOCK_FEAR_GREED_CACHE["label"] = self._classify_fear_greed(value)
+                    _STOCK_FEAR_GREED_CACHE["cached_at"] = datetime.now(timezone.utc)
+                    logger.info("Stock Fear & Greed updated: %s (%s)", value, _STOCK_FEAR_GREED_CACHE["label"])
+                    return value
+        except Exception as exc:
+            logger.warning("CNN Fear & Greed fetch failed: %s", exc)
+        # Fallback: keep existing cached value
+        return int(_STOCK_FEAR_GREED_CACHE.get("value", 50))

@@ -57,7 +57,8 @@ from src.services.learning_hub import (
 
 logger = logging.getLogger(__name__)
 
-_CLAUDE_MODEL = "claude-3-haiku-20240307"
+_CLAUDE_MODEL = "claude-sonnet-4-20250514"
+_CLAUDE_MODEL_FAST = "claude-3-haiku-20240307"  # translations / summaries only
 
 # ─────────────────────────────────────────────
 # Trader-class trade-size limits (in GBP/USD)
@@ -759,6 +760,28 @@ class TradingAgent:
                 "and prioritise capital preservation over returns.\n"
             )
 
+        # Inject Learning Hub intelligence (cross-agent pattern insights)
+        try:
+            insights = await get_trading_insights()
+            if insights.get("has_insights"):
+                insight_lines = ["\nLEARNING HUB INTELLIGENCE (discovered from historical trade patterns):"]
+                if insights.get("high_confidence_setups"):
+                    for hc in insights["high_confidence_setups"]:
+                        insight_lines.append(f"  FOCUS: {hc}")
+                if insights.get("avoid_setups"):
+                    for av in insights["avoid_setups"]:
+                        insight_lines.append(f"  AVOID: {av}")
+                if insights.get("focus_condition"):
+                    insight_lines.append(f"  Best in: {insights['focus_condition']} markets")
+                if insights.get("avoid_condition"):
+                    insight_lines.append(f"  Weak in: {insights['avoid_condition']} markets")
+                mod = insights.get("position_size_modifier", 1.0)
+                if mod != 1.0:
+                    insight_lines.append(f"  Position size modifier: {mod:.2f}x")
+                system_prompt += "\n".join(insight_lines) + "\n"
+        except Exception as exc:
+            logger.debug("Learning Hub insights unavailable: %s", exc)
+
         # Build user prompt with current market data
         user_prompt = self._build_analysis_user_prompt(symbol, market_data)
 
@@ -869,7 +892,7 @@ Simple explanation:"""
 
         try:
             response = await self._claude.messages.create(
-                model=_CLAUDE_MODEL,
+                model=_CLAUDE_MODEL_FAST,
                 max_tokens=256,
                 system="You are a friendly financial advisor explaining trading concepts to beginners.",
                 messages=[{"role": "user", "content": translation_prompt}],
@@ -895,7 +918,7 @@ Real-world analogy:"""
 
         try:
             response = await self._claude.messages.create(
-                model=_CLAUDE_MODEL,
+                model=_CLAUDE_MODEL_FAST,
                 max_tokens=256,
                 system="You are a creative educator using analogies to explain trading concepts.",
                 messages=[{"role": "user", "content": translation_prompt}],

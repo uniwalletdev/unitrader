@@ -111,7 +111,8 @@ class Settings(BaseSettings):
     # AI / LLM
     # ─────────────────────────────────────────────
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-3-haiku-20240307"
+    anthropic_model: str = "claude-sonnet-4-20250514"
+    anthropic_model_fast: str = "claude-3-haiku-20240307"
     anthropic_base_url: str = "https://api.anthropic.com"
 
     # ─────────────────────────────────────────────

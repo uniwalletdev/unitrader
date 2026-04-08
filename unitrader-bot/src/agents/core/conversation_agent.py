@@ -45,7 +45,8 @@ from src.services.conversation_memory import (
 
 logger = logging.getLogger(__name__)
 
-_CLAUDE_MODEL = "claude-3-haiku-20240307"
+_CLAUDE_MODEL = "claude-sonnet-4-20250514"
+_CLAUDE_MODEL_FAST = "claude-3-haiku-20240307"  # light tasks only
 _MAX_TOKENS = 1024
 _HISTORY_TURNS = 10  # number of past exchanges to include
 
