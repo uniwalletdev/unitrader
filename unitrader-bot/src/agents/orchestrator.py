@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import AuditLog
 from src.agents.shared_memory import SharedContext, SharedMemory
-from src.market_context import MarketContext
+from src.market_context import MarketContext, resolve_execution_venue
 from src.agents.core.trading_agent import TradingAgent, validate_trade_amount
 from src.agents.core.conversation_agent import ConversationAgent
 from src.agents.sentiment_agent import SentimentAgent
@@ -280,6 +280,19 @@ class MasterOrchestrator:
         elif exchange:
             ctx.exchange = exchange.lower()
 
+        # Resolve execution venue for multi-exchange routing
+        try:
+            venue = await resolve_execution_venue(
+                user_id=user_id,
+                asset_class=payload.get("asset_class"),
+                db=db,
+                trust_ladder_stage=ctx.trust_ladder_stage,
+            )
+            ctx.execution_venue = venue
+            ctx.exchange = venue.exchange
+        except Exception as exc:
+            logger.warning("resolve_execution_venue failed for user %s: %s", user_id, exc)
+
         # Check subscription
         if not ctx.subscription_active:
             raise HTTPException(status_code=402, detail="Subscription required to analyze trades")
@@ -465,6 +478,19 @@ class MasterOrchestrator:
                     "max_trade_amount": amount_check["max"],
                 },
             )
+
+        # Resolve execution venue so agents use the correct exchange
+        try:
+            venue = await resolve_execution_venue(
+                user_id=user_id,
+                asset_class=payload.get("asset_class"),
+                db=db,
+                trust_ladder_stage=ctx.trust_ladder_stage,
+            )
+            ctx.execution_venue = venue
+            ctx.exchange = venue.exchange
+        except Exception as exc:
+            logger.warning("resolve_execution_venue failed for user %s: %s", user_id, exc)
 
         # Step 2: Get AI analysis with signal, explanation, confidence, market data
         trading_agent = TradingAgent(user_id=user_id)

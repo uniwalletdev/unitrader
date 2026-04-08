@@ -452,6 +452,32 @@ def is_market_open() -> bool:
     return market_open <= now_et <= market_close
 
 
+def is_market_open_for_asset_class(asset_class: str) -> bool:
+    """Check whether the market for a given asset class is currently open.
+
+    - stocks: Mon–Fri 09:30–16:00 ET
+    - crypto: 24/7
+    - forex: Sun 17:00 ET – Fri 17:00 ET (continuous)
+    """
+    if asset_class == "crypto":
+        return True
+    if asset_class == "forex":
+        et = pytz.timezone("America/New_York")
+        now_et = datetime.now(et)
+        wd = now_et.weekday()
+        hour = now_et.hour
+        # Closed Fri 17:00 through Sun 17:00 ET
+        if wd == 5:  # Saturday
+            return False
+        if wd == 4 and hour >= 17:  # Friday after 5pm
+            return False
+        if wd == 6 and hour < 17:  # Sunday before 5pm
+            return False
+        return True
+    # stocks (default)
+    return is_market_open()
+
+
 async def _trading_loop() -> None:
     """Execute trading cycles for all active users every 5 minutes.
 
@@ -763,29 +789,31 @@ async def full_auto_scanner_loop() -> None:
     logger.info("Full Auto scanner loop started")
     while True:
         try:
-            if is_market_open():
-                async with AsyncSessionLocal() as db:
-                    result = await db.execute(
-                        select(TradingAccount, UserSettings, User)
-                        .join(User, User.id == TradingAccount.user_id)
-                        .join(UserSettings, UserSettings.user_id == User.id)
-                        .where(
-                            TradingAccount.auto_trade_enabled == True,  # noqa: E712
-                            TradingAccount.is_active == True,  # noqa: E712
-                            UserSettings.trading_paused == False,  # noqa: E712
-                            User.is_active == True,  # noqa: E712
-                        )
+            # Check per-account asset class instead of global market hours
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(TradingAccount, UserSettings, User)
+                    .join(User, User.id == TradingAccount.user_id)
+                    .join(UserSettings, UserSettings.user_id == User.id)
+                    .where(
+                        TradingAccount.auto_trade_enabled == True,  # noqa: E712
+                        TradingAccount.is_active == True,  # noqa: E712
+                        UserSettings.trading_paused == False,  # noqa: E712
+                        User.is_active == True,  # noqa: E712
                     )
-                    for trading_account, settings_row, user in result.all():
-                        if not _is_subscription_active(user):
-                            continue
-                        try:
-                            await _run_auto_scan_for_account(trading_account, settings_row, user, db)
-                        except Exception as exc:
-                            logger.error("Full Auto scan failed for %s: %s", user.id, exc)
-                            sentry_sdk.capture_exception(exc)
-            else:
-                logger.debug("Full Auto scanner: market closed — skipping scan")
+                )
+                for trading_account, settings_row, user in result.all():
+                    if not _is_subscription_active(user):
+                        continue
+                    # Per-account asset class market hours check
+                    ac = getattr(trading_account, "asset_class", None) or "stocks"
+                    if not is_market_open_for_asset_class(ac):
+                        continue
+                    try:
+                        await _run_auto_scan_for_account(trading_account, settings_row, user, db)
+                    except Exception as exc:
+                        logger.error("Full Auto scan failed for %s: %s", user.id, exc)
+                        sentry_sdk.capture_exception(exc)
         except Exception as exc:
             logger.error("Full Auto scanner loop error: %s", exc)
         await asyncio.sleep(30 * 60)
@@ -894,7 +922,9 @@ async def apex_selects_scanner_loop() -> None:
     logger.info("Apex Selects scanner loop started")
     while True:
         try:
-            if is_market_open():
+            # At least one asset class must be open to warrant scanning
+            any_open = is_market_open() or is_market_open_for_asset_class("crypto") or is_market_open_for_asset_class("forex")
+            if any_open:
                 async with AsyncSessionLocal() as db:
                     result = await db.execute(
                         select(UserSettings, User)
@@ -935,6 +965,9 @@ async def _run_apex_selects_for_user(settings_row: UserSettings, user: User, db)
             continue
         db.add(_signal_row_from_analysis(analysis, run_id))
         if analysis["asset_class"] not in allowed_classes:
+            continue
+        # Skip symbols whose asset-class market is currently closed
+        if not is_market_open_for_asset_class(analysis["asset_class"]):
             continue
         if (
             analysis["signal"] in ("buy", "sell")

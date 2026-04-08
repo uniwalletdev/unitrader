@@ -20,7 +20,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import AuditLog, User, UserSettings
+from models import AuditLog, Trade, User, UserSettings
 from routers.auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,17 @@ async def _trust_ladder_data(current_user: User, db: AsyncSession) -> dict:
     if s and getattr(s, "onboarding_complete", False):
         stage = 3
     max_amount = 25 if stage <= 2 else 500
+
+    # Count paper trades across ALL exchanges (native + synthetic)
+    from sqlalchemy import func as sqlfunc
+    paper_count_result = await db.execute(
+        select(sqlfunc.count()).select_from(Trade).where(
+            Trade.user_id == current_user.id,
+            Trade.is_paper == True,  # noqa: E712
+        )
+    )
+    paper_trades_count = paper_count_result.scalar() or 0
+
     return {
         "stage": stage,
         # Paper trading active until stage 3 (full trading unlocked)
@@ -46,7 +57,7 @@ async def _trust_ladder_data(current_user: User, db: AsyncSession) -> dict:
         # Can advance from stage 2 once risk disclosure is accepted
         "canAdvance": stage == 2,
         "daysAtStage": 1,
-        "paperTradesCount": 0,
+        "paperTradesCount": paper_trades_count,
         "maxAmountGbp": max_amount,
     }
 

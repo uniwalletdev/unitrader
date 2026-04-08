@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import TradingAccount
+
+logger = logging.getLogger(__name__)
 
 
 class Exchange(str, Enum):
@@ -202,4 +205,190 @@ async def resolve_market_context(
         trading_account_id=trading_account_id,
         user_id=user_id,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAPER MODE TYPE
+# ─────────────────────────────────────────────────────────────────────────────
+
+class PaperModeType(str, Enum):
+    NATIVE = "native"        # Exchange has real paper API (Alpaca)
+    SYNTHETIC = "synthetic"  # We simulate the fill
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXCHANGE → ASSET CLASS DEFAULTS
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Primary asset class for each exchange (used when creating accounts).
+EXCHANGE_PRIMARY_ASSET_CLASS: dict[str, AssetClass] = {
+    "alpaca": AssetClass.STOCKS,
+    "coinbase": AssetClass.CRYPTO,
+    "binance": AssetClass.CRYPTO,
+    "kraken": AssetClass.CRYPTO,
+    "oanda": AssetClass.FOREX,
+}
+
+EXCHANGE_PAPER_MODE: dict[str, PaperModeType] = {
+    "alpaca": PaperModeType.NATIVE,
+    "coinbase": PaperModeType.SYNTHETIC,
+    "binance": PaperModeType.SYNTHETIC,
+    "kraken": PaperModeType.SYNTHETIC,
+    "oanda": PaperModeType.SYNTHETIC,
+}
+
+
+def set_account_defaults(exchange: str) -> dict:
+    """Return paper_mode_type and asset_class for a given exchange.
+
+    Called at TradingAccount creation time.
+    """
+    ex = exchange.lower()
+    return {
+        "paper_mode_type": EXCHANGE_PAPER_MODE.get(ex, PaperModeType.SYNTHETIC).value,
+        "asset_class": EXCHANGE_PRIMARY_ASSET_CLASS.get(ex, AssetClass.STOCKS).value,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EXECUTION VENUE
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class ExecutionVenue:
+    """Resolved outcome of 'where should this trade go?'"""
+    exchange: Exchange
+    asset_class: AssetClass
+    paper_mode_type: PaperModeType
+    is_paper: bool
+    trading_account_id: str
+    display_label: str  # e.g. "Stocks · Paper" or "Crypto · Live"
+
+
+# Priority order when no asset_class preference given
+_EXCHANGE_PRIORITY = {
+    Exchange.ALPACA: 0,
+    Exchange.COINBASE: 1,
+    Exchange.BINANCE: 2,
+    Exchange.KRAKEN: 3,
+    Exchange.OANDA: 4,
+}
+
+
+async def resolve_execution_venue(
+    user_id: str,
+    asset_class: Optional[AssetClass] = None,
+    db: AsyncSession | None = None,
+    trust_ladder_stage: int | None = None,
+) -> ExecutionVenue:
+    """Single source of truth: given a user and optionally an asset class,
+    return the exchange, paper mode, and account to use.
+
+    ``trust_ladder_stage`` overrides the is_paper decision:
+      stages 1-2 → paper, stages 3-4 → live.
+    If not provided the account's own ``is_paper`` flag is used.
+
+    Raises ``ExchangeAssetClassError`` if no connected exchange serves
+    the requested asset class.
+    """
+    if db is None:
+        raise ValueError("db session is required for resolve_execution_venue")
+
+    # ── Fetch all active accounts ───────────────────────────────────────────
+    result = await db.execute(
+        select(TradingAccount)
+        .where(
+            TradingAccount.user_id == user_id,
+            TradingAccount.is_active == True,  # noqa: E712
+        )
+        .order_by(TradingAccount.created_at.asc())
+    )
+    accounts = list(result.scalars().all())
+
+    if not accounts:
+        raise ExchangeAssetClassError(
+            Exchange.ALPACA,
+            "",
+            asset_class or AssetClass.STOCKS,
+        )
+
+    # ── Filter by asset_class if requested ──────────────────────────────────
+    if asset_class is not None:
+        filtered = [
+            a for a in accounts
+            if getattr(a, "asset_class", None) == asset_class.value
+        ]
+        if not filtered:
+            raise ExchangeAssetClassError(
+                Exchange.ALPACA,
+                "",
+                asset_class,
+            )
+        accounts = filtered
+
+    # ── Sort by exchange priority ───────────────────────────────────────────
+    def _priority(acct: TradingAccount) -> int:
+        try:
+            return _EXCHANGE_PRIORITY[Exchange(acct.exchange.lower())]
+        except (ValueError, KeyError):
+            return 99
+
+    accounts.sort(key=_priority)
+    account = accounts[0]
+
+    # ── Resolve fields ──────────────────────────────────────────────────────
+    exchange = Exchange(account.exchange.lower())
+    acct_asset_class = AssetClass(
+        getattr(account, "asset_class", None)
+        or EXCHANGE_PRIMARY_ASSET_CLASS.get(account.exchange.lower(), AssetClass.STOCKS).value
+    )
+    paper_mode_type = PaperModeType(
+        getattr(account, "paper_mode_type", None)
+        or EXCHANGE_PAPER_MODE.get(account.exchange.lower(), PaperModeType.SYNTHETIC).value
+    )
+
+    if trust_ladder_stage is not None:
+        is_paper = trust_ladder_stage <= 2
+    else:
+        is_paper = bool(account.is_paper)
+
+    mode_label = "Paper" if is_paper else "Live"
+    display_label = f"{acct_asset_class.value.title()} \u00b7 {mode_label}"
+
+    return ExecutionVenue(
+        exchange=exchange,
+        asset_class=acct_asset_class,
+        paper_mode_type=paper_mode_type,
+        is_paper=is_paper,
+        trading_account_id=account.id,
+        display_label=display_label,
+    )
+
+
+async def get_user_asset_classes(
+    user_id: str,
+    db: AsyncSession,
+) -> list[AssetClass]:
+    """Return de-duplicated list of asset classes for a user's active accounts."""
+    result = await db.execute(
+        select(TradingAccount)
+        .where(
+            TradingAccount.user_id == user_id,
+            TradingAccount.is_active == True,  # noqa: E712
+        )
+    )
+    accounts = result.scalars().all()
+    seen: set[str] = set()
+    classes: list[AssetClass] = []
+    for a in accounts:
+        ac = (
+            getattr(a, "asset_class", None)
+            or EXCHANGE_PRIMARY_ASSET_CLASS.get(
+                (a.exchange or "").lower(), AssetClass.STOCKS
+            ).value
+        )
+        if ac not in seen:
+            seen.add(ac)
+            classes.append(AssetClass(ac))
+    return classes
 

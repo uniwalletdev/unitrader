@@ -593,6 +593,22 @@ function TradePage() {
     account_label?: string | null;
     currency?: string;
   }>>([]);
+
+  // Multi-exchange: user context from resolver
+  const [userContext, setUserContext] = useState<{
+    available_asset_classes: string[];
+    active_venue: {
+      exchange: string;
+      asset_class: string;
+      paper_mode_type: string;
+      is_paper: boolean;
+      trading_account_id: string;
+      display_label: string;
+    } | null;
+    no_exchange_connected: boolean;
+  } | null>(null);
+  const [activeAssetClass, setActiveAssetClass] = useState<string | null>(null);
+
   const [symbol, setSymbol] = useState("");
   const [amount, setAmount] = useState(25);
 
@@ -809,6 +825,27 @@ function TradePage() {
 
       const selected = resolved ? connected.find((a) => a.trading_account_id === resolved) : null;
       if (selected?.exchange) setExchange(selected.exchange);
+
+      // Fetch execution venue context from resolver
+      try {
+        const ucRes = await tradingApi.userContext();
+        const uc = ucRes.data?.data ?? ucRes.data;
+        if (mounted && uc) {
+          setUserContext(uc);
+          if (uc.active_venue) {
+            setActiveAssetClass(uc.active_venue.asset_class);
+            // Let resolver override exchange/account if present
+            if (uc.active_venue.trading_account_id) {
+              setSelectedTradingAccountId(uc.active_venue.trading_account_id);
+            }
+            if (uc.active_venue.exchange) {
+              setExchange(uc.active_venue.exchange);
+            }
+          }
+        }
+      } catch {
+        // Non-blocking — fall back to existing account-based logic
+      }
     })();
     return () => {
       mounted = false;
@@ -872,13 +909,13 @@ function TradePage() {
   }, [bare, authLoaded, isSignedIn, refreshOpenPositions]);
 
   const displayCurrencyCode = useMemo(() => {
-    const ex = (selectedAccount?.exchange ?? exchange ?? "alpaca").toLowerCase();
-    return resolveTradingCurrency(ex, selectedAccount?.currency);
+    const ex = (selectedAccount?.exchange ?? exchange ?? "").toLowerCase();
+    return resolveTradingCurrency(ex || "alpaca", selectedAccount?.currency);
   }, [selectedAccount?.exchange, selectedAccount?.currency, exchange]);
 
   const currencySymbol = useMemo(() => {
-    const ex = selectedAccount?.exchange ?? exchange ?? "alpaca";
-    return getCurrencySymbol(ex, selectedAccount?.currency);
+    const ex = selectedAccount?.exchange ?? exchange ?? "";
+    return getCurrencySymbol(ex || "alpaca", selectedAccount?.currency);
   }, [selectedAccount?.exchange, selectedAccount?.currency, exchange]);
 
   const amountSliderLabel = useMemo(
@@ -1328,6 +1365,59 @@ function TradePage() {
 
       <UnitraderNotificationTicker botName={resolvedBotName} />
 
+      {/* ── No exchange connected — onboarding CTA ─────────────────────────── */}
+      {userContext?.no_exchange_connected && (
+        <div className="mb-6 rounded-2xl border border-dark-800 bg-dark-950 p-6 text-center">
+          <h2 className="mb-2 text-lg font-semibold text-white">Connect your first exchange to start trading</h2>
+          <p className="mb-4 text-sm text-dark-300">
+            Unitrader works with Alpaca (stocks), Coinbase (crypto), Binance, Kraken, and OANDA.
+            Connect an exchange in Settings to unlock the AI Trader.
+          </p>
+          <Link
+            href="/exchanges"
+            className="inline-block rounded-xl bg-brand-500 px-6 py-3 text-sm font-semibold text-white hover:bg-brand-400 transition-colors"
+          >
+            Go to Exchanges
+          </Link>
+        </div>
+      )}
+
+      {/* ── Asset class toggle (multi-exchange users) ──────────────────────── */}
+      {userContext && !userContext.no_exchange_connected && (userContext.available_asset_classes?.length ?? 0) > 1 && (
+        <div className="mb-4 rounded-2xl border border-dark-800 bg-dark-950 p-3">
+          <div className="flex gap-1 rounded-xl border border-dark-800 bg-dark-900 p-1">
+            {userContext.available_asset_classes.map((ac) => (
+              <button
+                key={ac}
+                type="button"
+                onClick={async () => {
+                  setActiveAssetClass(ac);
+                  try {
+                    const ucRes = await tradingApi.userContext({ asset_class: ac });
+                    const uc = ucRes.data?.data ?? ucRes.data;
+                    if (uc) {
+                      setUserContext(uc);
+                      if (uc.active_venue) {
+                        setSelectedTradingAccountId(uc.active_venue.trading_account_id);
+                        setExchange(uc.active_venue.exchange);
+                      }
+                    }
+                  } catch {
+                    // keep existing state
+                  }
+                }}
+                className={clsx(
+                  "rounded-lg px-4 py-2 text-xs font-semibold transition-all",
+                  activeAssetClass === ac ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white",
+                )}
+              >
+                {ac.charAt(0).toUpperCase() + ac.slice(1)}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* ── Signal Stack: primary interface ─────────────────────────────────── */}
       {settings?.onboarding_complete === true && (
         <div className="mb-6">
@@ -1437,23 +1527,14 @@ function TradePage() {
         {manualExpanded && (
           <div className="mt-3">
             <div className="mb-3 rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-xs text-dark-200">
-              <span className="font-semibold text-white">Manual trade scope: </span>
-              {selectedAccount ? (
-                <>
-                  {selectedAccount.account_label?.trim() ||
-                    `${String(selectedAccount.exchange).toUpperCase()} · ${selectedAccount.is_paper ? "Paper" : "Live"}`}
-                  <span className="text-dark-500"> — asset grid and symbol search follow this account.</span>
-                </>
-              ) : (
-                <>
-                  Exchange <span className="font-mono text-white">{(exchange || "not set").toUpperCase()}</span>
-                  <span className="text-dark-500">
-                    {" "}
-                    — connect a trading account in Settings (or use the account control in the experienced layout) so
-                    the picker matches your broker.
-                  </span>
-                </>
-              )}
+              <span className="font-semibold text-white">
+                {userContext?.active_venue?.display_label ||
+                  (selectedAccount
+                    ? selectedAccount.account_label?.trim() ||
+                      `${String(selectedAccount.exchange).toUpperCase()} \u00b7 ${selectedAccount.is_paper ? "Paper" : "Live"}`
+                    : `${(activeAssetClass || "stocks").charAt(0).toUpperCase() + (activeAssetClass || "stocks").slice(1)} \u00b7 ${isPaper ? "Paper" : "Live"}`)}
+              </span>
+              <span className="text-dark-500"> — asset grid and symbol search follow this account.</span>
             </div>
             {/* Layout A */}
             {layout === "A" && (
@@ -1470,6 +1551,7 @@ function TradePage() {
                       onManualSymbol={(s) => setSymbol(s.toUpperCase())}
                       onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
                       selectedSymbols={symbol ? [symbol] : []}
+                      assetClass={activeAssetClass as "stocks" | "crypto" | "forex" | undefined}
                     />
                   )}
                   <AmountInput
@@ -1537,6 +1619,7 @@ function TradePage() {
                       onManualSymbol={(s) => setSymbol(s.toUpperCase())}
                       onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
                       selectedSymbols={symbol ? [symbol] : []}
+                      assetClass={activeAssetClass as "stocks" | "crypto" | "forex" | undefined}
                     />
                   )}
                   {symbol && (

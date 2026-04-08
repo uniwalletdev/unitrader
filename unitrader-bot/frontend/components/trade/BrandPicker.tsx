@@ -40,6 +40,8 @@ interface BrandPickerProps {
   onChangeSelectedSymbols?: (symbols: string[]) => void;
   /** When user enters symbol manually */
   onManualSymbol?: (symbol: string) => void;
+  /** Asset-class-first override — locks the category tab to the given asset class. */
+  assetClass?: "stocks" | "crypto" | "forex";
 }
 
 // Display-name lookup for AI-returned symbols — not a tradeable list
@@ -379,12 +381,17 @@ export default function BrandPicker({
   const stocksOnly = effectiveLower === "alpaca";
   const displayExchange = resolvedExchange ?? exchange;
 
+  // Asset-class prop from parent (multi-exchange architecture)
+  const assetClassProp = props.assetClass;
+
   const allowedCategories: Category[] = useMemo(() => {
+    if (assetClassProp === "crypto") return ["crypto"];
+    if (assetClassProp === "forex" || assetClassProp === "stocks") return ["stocks"];
     if (cryptoOnly) return ["crypto"];
     if (forexOnly) return ["stocks"]; // OANDA assets are treated as non-crypto list in this picker
     if (stocksOnly) return ["stocks"];
     return ["stocks", "crypto", "all"];
-  }, [cryptoOnly, forexOnly, stocksOnly]);
+  }, [assetClassProp, cryptoOnly, forexOnly, stocksOnly]);
 
   useEffect(() => {
     if (!allowedCategories.includes(category)) {

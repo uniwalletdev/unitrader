@@ -215,7 +215,7 @@ class Trade(Base):
 
     # Trade details
     exchange: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="alpaca"  # alpaca | binance | oanda
+        String(20), nullable=False  # alpaca | binance | coinbase | kraken | oanda
     )
     is_paper: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     account_scope: Mapped[str] = mapped_column(
@@ -333,6 +333,15 @@ class TradingAccount(TimestampMixin, Base):
     account_label: Mapped[str] = mapped_column(String(80), nullable=False)
     external_account_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Multi-exchange: paper mode and asset class
+    paper_mode_type: Mapped[str] = mapped_column(
+        String(20), default="native", nullable=False, server_default="native"
+    )
+    asset_class: Mapped[str] = mapped_column(
+        String(20), default="stocks", nullable=False, server_default="stocks"
+    )
+
     last_synced_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

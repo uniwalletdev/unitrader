@@ -63,6 +63,14 @@ from src.integrations.exchange_client import (
     validate_kraken_keys,
     validate_oanda_keys,
 )
+from src.market_context import (
+    AssetClass,
+    ExecutionVenue,
+    ExchangeAssetClassError,
+    PaperModeType,
+    resolve_execution_venue,
+    set_account_defaults,
+)
 from src.services.trade_monitoring import enforce_loss_limits
 from src.services.subscription import check_trade_limit
 from src.services.unitrader_notifications import get_unitrader_notification_engine
@@ -151,8 +159,15 @@ async def _ensure_trading_account(
         if external_account_id and not account.external_account_id:
             account.external_account_id = external_account_id
         account.account_label = _account_label(exchange, is_paper)
+        # Backfill new columns if missing/default
+        defaults = set_account_defaults(exchange)
+        if not getattr(account, "paper_mode_type", None) or account.paper_mode_type == "native":
+            account.paper_mode_type = defaults["paper_mode_type"]
+        if not getattr(account, "asset_class", None) or account.asset_class == "stocks":
+            account.asset_class = defaults["asset_class"]
         return account
 
+    defaults = set_account_defaults(exchange)
     account = TradingAccount(
         user_id=user_id,
         exchange=exchange,
@@ -160,6 +175,8 @@ async def _ensure_trading_account(
         account_label=_account_label(exchange, is_paper),
         external_account_id=external_account_id,
         is_active=True,
+        paper_mode_type=defaults["paper_mode_type"],
+        asset_class=defaults["asset_class"],
     )
     db.add(account)
     await db.flush()
@@ -927,6 +944,71 @@ async def get_ai_picks(
             status_code=500,
             detail="ai_picks_unavailable",
         )
+
+
+# ─────────────────────────────────────────────
+# GET /api/trading/user-context
+# ─────────────────────────────────────────────
+
+@router.get("/user-context")
+async def get_user_context(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    asset_class: str | None = Query(None, description="Filter to a specific asset class"),
+):
+    """Return everything the frontend AI Trader page needs to initialise.
+
+    Fast endpoint — DB queries only, no external API calls.
+    """
+    from src.market_context import get_user_asset_classes, resolve_execution_venue
+
+    classes = await get_user_asset_classes(current_user.id, db)
+
+    if not classes:
+        return {
+            "status": "success",
+            "data": {
+                "available_asset_classes": [],
+                "active_venue": None,
+                "no_exchange_connected": True,
+            },
+        }
+
+    ac_filter = None
+    if asset_class:
+        try:
+            ac_filter = AssetClass(asset_class.lower())
+        except ValueError:
+            pass
+
+    try:
+        venue = await resolve_execution_venue(
+            user_id=current_user.id,
+            asset_class=ac_filter,
+            db=db,
+        )
+    except ExchangeAssetClassError:
+        venue = await resolve_execution_venue(
+            user_id=current_user.id,
+            asset_class=None,
+            db=db,
+        )
+
+    return {
+        "status": "success",
+        "data": {
+            "available_asset_classes": [c.value for c in classes],
+            "active_venue": {
+                "exchange": venue.exchange.value,
+                "asset_class": venue.asset_class.value,
+                "paper_mode_type": venue.paper_mode_type.value,
+                "is_paper": venue.is_paper,
+                "trading_account_id": venue.trading_account_id,
+                "display_label": venue.display_label,
+            },
+            "no_exchange_connected": False,
+        },
+    }
 
 
 # ─────────────────────────────────────────────

@@ -39,9 +39,11 @@ from src.integrations.alpaca_rate_limiter import alpaca_limiter
 from src.integrations.exchange_client import get_exchange_client
 from src.integrations.market_data import full_market_analysis, normalise_symbol as legacy_normalise_symbol
 from src.market_context import (
+    EXCHANGE_PAPER_MODE,
     Exchange,
     ExchangeAssetClassError,
     MarketContext,
+    PaperModeType,
     normalize_symbol,
     resolve_market_context,
 )
@@ -1337,6 +1339,118 @@ Provide your detailed technical analysis with the specified JSON format."""
                 f"(confidence {decision['confidence']}%)"
             ),
         }
+
+    # ─────────────────────────────────────────────
+    # Orchestrator-facing execute helpers
+    # ─────────────────────────────────────────────
+
+    async def execute_paper(
+        self,
+        *,
+        payload: dict,
+        context: SharedContext,
+        db: AsyncSession,
+    ) -> dict:
+        """Execute a paper trade — native or synthetic depending on the exchange.
+
+        Called by `MasterOrchestrator._trade_execute()` when
+        ``ctx.paper_trading_enabled`` is True.
+        """
+        symbol = payload["symbol"]
+        side = payload["side"]
+        amount = float(payload["amount"])
+        exchange = context.exchange
+        trading_account_id = payload.get("trading_account_id")
+
+        paper_mode = EXCHANGE_PAPER_MODE.get(exchange, PaperModeType.SYNTHETIC)
+
+        if paper_mode == PaperModeType.NATIVE:
+            # Alpaca — use the real paper API through the normal execute_trade flow
+            decision = {
+                "decision": side.upper(),
+                "confidence": payload.get("confidence", 70),
+                "entry_price": payload.get("entry_price", 0),
+                "stop_loss": payload.get("stop_loss", 0),
+                "take_profit": payload.get("take_profit", 0),
+                "reasoning": payload.get("reasoning", ""),
+                "market_condition": payload.get("market_condition", "unknown"),
+            }
+            return await self.execute_trade(
+                decision=decision,
+                symbol=symbol,
+                exchange_name=exchange,
+                ai_name=context.ai_name,
+                trading_account_id=trading_account_id,
+                is_paper=True,
+            )
+
+        # Synthetic paper — simulated fill, no real order
+        from src.integrations.synthetic_paper import execute_synthetic_paper_trade
+
+        venue = getattr(context, "execution_venue", None)
+        asset_class = getattr(venue, "asset_class", "stocks") if venue else "stocks"
+
+        result = await execute_synthetic_paper_trade(
+            user_id=self.user_id,
+            trading_account_id=trading_account_id or "",
+            symbol=symbol,
+            side=side,
+            notional_usd=amount,
+            exchange=exchange,
+            asset_class=asset_class,
+            db=db,
+            stop_loss=payload.get("stop_loss"),
+            take_profit=payload.get("take_profit"),
+            confidence=payload.get("confidence"),
+            reasoning=payload.get("reasoning"),
+        )
+
+        return {
+            "status": "executed",
+            "trade_id": result["id"],
+            "symbol": symbol,
+            "side": side.upper(),
+            "decision": side.upper(),
+            "entry_price": result["fill_price"],
+            "quantity": result["qty"],
+            "is_paper": True,
+            "paper_mode_type": "synthetic",
+            "trading_account_id": trading_account_id,
+            "message": (
+                f"Synthetic paper trade executed: {side.upper()} {symbol} "
+                f"@ ${result['fill_price']:,.4f}"
+            ),
+        }
+
+    async def execute_live(
+        self,
+        *,
+        payload: dict,
+        context: SharedContext,
+        db: AsyncSession,
+    ) -> dict:
+        """Execute a real (live) trade via the exchange API.
+
+        Called by `MasterOrchestrator._trade_execute()` when
+        ``ctx.paper_trading_enabled`` is False.
+        """
+        decision = {
+            "decision": payload["side"].upper(),
+            "confidence": payload.get("confidence", 70),
+            "entry_price": payload.get("entry_price", 0),
+            "stop_loss": payload.get("stop_loss", 0),
+            "take_profit": payload.get("take_profit", 0),
+            "reasoning": payload.get("reasoning", ""),
+            "market_condition": payload.get("market_condition", "unknown"),
+        }
+        return await self.execute_trade(
+            decision=decision,
+            symbol=payload["symbol"],
+            exchange_name=context.exchange,
+            ai_name=context.ai_name,
+            trading_account_id=payload.get("trading_account_id"),
+            is_paper=False,
+        )
 
     # ─────────────────────────────────────────────
     # Full Cycle (analyze → decide → execute)

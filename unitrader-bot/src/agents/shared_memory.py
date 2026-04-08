@@ -24,7 +24,7 @@ from sqlalchemy.orm import selectinload
 from models import Conversation, ExchangeAPIKey, Trade, TradingAccount, User, UserSettings
 from security import decrypt_api_key
 from src.integrations.exchange_client import get_exchange_client
-from src.market_context import MarketContext, resolve_market_context
+from src.market_context import ExecutionVenue, MarketContext, resolve_market_context
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,7 @@ class SharedContext:
     # Chat-oriented snapshots (last N closed trades; overlaps recent_closed_trades with different shape)
     performance: dict = field(default_factory=dict)
     recent_trades: list[dict] = field(default_factory=list)
+    execution_venue: Optional[ExecutionVenue] = None
 
     @classmethod
     def default(cls, user_id: str) -> "SharedContext":
