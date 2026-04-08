@@ -324,6 +324,7 @@ export default function BrandPicker({
   selectedSymbols,
   onChangeSelectedSymbols,
   onManualSymbol,
+  assetClass: assetClassProp,
 }: BrandPickerProps) {
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [traderClass, setTraderClass] = useState<TraderClass>("complete_novice");
@@ -382,7 +383,6 @@ export default function BrandPicker({
   const displayExchange = resolvedExchange ?? exchange;
 
   // Asset-class prop from parent (multi-exchange architecture)
-  const assetClassProp = props.assetClass;
 
   const allowedCategories: Category[] = useMemo(() => {
     if (assetClassProp === "crypto") return ["crypto"];
