@@ -246,7 +246,8 @@ type TradeButtonState =
   | "analyzing"
   | "ready"
   | "market-closed"
-  | "no-signal";
+  | "no-signal"
+  | "data-unavailable";
 
 const TRADE_BUTTON_MIN_CONFIDENCE = 60;
 
@@ -258,6 +259,14 @@ function applyAnalyzeResponseToTradeButton(
   const a = response as Record<string, unknown> | null | undefined;
   if (!a) return "no-signal";
 
+  // Use signal_status from backend if available
+  const signalStatus = a.signal_status as string | undefined;
+  if (signalStatus === "data_unavailable") return "data-unavailable";
+  if (signalStatus === "market_closed") return "market-closed";
+  if (signalStatus === "no_signal") return "no-signal";
+  if (signalStatus === "signal_ready") return "ready";
+
+  // Fallback: derive from raw fields for backwards compatibility
   const sigRaw = String(a.signal ?? a.decision ?? "").toLowerCase();
   const conf = Number(a.confidence ?? 0);
 
@@ -283,43 +292,55 @@ function applyAnalyzeResponseToTradeButton(
 function ManualTradeExecuteButton({
   tradeButtonState,
   onExecute,
+  retryCountdown,
 }: {
   tradeButtonState: TradeButtonState;
   onExecute: () => void;
+  retryCountdown?: number | null;
 }) {
   const ready = tradeButtonState === "ready";
+  const isAnalyzing = tradeButtonState === "analyzing";
   const label =
     tradeButtonState === "disabled"
       ? "Select an asset"
-      : tradeButtonState === "analyzing"
-        ? "Analyzing..."
+      : isAnalyzing
+        ? "Analysing\u2026"
         : tradeButtonState === "ready"
           ? "Execute Trade"
           : tradeButtonState === "market-closed"
             ? "Market Closed"
-            : "No Signal";
+            : tradeButtonState === "data-unavailable"
+              ? "Data Unavailable \u2014 Retrying"
+              : "No Signal";
 
   return (
-    <button
-      type="button"
-      onClick={() => {
-        if (tradeButtonState !== "ready") return;
-        onExecute();
-      }}
-      title={ready ? undefined : label}
-      disabled={!ready}
-      className={clsx(
-        "mt-4 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-colors",
-        ready
-          ? "cursor-pointer bg-green-600 text-white hover:bg-green-500"
-          : "cursor-not-allowed bg-dark-800 text-dark-400 opacity-90",
+    <div>
+      <button
+        type="button"
+        onClick={() => {
+          if (tradeButtonState !== "ready") return;
+          onExecute();
+        }}
+        title={ready ? undefined : label}
+        disabled={!ready && !isAnalyzing}
+        className={clsx(
+          "mt-4 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-colors",
+          ready
+            ? "cursor-pointer bg-green-600 text-white hover:bg-green-500"
+            : isAnalyzing
+              ? "pointer-events-none bg-green-600/60 text-white/80"
+              : "cursor-not-allowed bg-dark-800 text-dark-400 opacity-90",
+        )}
+      >
+        {(isAnalyzing || tradeButtonState === "data-unavailable") && (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+        )}
+        {label}
+      </button>
+      {tradeButtonState === "data-unavailable" && retryCountdown != null && retryCountdown > 0 && (
+        <p className="mt-1 text-center text-xs text-dark-500">Retrying in {retryCountdown}s\u2026</p>
       )}
-    >
-      {tradeButtonState === "analyzing" && (
-        <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
-      )}
-      {label}
-    </button>
+    </div>
   );
 }
 
@@ -364,6 +385,7 @@ function AIAnalysisCard({
   analysis,
   analyzing,
   analysisError,
+  signalStatus,
   onRetry,
   showExplanationToggle,
   showPendingAnalyseHint = true,
@@ -377,6 +399,7 @@ function AIAnalysisCard({
   analysis: AnalysisResult | null;
   analyzing: boolean;
   analysisError: string | null;
+  signalStatus: TradeButtonState;
   onRetry: () => void;
   showExplanationToggle: boolean;
   /** Layouts that auto-run analyse hide this (no manual-only gap before the request starts). */
@@ -399,7 +422,63 @@ function AIAnalysisCard({
     ? analysis.key_factors.filter((x: unknown) => typeof x === "string")
     : [];
 
-  const togglesDisabled = analyzing || !!analysisError || !analysis;
+  const togglesDisabled = analyzing || !!analysisError || !analysis || signalStatus === "data-unavailable";
+
+  const nextMarketOpen = analysis?.next_market_open as string | undefined;
+
+  /** Verdict content varies by signal status */
+  const renderVerdict = () => {
+    if (signalStatus === "data-unavailable") {
+      return (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4">
+          <div className="mb-3 text-xs font-semibold text-amber-400">Analysis unavailable</div>
+          <div className="text-sm text-dark-300">
+            Market data is temporarily unavailable. Analysis will resume automatically.
+          </div>
+        </div>
+      );
+    }
+    if (signalStatus === "market-closed") {
+      return (
+        <div className="rounded-xl border border-dark-700 bg-dark-900/60 p-4">
+          <div className="mb-3 text-xs font-semibold text-dark-400">Market is closed</div>
+          <div className="text-sm text-dark-300">
+            {nextMarketOpen
+              ? `Next open: ${new Date(nextMarketOpen).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
+              : "The market is currently closed. Check back during trading hours."}
+          </div>
+        </div>
+      );
+    }
+    if (signalStatus === "no-signal" && analysis) {
+      return (
+        <div className="rounded-xl border border-dark-700 bg-dark-900/60 p-4">
+          <div className="mb-3 text-xs font-semibold text-dark-400">No trade opportunity found</div>
+          <div className="text-sm text-dark-300">
+            {analysis.message || analysis.reasoning || "The AI analysed this asset and found no trade meeting the confidence threshold."}
+          </div>
+        </div>
+      );
+    }
+    if (signalStatus === "ready" && analysis) {
+      return (
+        <div className="rounded-xl border border-brand-500/20 bg-brand-500/5 p-4">
+          <div className="mb-3 text-xs font-semibold text-brand-400">Unitrader&apos;s verdict</div>
+          <div className="mb-3 text-sm text-dark-200">
+            {analysis.message || analysis.reasoning || "Analysis ready."}
+          </div>
+          {analysis.confidence != null && (
+            <div className="text-xs text-brand-300">
+              Confidence: {Math.round(Number(analysis.confidence))}%
+              {analysis.decision && <span className="ml-2 font-semibold">{String(analysis.decision).toUpperCase()}</span>}
+            </div>
+          )}
+        </div>
+      );
+    }
+    // Default / disabled / pending
+    return null;
+  };
 
   return (
     <div className="rounded-2xl border border-dark-800 bg-dark-950 p-4 md:p-5">
@@ -422,7 +501,7 @@ function AIAnalysisCard({
             </div>
           )}
 
-          {!analyzing && analysisError && (
+          {!analyzing && analysisError && signalStatus !== "data-unavailable" && (
             <div className="mb-4 space-y-3 rounded-xl border border-dark-800 bg-dark-950 p-4">
               <p className="text-sm text-dark-300">{analysisError}</p>
               <button
@@ -435,25 +514,20 @@ function AIAnalysisCard({
             </div>
           )}
 
-          {!analyzing && !analysisError && !analysis && showPendingAnalyseHint && (
+          {!analyzing && !analysisError && !analysis && signalStatus !== "data-unavailable" && showPendingAnalyseHint && (
             <p className="mb-4 rounded-xl border border-dark-800 bg-dark-950 p-4 text-sm text-dark-400">
               Click Analyse to load {botName}&apos;s reasoning for this asset.
             </p>
           )}
 
-          {analysis && !analyzing && !analysisError && (
+          {!analyzing && (
             <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2">
-              <RawDataColumn analysis={analysis} />
-              <div className="rounded-xl border border-brand-500/20 bg-brand-500/5 p-4">
-                <div className="mb-3 text-xs font-semibold text-brand-400">Unitrader&apos;s verdict</div>
-                <div className="mb-3 text-sm text-dark-200">
-                  {analysis.message || analysis.reasoning || "Analysis ready."}
-                </div>
-              </div>
+              {analysis && signalStatus !== "data-unavailable" && <RawDataColumn analysis={analysis} />}
+              {renderVerdict()}
             </div>
           )}
 
-          {showExplanationToggle && sym && (
+          {showExplanationToggle && sym && signalStatus !== "data-unavailable" && (
             <div className="mb-4">
               <ExplanationToggle
                 explanations={explanationPayload}
@@ -464,7 +538,7 @@ function AIAnalysisCard({
             </div>
           )}
 
-          {analysis && !analyzing && !analysisError && keyFactors.length > 0 && (
+          {analysis && !analyzing && !analysisError && signalStatus !== "data-unavailable" && keyFactors.length > 0 && (
             <div className="mb-4">
               <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-dark-500">
                 Key factors
@@ -527,6 +601,7 @@ function TradePage() {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [tradeButtonState, setTradeButtonState] = useState<TradeButtonState>("disabled");
   const [toast, setToast] = useState<string | null>(null);
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
 
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
 
@@ -879,11 +954,12 @@ function TradePage() {
       const payload = res.data?.data ?? res.data;
       setAnalysis(payload);
       setAnalysisError(null);
-      setTradeButtonState(applyAnalyzeResponseToTradeButton(payload, ex, symbol.trim()));
+      const newState = applyAnalyzeResponseToTradeButton(payload, ex, symbol.trim());
+      setTradeButtonState(newState);
     } catch {
       setAnalysis(null);
-      setAnalysisError("Analysis unavailable — market data could not be fetched.");
-      setTradeButtonState("disabled");
+      setAnalysisError(null);
+      setTradeButtonState("data-unavailable");
     } finally {
       setAnalyzing(false);
     }
@@ -904,6 +980,7 @@ function TradePage() {
     setAnalysisError(null);
     setAnalyzing(false);
     setTradeButtonState("disabled");
+    setRetryCountdown(null);
   }, [symbol, layout]);
 
   useEffect(() => {
@@ -913,10 +990,32 @@ function TradePage() {
       setAnalysisError(null);
       setAnalyzing(false);
       setTradeButtonState("disabled");
+      setRetryCountdown(null);
       return;
     }
     void handleAnalyse();
   }, [symbol, layout, handleAnalyse]);
+
+  // Auto-retry when data is unavailable (30s countdown)
+  useEffect(() => {
+    if (tradeButtonState !== "data-unavailable") {
+      setRetryCountdown(null);
+      return;
+    }
+    let remaining = 30;
+    setRetryCountdown(remaining);
+    const tick = window.setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        window.clearInterval(tick);
+        setRetryCountdown(null);
+        void handleAnalyse();
+      } else {
+        setRetryCountdown(remaining);
+      }
+    }, 1000);
+    return () => window.clearInterval(tick);
+  }, [tradeButtonState, handleAnalyse]);
 
   // Class-aware defaults for Signal Stack mode + manual trade expansion
   useEffect(() => {
@@ -1404,6 +1503,7 @@ function TradePage() {
                   analysis={analysis}
                   analyzing={analyzing}
                   analysisError={analysisError}
+                  signalStatus={tradeButtonState}
                   onRetry={handleAnalyse}
                   showExplanationToggle={!dbg("no_explain")}
                   showPendingAnalyseHint={false}
@@ -1412,6 +1512,7 @@ function TradePage() {
                 >
                   <ManualTradeExecuteButton
                     tradeButtonState={tradeButtonState}
+                    retryCountdown={retryCountdown}
                     onExecute={() => {
                       setTradeButtonState("analyzing");
                       setConfirmOpen(true);
@@ -1472,6 +1573,7 @@ function TradePage() {
                     analysis={analysis}
                     analyzing={analyzing}
                     analysisError={analysisError}
+                    signalStatus={tradeButtonState}
                     onRetry={handleAnalyse}
                     showExplanationToggle={!dbg("no_explain")}
                     showPendingAnalyseHint={false}
@@ -1480,6 +1582,7 @@ function TradePage() {
                   >
                     <ManualTradeExecuteButton
                       tradeButtonState={tradeButtonState}
+                      retryCountdown={retryCountdown}
                       onExecute={() => {
                         setTradeButtonState("analyzing");
                         setConfirmOpen(true);
@@ -1610,6 +1713,7 @@ function TradePage() {
                     analysis={analysis}
                     analyzing={analyzing}
                     analysisError={analysisError}
+                    signalStatus={tradeButtonState}
                     onRetry={handleAnalyse}
                     showExplanationToggle
                     traderClass={traderClass}
@@ -1617,6 +1721,7 @@ function TradePage() {
                   >
                     <ManualTradeExecuteButton
                       tradeButtonState={tradeButtonState}
+                      retryCountdown={retryCountdown}
                       onExecute={() => {
                         setTradeButtonState("analyzing");
                         setConfirmOpen(true);

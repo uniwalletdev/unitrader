@@ -1021,13 +1021,74 @@ async def execute_trade(
 # POST /api/trading/analyze
 # ─────────────────────────────────────────────
 
+_ANALYZE_CONFIDENCE_THRESHOLD = 60
+
+
+def _is_market_open_now() -> bool:
+    """True if US stock market session is open (Mon-Fri 09:30-16:00 America/New_York)."""
+    import pytz
+
+    et = pytz.timezone("America/New_York")
+    now_et = datetime.now(et)
+    if now_et.weekday() >= 5:
+        return False
+    market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
+    market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
+    return market_open <= now_et <= market_close
+
+
+def _next_market_open() -> str | None:
+    """Return ISO timestamp of the next US equity market open."""
+    import pytz
+
+    et = pytz.timezone("America/New_York")
+    now_et = datetime.now(et)
+    candidate = now_et
+    for _ in range(7):
+        candidate += timedelta(days=1)
+        if candidate.weekday() < 5:
+            next_open = candidate.replace(hour=9, minute=30, second=0, microsecond=0)
+            return next_open.isoformat()
+    return None
+
+
+def _classify_signal_status(result: dict, exchange: str) -> tuple[str, str | None]:
+    """Derive signal_status and optional reason from orchestrator result.
+
+    Returns (signal_status, reason).
+    """
+    # Check market_closed indicators in result
+    if result.get("market_closed") is True or str(result.get("status", "")).lower() == "market-closed":
+        return "market_closed", "result_market_closed_flag"
+
+    # For stock exchanges, also check local session
+    if exchange in ("alpaca",) and not _is_market_open_now():
+        return "market_closed", "us_equity_session_closed"
+
+    decision = str(result.get("decision", result.get("signal", ""))).upper()
+    confidence = 0
+    try:
+        confidence = float(result.get("confidence", 0))
+    except (TypeError, ValueError):
+        confidence = 0
+
+    if decision in ("BUY", "SELL") and confidence >= _ANALYZE_CONFIDENCE_THRESHOLD:
+        return "signal_ready", None
+
+    return "no_signal", "below_confidence_threshold" if confidence > 0 else "no_trade_opportunity"
+
+
 @router.post("/analyze")
 async def analyze_trade(
     body: AnalyzeTradeRequest,
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Run analysis only (no execution)."""
+    """Run analysis only (no execution).
+
+    Always returns HTTP 200 with a ``signal_status`` field so the frontend
+    can render the correct button state without interpreting raw data.
+    """
     try:
         from src.market_context import resolve_market_context
 
@@ -1047,12 +1108,49 @@ async def analyze_trade(
             },
             db=db,
         )
-        return {"status": "success", "data": result}
+
+        signal_status, reason = _classify_signal_status(result, body.exchange.lower())
+
+        return {
+            "status": "success",
+            "data": {
+                **result,
+                "signal_status": signal_status,
+                "signal": result if signal_status == "signal_ready" else None,
+                "reason": reason,
+                "next_market_open": _next_market_open() if signal_status == "market_closed" else None,
+            },
+        }
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("Trade analyze failed for user %s: %s", current_user.id, exc)
-        raise HTTPException(status_code=500, detail="trade_analyze_failed")
+        reason_code = "unknown"
+        exc_name = type(exc).__name__
+        if "AlpacaUnavailable" in exc_name:
+            reason_code = "alpaca_circuit_open"
+        elif "MassiveUnavailable" in exc_name:
+            reason_code = "massive_unavailable"
+        elif isinstance(exc, httpx.HTTPError):
+            reason_code = "http_data_fetch_error"
+        else:
+            reason_code = "data_fetch_exception"
+
+        return {
+            "status": "success",
+            "data": {
+                "signal_status": "data_unavailable",
+                "signal": None,
+                "analysis": {
+                    "summary": "Market data is temporarily unavailable.",
+                    "confidence": 0,
+                    "explanation_simple": "We couldn't fetch the latest market data. This is usually temporary.",
+                    "explanation_expert": "Data layer raised an exception preventing full analysis.",
+                    "explanation_eli5": "The market info service is taking a break. We'll try again soon.",
+                },
+                "reason": reason_code,
+            },
+        }
 
 
 # ─────────────────────────────────────────────
