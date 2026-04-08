@@ -44,6 +44,7 @@ _subscription_lock = asyncio.Lock()
 
 # Alpaca client for REST API calls
 alpaca = None
+_warned_missing_alpaca_data_creds = False
 
 
 def _get_alpaca_client() -> Any:
@@ -60,15 +61,15 @@ def _get_alpaca_client() -> Any:
     if not AlpacaREST:
         raise ValueError("alpaca_trade_api not installed")
 
-    api_key = settings.alpaca_api_key or os.getenv("APCA_API_KEY_ID", "")
-    api_secret = settings.alpaca_api_secret or os.getenv("APCA_API_SECRET_KEY", "")
-    base_url = settings.alpaca_base_url or os.getenv(
+    api_key = (settings.alpaca_paper_api_key or "").strip()
+    api_secret = (settings.alpaca_paper_api_secret or "").strip()
+    base_url = settings.alpaca_paper_base_url or os.getenv(
         "APCA_API_BASE_URL", "https://paper-api.alpaca.markets"
     )
 
     if not api_key or not api_secret:
         raise ValueError(
-            "Alpaca client not initialized: missing ALPACA_API_KEY/ALPACA_API_SECRET configuration"
+            "Alpaca client not initialized: missing ALPACA_PAPER_API_KEY (or ALPACA_API_KEY) / secret configuration"
         )
 
     try:
@@ -353,10 +354,22 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
         return await _fetch_binance_price(sym)
 
     # Alpaca (crypto or stock)
-    api_key = settings.alpaca_api_key or os.getenv("APCA_API_KEY_ID", "")
-    api_secret = settings.alpaca_api_secret or os.getenv("APCA_API_SECRET_KEY", "")
+    from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
+    alpaca_breaker.check()  # fast-fail if Alpaca is known-broken
+
+    global _warned_missing_alpaca_data_creds
+    api_key = (settings.alpaca_paper_api_key or "").strip()
+    api_secret = (settings.alpaca_paper_api_secret or "").strip()
 
     if not api_key or not api_secret:
+        if not _warned_missing_alpaca_data_creds:
+            _warned_missing_alpaca_data_creds = True
+            logger.warning(
+                "Alpaca market data credentials missing. "
+                "configured_key=%s configured_secret=%s",
+                bool(api_key),
+                bool(api_secret),
+            )
         raise ValueError("Alpaca credentials not configured for price stream")
 
     headers = {
@@ -373,6 +386,9 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
                 async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
                     await alpaca_limiter.acquire()
                     resp = await client.get(url, params=params)
+                if resp.status_code == 401:
+                    alpaca_breaker.record_auth_failure(f"WS 401 on {url}")
+                    resp.raise_for_status()
                 if resp.status_code == 429:
                     retry_after = resp.headers.get("retry-after")
                     try:
@@ -383,6 +399,7 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
                     backoff_s = min(10.0, backoff_s * 2)
                     continue
                 resp.raise_for_status()
+                alpaca_breaker.record_success()
                 return resp.json()
             except Exception as exc:
                 last_exc = exc
@@ -458,6 +475,8 @@ async def _poll_and_broadcast(symbol: str, exchange: str | None = None):
 
     Runs until the symbol has no more subscribers.
     """
+    from src.integrations.alpaca_circuit_breaker import AlpacaUnavailableError
+
     logger.info(f"Starting price poll for {symbol}")
     poll_interval = 15  # seconds — stay within Alpaca free-tier rate limits
     error_count = 0
@@ -481,6 +500,11 @@ async def _poll_and_broadcast(symbol: str, exchange: str | None = None):
                 # Wait before next poll
                 await asyncio.sleep(poll_interval)
                 error_count = 0  # Reset error count on success
+
+            except AlpacaUnavailableError:
+                # Circuit breaker is OPEN — stop polling immediately, don't retry
+                logger.warning(f"Price poll for {symbol} stopped — Alpaca circuit breaker OPEN")
+                break
 
             except Exception as e:
                 error_count += 1

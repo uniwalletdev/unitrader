@@ -178,6 +178,21 @@ def parse_claude_json(raw: str, context: str = "") -> Any:
     try:
         return json.loads(no_control)
     except json.JSONDecodeError as exc:
+        # After all parse attempts fail, check if raw looks like markdown
+        # Normalize BOM so markdown detection matches Claude / file exports.
+        _md = raw.lstrip("\ufeff").strip()
+        if _md.startswith("#"):  # plain markdown article
+            title_match = re.match(r"^#\s+(.+)", _md)
+            title = title_match.group(1) if title_match else "Untitled"
+            words = len(raw.split())
+            return {
+                "title": title,
+                "slug": title.lower().replace(" ", "-")[:60],
+                "content": raw,
+                "word_count": words,
+                "read_time_minutes": max(1, words // 200),
+                "tags": [],
+            }
         if context:
             logger.error(
                 "parse_claude_json[%s] all attempts failed (len=%s). raw[:300]=%s",

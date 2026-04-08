@@ -13,6 +13,7 @@ so responses reference real numbers.
 import asyncio
 import logging
 import re
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 from typing import Literal
@@ -279,12 +280,21 @@ async def _save_onboarding_messages(
 ) -> None:
     """Persist user+assistant messages into onboarding_messages for chat history injection."""
     async def _save(session: AsyncSession) -> None:
-        session.add_all(
-            [
-                OnboardingMessage(user_id=user_id, role="user", content=user_message),
-                OnboardingMessage(user_id=user_id, role="assistant", content=assistant_message),
-            ]
+        # One row per flush avoids SQLAlchemy 2 insertmanyvalues batched INSERT/RETURNING
+        # sentinel correlation issues with UUID PKs + asyncpg.
+        user_id_str = str(user_id)
+        user_row = OnboardingMessage(
+            id=uuid.uuid4(), user_id=user_id_str, role="user", content=user_message
         )
+        session.add(user_row)
+        await session.flush()
+        assistant_row = OnboardingMessage(
+            id=uuid.uuid4(),
+            user_id=user_id_str,
+            role="assistant",
+            content=assistant_message,
+        )
+        session.add(assistant_row)
         await session.flush()
 
     try:
@@ -1478,7 +1488,7 @@ class ConversationAgent:
         try:
             async with AsyncSessionLocal() as _db:
                 user_om = OnboardingMessage(
-                    user_id=self.user_id,
+                    user_id=str(self.user_id),
                     role="user",
                     content=user_message,
                 )
@@ -1577,7 +1587,7 @@ class ConversationAgent:
         try:
             async with AsyncSessionLocal() as _db:
                 om = OnboardingMessage(
-                    user_id=self.user_id,
+                    user_id=str(self.user_id),
                     role="assistant",
                     content=assistant_message,
                 )
@@ -1625,7 +1635,7 @@ class ConversationAgent:
         try:
             async with AsyncSessionLocal() as _db:
                 om = OnboardingMessage(
-                    user_id=self.user_id,
+                    user_id=str(self.user_id),
                     role="system",
                     content=f"extracted:{field}={value}",
                 )

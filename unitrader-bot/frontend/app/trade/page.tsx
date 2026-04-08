@@ -240,77 +240,73 @@ function OpenPositionsPanel({
   );
 }
 
-/** Manual “Execute Trade” lifecycle (AI Trader grid + analysis). */
-type ManualExecutePhase =
-  | "no_symbol"
-  | "needs_analysis"
+/** Manual “Execute Trade” button (AI Trader grid + analysis). */
+type TradeButtonState =
+  | "disabled"
   | "analyzing"
-  | "market_closed"
-  | "no_signal"
-  | "ready";
+  | "ready"
+  | "market-closed"
+  | "no-signal";
 
-const MIN_MANUAL_EXECUTE_CONFIDENCE = 50;
+const TRADE_BUTTON_MIN_CONFIDENCE = 60;
 
-function deriveManualExecutePhase(
-  symbol: string,
-  analyzing: boolean,
-  analysis: unknown,
+function applyAnalyzeResponseToTradeButton(
+  response: unknown,
   exchangeForAsset: string,
-): ManualExecutePhase {
-  const sym = symbol.trim();
-  if (!sym) return "no_symbol";
-  if (analyzing) return "analyzing";
-  const a = analysis as Record<string, unknown> | null | undefined;
-  if (!a) return "needs_analysis";
+  symbol: string,
+): TradeButtonState {
+  const a = response as Record<string, unknown> | null | undefined;
+  if (!a) return "no-signal";
 
-  const decision = String(a.decision ?? "").toUpperCase();
+  const sigRaw = String(a.signal ?? a.decision ?? "").toLowerCase();
   const conf = Number(a.confidence ?? 0);
-  if (!Number.isFinite(conf) || decision === "WAIT" || conf < MIN_MANUAL_EXECUTE_CONFIDENCE) {
-    return "no_signal";
-  }
-  if (decision !== "BUY" && decision !== "SELL") return "no_signal";
 
-  const backendClosed = a.market_closed === true;
+  if (sigRaw === "wait" || !Number.isFinite(conf) || conf < TRADE_BUTTON_MIN_CONFIDENCE) {
+    return "no-signal";
+  }
+
+  if (a.market_closed === true || String(a.status ?? "").toLowerCase() === "market-closed") {
+    return "market-closed";
+  }
+
+  const sym = symbol.trim();
   const localStockClosed =
-    isStocksTradingAsset(exchangeForAsset, sym) && !isUsEquityRegularSessionEt();
-  if (backendClosed || localStockClosed) return "market_closed";
+    sym && isStocksTradingAsset(exchangeForAsset, sym) && !isUsEquityRegularSessionEt();
+  if (localStockClosed) return "market-closed";
+
+  const decisionUp = String(a.decision ?? a.signal ?? "").toUpperCase();
+  if (decisionUp !== "BUY" && decisionUp !== "SELL") return "no-signal";
 
   return "ready";
 }
 
-function manualExecutePhaseLabel(phase: ManualExecutePhase): string {
-  switch (phase) {
-    case "no_symbol":
-      return "Select an asset first";
-    case "needs_analysis":
-      return "Run analysis first";
-    case "analyzing":
-      return "Analysing...";
-    case "market_closed":
-      return "Markets closed";
-    case "no_signal":
-      return "No trade signal";
-    case "ready":
-      return "Execute Trade";
-  }
-}
-
 function ManualTradeExecuteButton({
-  phase,
+  tradeButtonState,
   onExecute,
 }: {
-  phase: ManualExecutePhase;
+  tradeButtonState: TradeButtonState;
   onExecute: () => void;
 }) {
-  const ready = phase === "ready";
+  const ready = tradeButtonState === "ready";
+  const label =
+    tradeButtonState === "disabled"
+      ? "Select an asset"
+      : tradeButtonState === "analyzing"
+        ? "Analyzing..."
+        : tradeButtonState === "ready"
+          ? "Execute Trade"
+          : tradeButtonState === "market-closed"
+            ? "Market Closed"
+            : "No Signal";
+
   return (
     <button
       type="button"
       onClick={() => {
-        if (phase !== "ready") return;
+        if (tradeButtonState !== "ready") return;
         onExecute();
       }}
-      title={ready ? undefined : manualExecutePhaseLabel(phase)}
+      title={ready ? undefined : label}
       disabled={!ready}
       className={clsx(
         "mt-4 flex w-full items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold transition-colors",
@@ -319,10 +315,10 @@ function ManualTradeExecuteButton({
           : "cursor-not-allowed bg-dark-800 text-dark-400 opacity-90",
       )}
     >
-      {phase === "analyzing" && (
+      {tradeButtonState === "analyzing" && (
         <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
       )}
-      {manualExecutePhaseLabel(phase)}
+      {label}
     </button>
   );
 }
@@ -529,6 +525,7 @@ function TradePage() {
   const [analysis, setAnalysis] = useState<any>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [tradeButtonState, setTradeButtonState] = useState<TradeButtonState>("disabled");
   const [toast, setToast] = useState<string | null>(null);
 
   const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null);
@@ -820,11 +817,6 @@ function TradePage() {
     [currencySymbol, traderClass, trust?.stage, amountLimits.min],
   );
 
-  const manualExecutePhase = useMemo(() => {
-    const exFor = (selectedAccount?.exchange || exchange || "").toLowerCase();
-    return deriveManualExecutePhase(symbol, analyzing, analysis, exFor);
-  }, [symbol, analyzing, analysis, selectedAccount?.exchange, exchange]);
-
   useEffect(() => {
     const ex = selectedAccount?.exchange?.trim();
     if (ex) setExchange(ex);
@@ -859,8 +851,15 @@ function TradePage() {
     return () => window.clearTimeout(t);
   }, [toast]);
 
+  useEffect(() => {
+    if (!symbol.trim()) {
+      setTradeButtonState("disabled");
+    }
+  }, [symbol]);
+
   const handleAnalyse = useCallback(async () => {
     if (!symbol.trim()) return;
+    setTradeButtonState("analyzing");
     setAnalyzing(true);
     setAnalysisError(null);
     setAnalysis(null);
@@ -869,6 +868,7 @@ function TradePage() {
       if (!ex) {
         setToast("Select a trading account (or connect an exchange) first");
         setAnalyzing(false);
+        setTradeButtonState("disabled");
         return;
       }
       // tradingApi.analyze uses 90s timeout — default api client is 8s (too short for Claude + market data).
@@ -876,11 +876,14 @@ function TradePage() {
         trading_account_id: selectedTradingAccountId ?? undefined,
         is_paper: selectedAccount?.is_paper ?? isPaper,
       });
-      setAnalysis(res.data?.data ?? res.data);
+      const payload = res.data?.data ?? res.data;
+      setAnalysis(payload);
       setAnalysisError(null);
+      setTradeButtonState(applyAnalyzeResponseToTradeButton(payload, ex, symbol.trim()));
     } catch {
       setAnalysis(null);
       setAnalysisError("Analysis unavailable — market data could not be fetched.");
+      setTradeButtonState("disabled");
     } finally {
       setAnalyzing(false);
     }
@@ -900,6 +903,7 @@ function TradePage() {
     setAnalysis(null);
     setAnalysisError(null);
     setAnalyzing(false);
+    setTradeButtonState("disabled");
   }, [symbol, layout]);
 
   useEffect(() => {
@@ -908,6 +912,7 @@ function TradePage() {
       setAnalysis(null);
       setAnalysisError(null);
       setAnalyzing(false);
+      setTradeButtonState("disabled");
       return;
     }
     void handleAnalyse();
@@ -1062,20 +1067,21 @@ function TradePage() {
   const handleConfirmedTrade = async () => {
     const sym = symbol.trim();
     const ex = (selectedAccount?.exchange || exchange || "").toLowerCase();
-    const phase = deriveManualExecutePhase(sym, false, analysis, ex);
-    if (phase !== "ready") {
+    const derived = applyAnalyzeResponseToTradeButton(analysis, ex, sym);
+    if (derived !== "ready") {
       setToast("Cannot execute — check the trade button state and try again.");
       setConfirmOpen(false);
+      setTradeButtonState(derived);
       return;
     }
-    const decision = String(analysis?.decision ?? "").toUpperCase();
+    const decision = String(analysis?.decision ?? analysis?.signal ?? "").toUpperCase();
     const conf = Number(analysis?.confidence ?? 0);
     if (decision === "WAIT" || decision === "" || (decision !== "BUY" && decision !== "SELL")) {
       setToast("No valid buy/sell signal — no order was placed.");
       setConfirmOpen(false);
       return;
     }
-    if (!Number.isFinite(conf) || conf < MIN_MANUAL_EXECUTE_CONFIDENCE) {
+    if (!Number.isFinite(conf) || conf < TRADE_BUTTON_MIN_CONFIDENCE) {
       setToast("Confidence is below the minimum to execute.");
       setConfirmOpen(false);
       return;
@@ -1088,14 +1094,18 @@ function TradePage() {
       setConfirmOpen(false);
       return;
     }
+    const executeOpts = {
+      trading_account_id: selectedTradingAccountId ?? undefined,
+      is_paper: selectedAccount?.is_paper ?? isPaper,
+      amount,
+      side: decision,
+    } as Parameters<typeof tradingApi.execute>[2] & { amount?: number; side?: string };
     let res: Awaited<ReturnType<typeof tradingApi.execute>>;
     try {
       if (!ex) throw new Error("Missing exchange");
-      res = await tradingApi.execute(sym, ex, {
-        trading_account_id: selectedTradingAccountId ?? undefined,
-        is_paper: selectedAccount?.is_paper ?? isPaper,
-      });
+      res = await tradingApi.execute(sym, ex, executeOpts);
     } catch (e: any) {
+      setTradeButtonState("ready");
       const detail = e?.response?.data?.detail;
       if (detail === "onboarding_required") {
         // Server guard fired — clear local state and show wizard
@@ -1107,8 +1117,12 @@ function TradePage() {
     const data = res.data?.data ?? res.data;
     if (data?.status === "wait" || String(data?.decision ?? "").toUpperCase() === "WAIT") {
       setToast("Unitrader recommends waiting — no order was placed.");
+      setTradeButtonState("ready");
     } else {
       setToast("Trade submitted");
+      setTradeButtonState("disabled");
+      setAnalysis(null);
+      setAnalysisError(null);
     }
     await refreshOpenPositions({ silent: true });
     return data;
@@ -1397,8 +1411,11 @@ function TradePage() {
                   settingsExplanationLevel={settingsExplanationLevel}
                 >
                   <ManualTradeExecuteButton
-                    phase={manualExecutePhase}
-                    onExecute={() => setConfirmOpen(true)}
+                    tradeButtonState={tradeButtonState}
+                    onExecute={() => {
+                      setTradeButtonState("analyzing");
+                      setConfirmOpen(true);
+                    }}
                   />
                 </AIAnalysisCard>
               </div>
@@ -1462,8 +1479,11 @@ function TradePage() {
                     settingsExplanationLevel={settingsExplanationLevel}
                   >
                     <ManualTradeExecuteButton
-                      phase={manualExecutePhase}
-                      onExecute={() => setConfirmOpen(true)}
+                      tradeButtonState={tradeButtonState}
+                      onExecute={() => {
+                        setTradeButtonState("analyzing");
+                        setConfirmOpen(true);
+                      }}
                     />
                   </AIAnalysisCard>
 
@@ -1596,8 +1616,11 @@ function TradePage() {
                     settingsExplanationLevel={settingsExplanationLevel}
                   >
                     <ManualTradeExecuteButton
-                      phase={manualExecutePhase}
-                      onExecute={() => setConfirmOpen(true)}
+                      tradeButtonState={tradeButtonState}
+                      onExecute={() => {
+                        setTradeButtonState("analyzing");
+                        setConfirmOpen(true);
+                      }}
                     />
                   </AIAnalysisCard>
 
@@ -1616,7 +1639,10 @@ function TradePage() {
       {/* Mandatory confirm modal for all layouts */}
       <TradeConfirmModal
         isOpen={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
+        onClose={() => {
+          setConfirmOpen(false);
+          setTradeButtonState((s) => (s === "analyzing" ? "ready" : s));
+        }}
         onConfirm={async () => {
           await handleConfirmedTrade();
         }}

@@ -1626,14 +1626,26 @@ async def whatsapp_webhook(
         else:
             # User is linked — pass message to conversation agent
             try:
-                from src.agents.core.conversation_agent import ConversationAgent
-                agent  = ConversationAgent()
-                result = await agent.chat(
-                    user_id=str(account.user_id),
-                    message=message_text,
+                from src.agents.orchestrator import get_orchestrator
+
+                user_id = str(account.user_id)
+                incoming_message_text = message_text
+                preferred_trading_account_id = None
+
+                orchestrator = get_orchestrator()
+                orch_result = await orchestrator.route(
+                    user_id=user_id,
+                    action="chat",
+                    payload={
+                        "message": incoming_message_text,
+                        "channel": "whatsapp",
+                        "trading_account_id": str(preferred_trading_account_id)
+                        if preferred_trading_account_id
+                        else None,
+                    },
                     db=db,
                 )
-                reply = result.get("response", "I'm thinking... try again in a moment.")
+                reply = orch_result.get("response") or orch_result.get("message", "")
             except Exception as e:
                 logger.error(f"WhatsApp conversation agent error: {e}")
                 reply = (

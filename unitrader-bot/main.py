@@ -7,6 +7,7 @@ Run with:  python -m uvicorn main:app --reload
 
 import asyncio
 import logging
+import os
 import secrets
 import sys
 import time
@@ -237,6 +238,56 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Anthropic API key: NOT configured — AI features disabled")
 
+    # 2b. Alpaca (paper + optional live) — same booleans market_data uses for data API headers
+    _alpaca_paper_key = bool((settings.alpaca_paper_api_key or "").strip())
+    _alpaca_paper_secret = bool((settings.alpaca_paper_api_secret or "").strip())
+    logger.info(
+        "Alpaca paper: Key configured=%s, Secret configured=%s (set on the Python API service in Railway; redeploy after changing variables)",
+        _alpaca_paper_key,
+        _alpaca_paper_secret,
+    )
+    if not _alpaca_paper_key or not _alpaca_paper_secret:
+        logger.warning(
+            "Alpaca paper credentials missing — stock/crypto market data and server-side Alpaca calls will fail until "
+            "ALPACA_PAPER_API_KEY and ALPACA_PAPER_API_SECRET (or legacy ALPACA_API_KEY / ALPACA_API_SECRET) are set."
+        )
+    else:
+        # Probe Alpaca with a single lightweight request to detect invalid keys early
+        try:
+            import httpx as _httpx
+            _probe_headers = {
+                "APCA-API-KEY-ID": settings.alpaca_paper_api_key.strip(),
+                "APCA-API-SECRET-KEY": settings.alpaca_paper_api_secret.strip(),
+            }
+            _probe_url = (
+                (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
+                + "/v2/stocks/AAPL/quotes/latest"
+            )
+            async with _httpx.AsyncClient(timeout=8.0, headers=_probe_headers) as _probe_client:
+                _probe_resp = await _probe_client.get(_probe_url)
+            if _probe_resp.status_code == 401:
+                from src.integrations.alpaca_circuit_breaker import alpaca_breaker
+                alpaca_breaker.record_auth_failure("Startup probe: 401 Unauthorized")
+                alpaca_breaker.record_auth_failure("Startup probe: 401 Unauthorized")
+                alpaca_breaker.record_auth_failure("Startup probe: 401 Unauthorized")
+                logger.error(
+                    "ALPACA CREDENTIALS INVALID — startup probe returned 401. "
+                    "Circuit breaker is now OPEN. Fix ALPACA_PAPER_API_KEY / ALPACA_PAPER_API_SECRET "
+                    "in Railway env vars and redeploy."
+                )
+            elif _probe_resp.status_code == 200:
+                logger.info("Alpaca credentials validated — startup probe OK (AAPL quote)")
+            else:
+                logger.warning("Alpaca startup probe returned HTTP %d (non-fatal)", _probe_resp.status_code)
+        except Exception as _probe_exc:
+            logger.warning("Alpaca startup probe failed (non-fatal): %s", _probe_exc)
+    _alpaca_live_key = bool((settings.alpaca_live_api_key or "").strip())
+    _alpaca_live_secret = bool((settings.alpaca_live_api_secret or "").strip())
+    if _alpaca_live_key and _alpaca_live_secret:
+        logger.info("Alpaca live: Key configured=True, Secret configured=True")
+    elif _alpaca_live_key or _alpaca_live_secret:
+        logger.warning("Alpaca live: incomplete — set both ALPACA_LIVE_API_KEY and ALPACA_LIVE_API_SECRET for live trading")
+
     # 3. Verify database configuration
     _db_url_display = settings.database_url[:40] + "..." if len(settings.database_url) > 40 else settings.database_url
     if "sqlite" in settings.database_url:
@@ -257,24 +308,30 @@ async def lifespan(app: FastAPI):
             "If using Supabase, also set SUPABASE_SERVICE_ROLE_KEY."
         )
 
-    # 4. Launch background loops
-    trading_task  = asyncio.create_task(_trading_loop(),             name="trading_loop")
-    monitor_task  = asyncio.create_task(monitor_loop(),              name="monitor_loop")
-    content_task  = asyncio.create_task(_content_scheduler(),        name="content_scheduler")
-    email_task    = asyncio.create_task(_email_scheduler(),          name="email_scheduler")
-    learning_task = asyncio.create_task(_learning_scheduler(),       name="learning_scheduler")
-    goals_task    = asyncio.create_task(_goals_scheduler(),          name="goals_scheduler")
-    full_auto_task = asyncio.create_task(full_auto_scanner_loop(),   name="full_auto_scanner_loop")
-    apex_selects_task = asyncio.create_task(apex_selects_scanner_loop(), name="apex_selects_scanner_loop")
-    morning_briefing_task = asyncio.create_task(morning_briefing_loop(), name="morning_briefing_loop")
-    daily_digest_task = asyncio.create_task(daily_digest_loop(),     name="daily_digest_loop")
-    logger.info(
-        "Background loops started "
-        "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly, goals=weekly@8am, full_auto=30min, apex_selects=30min, morning_briefing=hourly, daily_digest=8am)"
-    )
+    # 4. Launch background loops (skip in tests / CI to prevent hanging workers)
+    _disable_loops = bool(settings.disable_background_loops) or ("PYTEST_CURRENT_TEST" in os.environ)
+    if _disable_loops:
+        trading_task = monitor_task = content_task = email_task = learning_task = goals_task = None
+        full_auto_task = apex_selects_task = morning_briefing_task = daily_digest_task = None
+        logger.info("Background loops disabled (tests/CI mode)")
+    else:
+        trading_task  = asyncio.create_task(_trading_loop(),             name="trading_loop")
+        monitor_task  = asyncio.create_task(monitor_loop(),              name="monitor_loop")
+        content_task  = asyncio.create_task(_content_scheduler(),        name="content_scheduler")
+        email_task    = asyncio.create_task(_email_scheduler(),          name="email_scheduler")
+        learning_task = asyncio.create_task(_learning_scheduler(),       name="learning_scheduler")
+        goals_task    = asyncio.create_task(_goals_scheduler(),          name="goals_scheduler")
+        full_auto_task = asyncio.create_task(full_auto_scanner_loop(),   name="full_auto_scanner_loop")
+        apex_selects_task = asyncio.create_task(apex_selects_scanner_loop(), name="apex_selects_scanner_loop")
+        morning_briefing_task = asyncio.create_task(morning_briefing_loop(), name="morning_briefing_loop")
+        daily_digest_task = asyncio.create_task(daily_digest_loop(),     name="daily_digest_loop")
+        logger.info(
+            "Background loops started "
+            "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly, goals=weekly@8am, full_auto=30min, apex_selects=30min, morning_briefing=hourly, daily_digest=8am)"
+        )
 
     # 5. Initialise Telegram bot (optional — disabled if token not set)
-    if settings.telegram_enabled:
+    if (not _disable_loops) and settings.telegram_enabled:
         try:
             from src.integrations.telegram_bot import TelegramBotService
             _tg_bot = TelegramBotService(token=settings.telegram_bot_token)
@@ -307,7 +364,7 @@ async def lifespan(app: FastAPI):
     logger.info("Unitrader notifications engine initialised")
 
     # 6. Initialise WhatsApp bot (optional — disabled if Twilio creds not set)
-    if settings.whatsapp_enabled:
+    if (not _disable_loops) and settings.whatsapp_enabled:
         try:
             from src.integrations.whatsapp_bot import WhatsAppBotService
             _wa_bot = WhatsAppBotService(
@@ -354,19 +411,22 @@ async def lifespan(app: FastAPI):
         morning_briefing_task,
         daily_digest_task,
     ):
-        task.cancel()
+        if task is not None:
+            task.cancel()
     try:
         await asyncio.gather(
-            trading_task,
-            monitor_task,
-            content_task,
-            email_task,
-            learning_task,
-            goals_task,
-            full_auto_task,
-            apex_selects_task,
-            morning_briefing_task,
-            daily_digest_task,
+            *[t for t in (
+                trading_task,
+                monitor_task,
+                content_task,
+                email_task,
+                learning_task,
+                goals_task,
+                full_auto_task,
+                apex_selects_task,
+                morning_briefing_task,
+                daily_digest_task,
+            ) if t is not None],
             return_exceptions=True,
         )
     except Exception:
@@ -755,7 +815,11 @@ async def _run_auto_scan_for_account(trading_account: TradingAccount, settings_r
             logger.info("Full Auto skipping %s for %s due to exchange backoff", symbol, user.id)
             continue
 
-        analysis = await _analyse_symbol_for_mode(symbol, db, exchange_override=trading_account.exchange)
+        try:
+            analysis = await _analyse_symbol_for_mode(symbol, db, exchange_override=trading_account.exchange)
+        except Exception as exc:
+            logger.warning("Full Auto: skipping %s for %s — analysis failed: %s", symbol, user.id, exc)
+            continue
         db.add(_signal_row_from_analysis(analysis, run_id))
         convergence = analysis["convergence"]
         confidence = convergence["confidence"]
@@ -862,7 +926,11 @@ async def _run_apex_selects_for_user(settings_row: UserSettings, user: User, db)
     run_id = uuid.uuid4()
 
     for symbol in watchlist:
-        analysis = await _analyse_symbol_for_mode(symbol, db)
+        try:
+            analysis = await _analyse_symbol_for_mode(symbol, db)
+        except Exception as exc:
+            logger.warning("Apex Selects: skipping %s for %s — analysis failed: %s", symbol, user.id, exc)
+            continue
         db.add(_signal_row_from_analysis(analysis, run_id))
         if analysis["asset_class"] not in allowed_classes:
             continue

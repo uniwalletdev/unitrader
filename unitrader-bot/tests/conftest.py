@@ -28,7 +28,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import pytest_asyncio
 
 # ─── Path setup ──────────────────────────────────────────────────────────────
 # Ensure the project root is on sys.path so imports resolve correctly
@@ -43,14 +42,15 @@ _env_file = _env_test if _env_test.exists() else _env_main
 from dotenv import load_dotenv
 load_dotenv(_env_file, override=True)
 
+# Prevent background schedulers/bots from starting during pytest collection/execution.
+# This avoids occasional hangs on Windows where non-daemon tasks/threads keep the
+# interpreter alive after tests complete.
+os.environ.setdefault("UNITRADER_DISABLE_BACKGROUND_LOOPS", "true")
 
-# ─── pytest-asyncio: single event loop for all async tests ───────────────────
-@pytest.fixture(scope="session")
-def event_loop():
-    """Provide a single event loop for the entire test session."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+if sys.platform.startswith("win"):
+    # CI safety: pytest sometimes hangs after completion on Windows due to
+    # non-daemon threads from imported deps. Force a hard-exit after session end.
+    os.environ.setdefault("UNITRADER_PYTEST_FORCE_EXIT", "true")
 
 
 # ─── Marker registration ─────────────────────────────────────────────────────
@@ -180,3 +180,10 @@ def reload_settings():
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
+
+
+def pytest_sessionfinish(session, exitstatus: int):
+    """Hard-exit on Windows to avoid occasional post-test hangs."""
+    v = (os.getenv("UNITRADER_PYTEST_FORCE_EXIT") or "").strip().lower()
+    if v in {"1", "true", "yes"}:
+        os._exit(0 if exitstatus == 0 else 1)

@@ -32,6 +32,55 @@ def whatsapp_plain_chat_text(text: str) -> str:
     return t
 
 
+_TRADE_INTENT_RE = re.compile(
+    r"\b(buy|sell|purchase|paper trade|execute|place (a )?trades?|order)\b",
+    re.I,
+)
+# When the user asks to trade but the model answers with generic "AI cannot trade" boilerplate.
+_REFUSAL_FRAGMENTS = (
+    "cannot place any trades",
+    "cannot execute",
+    "cannot fulfill",
+    "cannot directly",
+    "do not have the capability",
+    "do not have direct integration",
+    "do not actually have",
+    "i cannot place",
+    "i do not have",
+    "i apologize, but i do not",
+    "no way to initiate",
+    "must be performed by you",
+    "you would need to do so directly",
+)
+
+
+def apply_messaging_trade_refusal_guardrail(
+    user_message: str, assistant_reply: str, channel: str
+) -> str:
+    """Replace mistaken 'AI cannot trade' replies on messaging channels when user intent is execution."""
+    if channel not in ("whatsapp", "telegram"):
+        return assistant_reply
+    um = (user_message or "").strip().lower()
+    rl = (assistant_reply or "").strip().lower()
+    if not um or not rl:
+        return assistant_reply
+    if not _TRADE_INTENT_RE.search(um):
+        return assistant_reply
+    if not any(frag in rl for frag in _REFUSAL_FRAGMENTS):
+        return assistant_reply
+    if channel == "telegram":
+        return (
+            "Unitrader executes trades through your linked broker after you confirm.\n\n"
+            "Use /trade BUY SYMBOL QTY (e.g. `/trade BUY AAPL 1`) or open the Trade screen in the app.\n\n"
+            "I can still analyse symbols—what would you like to review?"
+        )
+    return (
+        "Unitrader executes trades through your linked broker after you confirm.\n\n"
+        "Send: TRADE BUY SYMBOL AMOUNT (e.g. TRADE BUY AAPL 100) or use the Trade screen in the app.\n\n"
+        "I can still analyse markets—tell me the symbol."
+    )
+
+
 def _normalize_chat_result(result: object) -> str:
     if not isinstance(result, dict):
         return str(result)
@@ -114,7 +163,7 @@ async def orchestrator_chat_with_actions(
                 merge_db = db_new
                 sc_merge = None
                 if not isinstance(raw, dict):
-                    out = str(raw)
+                    out = apply_messaging_trade_refusal_guardrail(text, str(raw), channel)
                     return {
                         "text": out,
                         "action_taken": None,
@@ -131,6 +180,7 @@ async def orchestrator_chat_with_actions(
                 reply = (merged.get("response") or merged.get("message") or "").strip()
                 if not reply:
                     reply = "Sorry, I couldn't generate a reply."
+                reply = apply_messaging_trade_refusal_guardrail(text, reply, channel)
                 return {
                     "text": reply,
                     "action_taken": merged.get("action_taken"),
@@ -149,7 +199,7 @@ async def orchestrator_chat_with_actions(
         }
 
     if not isinstance(raw, dict):
-        out = str(raw)
+        out = apply_messaging_trade_refusal_guardrail(text, str(raw), channel)
         return {
             "text": out,
             "action_taken": None,
@@ -169,6 +219,7 @@ async def orchestrator_chat_with_actions(
     reply = (merged.get("response") or merged.get("message") or "").strip()
     if not reply:
         reply = "Sorry, I couldn't generate a reply."
+    reply = apply_messaging_trade_refusal_guardrail(text, reply, channel)
 
     return {
         "text": reply,
