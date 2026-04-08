@@ -21,13 +21,14 @@ from routers.auth import get_current_user
 from src.integrations.stripe_client import (
     PLAN_FEATURES,
     PLAN_PRICES,
+    PLAN_ELITE,
     parse_subscription_event,
     verify_webhook,
 )
 from src.services.subscription import (
     get_billing_portal_url,
     get_subscription_summary,
-    start_pro_checkout,
+    start_plan_checkout,
     sync_subscription_from_webhook,
 )
 
@@ -69,6 +70,15 @@ async def list_plans():
                     "cta": "Start Free Trial",
                     "highlighted": True,
                 },
+                {
+                    "id": "elite",
+                    "name": "Elite",
+                    "price_usd": 29.99,
+                    "price_monthly_cents": PLAN_PRICES["elite"],
+                    "trial_days": 14,
+                    "features": PLAN_FEATURES["elite"],
+                    "cta": "Go Elite",
+                },
             ]
         },
     }
@@ -91,21 +101,28 @@ async def get_billing_status(current_user=Depends(get_current_user)):
 # POST /api/billing/checkout
 # ─────────────────────────────────────────────
 
-async def _run_checkout(current_user) -> dict:
+async def _run_checkout(current_user, plan: str = "pro") -> dict:
     """Shared logic used by both /checkout and /checkout-session."""
     if not settings.stripe_secret_key:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Payment system not configured",
         )
-    price_id = settings.stripe_pro_price_id
+
+    if plan == "elite":
+        price_id = settings.stripe_elite_price_id
+        label = "Elite"
+    else:
+        price_id = settings.stripe_pro_price_id
+        label = "Pro"
+
     if not price_id:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Stripe Pro price not configured (STRIPE_PRO_PRICE_ID)",
+            detail=f"Stripe {label} price not configured (STRIPE_{label.upper()}_PRICE_ID)",
         )
     try:
-        url = await start_pro_checkout(current_user, price_id)
+        url = await start_plan_checkout(current_user, price_id)
     except Exception as exc:
         logger.error("Checkout session creation failed: %s", exc)
         raise HTTPException(
@@ -116,13 +133,13 @@ async def _run_checkout(current_user) -> dict:
 
 
 @router.post("/checkout")
-async def create_checkout(current_user=Depends(get_current_user)):
+async def create_checkout(plan: str = "pro", current_user=Depends(get_current_user)):
     """Create a Stripe Checkout session and return the redirect URL.
 
     Includes a 7-day free trial. The user is redirected to Stripe's
     hosted checkout page to enter their card details.
     """
-    return await _run_checkout(current_user)
+    return await _run_checkout(current_user, plan)
 
 
 # ─────────────────────────────────────────────
@@ -130,13 +147,13 @@ async def create_checkout(current_user=Depends(get_current_user)):
 # ─────────────────────────────────────────────
 
 @router.post("/checkout-session")
-async def create_checkout_session_alias(current_user=Depends(get_current_user)):
+async def create_checkout_session_alias(plan: str = "pro", current_user=Depends(get_current_user)):
     """Alias for /checkout — used by the trial choice modal.
 
     Returns the same Stripe Checkout URL. Having a dedicated endpoint lets
     the trial flow remain decoupled from the general billing UI.
     """
-    return await _run_checkout(current_user)
+    return await _run_checkout(current_user, plan)
 
 
 # ─────────────────────────────────────────────

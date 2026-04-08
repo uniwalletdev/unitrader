@@ -18,6 +18,7 @@ from models import Trade, User
 from src.integrations.stripe_client import (
     PLAN_FREE,
     PLAN_PRO,
+    PLAN_ELITE,
     create_checkout_session,
     create_customer,
     create_portal_session,
@@ -33,12 +34,12 @@ _FRONTEND_URL = getattr(settings, "frontend_url", "http://localhost:3000")
 # Checkout
 # ─────────────────────────────────────────────
 
-async def start_pro_checkout(user: User, price_id: str) -> str:
+async def start_plan_checkout(user: User, price_id: str) -> str:
     """Ensure the user has a Stripe customer record, then create a checkout session.
 
     Args:
         user: Authenticated User ORM instance.
-        price_id: Stripe Price ID for the Pro plan.
+        price_id: Stripe Price ID for the plan (Pro or Elite).
 
     Returns:
         Stripe Checkout URL to redirect the user to.
@@ -117,8 +118,22 @@ async def sync_subscription_from_webhook(parsed: dict) -> None:
             return
 
         # Map Stripe status → internal subscription tier
+        # The tier (pro vs elite) is determined by the price; the webhook
+        # just tells us active/canceled. Look up the actual subscription
+        # to get the correct tier.
         if stripe_status in {"active", "trialing"}:
-            user.subscription_tier = PLAN_PRO
+            # Determine tier from Stripe subscription price
+            resolved_tier = PLAN_PRO  # default
+            if subscription_id:
+                try:
+                    sub = get_subscription(subscription_id)
+                    price_id = sub["items"]["data"][0]["price"]["id"] if sub.get("items") else None
+                    from config import settings as _s
+                    if price_id and price_id == getattr(_s, "stripe_elite_price_id", ""):
+                        resolved_tier = PLAN_ELITE
+                except Exception:
+                    pass  # fall back to Pro
+            user.subscription_tier = resolved_tier
         elif stripe_status in {"canceled", "unpaid", "incomplete_expired"}:
             user.subscription_tier = PLAN_FREE
         # past_due keeps current tier but flags the issue
@@ -143,9 +158,17 @@ async def sync_subscription_from_webhook(parsed: dict) -> None:
 # ─────────────────────────────────────────────
 
 def is_pro(user: User) -> bool:
-    """Return True if the user has an active Pro subscription."""
+    """Return True if the user has an active Pro or Elite subscription."""
     return (
-        user.subscription_tier == PLAN_PRO
+        user.subscription_tier in {PLAN_PRO, PLAN_ELITE}
+        and user.stripe_subscription_status in {"active", "trialing"}
+    )
+
+
+def is_elite(user: User) -> bool:
+    """Return True if the user has an active Elite subscription."""
+    return (
+        user.subscription_tier == PLAN_ELITE
         and user.stripe_subscription_status in {"active", "trialing"}
     )
 
@@ -175,7 +198,8 @@ def _get_features(tier: str) -> list[str]:
 
 FREE_ALLOWED_SYMBOLS = {"BTCUSDT", "BTC/USDT", "BTC/USD", "BTCUSD"}
 FREE_MAX_EXCHANGES = 1
-FREE_TRADES_PER_MONTH = 10
+PRO_MAX_EXCHANGES = 3
+FREE_TRADES_PER_MONTH = 5
 
 
 def check_free_tier_symbol(user: User, symbol: str) -> None:
@@ -229,9 +253,9 @@ async def check_trade_limit(user: User, db: AsyncSession) -> dict:
         and trial_end_date > now
     )
 
-    # Paid subscription: unlimited trades
+    # Paid subscription: unlimited trades (Pro or Elite)
     paid_active = (
-        subscription_tier == PLAN_PRO
+        subscription_tier in {PLAN_PRO, PLAN_ELITE}
         and subscription_status in {"active", "trialing"}
     )
 
@@ -282,3 +306,7 @@ async def check_trade_limit(user: User, db: AsyncSession) -> dict:
         "trades_limit": trades_limit,
         "reason": reason,
     }
+
+
+# Backward-compatible alias (trial.py imports this name)
+start_pro_checkout = start_plan_checkout

@@ -21,31 +21,47 @@ logger = logging.getLogger(__name__)
 
 PLAN_FREE = "free"
 PLAN_PRO = "pro"
+PLAN_ELITE = "elite"
 
 # Set these in your Stripe dashboard and put the price IDs in .env
 PRO_MONTHLY_PRICE_ID = settings.stripe_pro_price_id if hasattr(settings, "stripe_pro_price_id") else ""
+ELITE_MONTHLY_PRICE_ID = settings.stripe_elite_price_id if hasattr(settings, "stripe_elite_price_id") else ""
 
 PLAN_FEATURES = {
     PLAN_FREE: [
         "1 exchange connection",
-        "10 AI trades per month",
-        "Basic chat support",
+        "5 AI trades per month",
+        "Unlimited AI chat",
+        "Browse signals",
+        "Paper trading",
         "Performance dashboard",
+        "Telegram & WhatsApp alerts",
     ],
     PLAN_PRO: [
-        "Unlimited exchange connections",
+        "3 exchange connections",
         "Unlimited AI trades",
         "Priority Claude AI (Opus)",
+        "Apex Selects signals",
+        "Daily briefings",
         "Advanced analytics",
         "Email alerts",
+    ],
+    PLAN_ELITE: [
+        "Unlimited exchange connections",
+        "Unlimited AI trades",
+        "Full Auto trading mode",
+        "Priority Claude AI (Opus)",
+        "Custom risk rules",
         "API access",
-        "Premium support",
+        "Priority support",
+        "All Pro features included",
     ],
 }
 
 PLAN_PRICES = {
     PLAN_FREE: 0,
-    PLAN_PRO: 999,  # cents → $9.99/month
+    PLAN_PRO: 999,    # cents → $9.99/month
+    PLAN_ELITE: 2999,  # cents → $29.99/month
 }
 
 

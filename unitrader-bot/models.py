@@ -107,7 +107,7 @@ class User(TimestampMixin, Base):
 
     # Subscription
     subscription_tier: Mapped[str] = mapped_column(
-        String(20), nullable=False, default="free"  # free | pro
+        String(20), nullable=False, default="free"  # free | pro | elite
     )
     trial_end_date: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

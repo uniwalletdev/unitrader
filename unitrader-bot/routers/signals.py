@@ -19,6 +19,7 @@ from models import (
     SignalScanRun,
     SignalStack,
     TradingAccount,
+    User,
     UserSettings,
 )
 from routers.auth import get_current_user
@@ -251,6 +252,24 @@ async def update_trading_account_settings(
     account = account_result.scalar_one_or_none()
     if not account:
         raise HTTPException(status_code=404, detail="trading_account_not_found")
+
+    # Full Auto is Elite-only: reject auto_trade_enabled=True for non-Elite users
+    if body.auto_trade_enabled is True:
+        user_result = await db.execute(
+            select(User).where(User.id == current_user.id)
+        )
+        user = user_result.scalar_one_or_none()
+        is_trial_active = (
+            user
+            and user.trial_status == "active"
+            and user.trial_end_date
+            and user.trial_end_date > datetime.now(timezone.utc)
+        )
+        if not user or (user.subscription_tier != "elite" and not is_trial_active):
+            raise HTTPException(
+                status_code=403,
+                detail="full_auto_elite_only",
+            )
 
     payload = body.model_dump(exclude_unset=True)
     payload.pop("trading_account_id", None)

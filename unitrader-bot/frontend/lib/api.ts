@@ -232,9 +232,9 @@ export const chatApi = {
 export const billingApi = {
   plans: () => api.get("/api/billing/plans"),
   status: () => api.get("/api/billing/status"),
-  checkout: () => api.post("/api/billing/checkout"),
+  checkout: (plan: string = "pro") => api.post(`/api/billing/checkout?plan=${plan}`),
   /** Dedicated endpoint used by the trial choice modal. */
-  checkoutSession: () => api.post("/api/billing/checkout-session"),
+  checkoutSession: (plan: string = "pro") => api.post(`/api/billing/checkout-session?plan=${plan}`),
   portal: () => api.post("/api/billing/portal"),
 };
 
@@ -242,7 +242,7 @@ export const billingApi = {
 export const trialApi = {
   status: () => api.get("/api/trial/status"),
   choiceOptions: () => api.get("/api/trial/choice-options"),
-  makeChoice: (choice: "pro" | "free" | "cancel") =>
+  makeChoice: (choice: "pro" | "elite" | "free" | "cancel") =>
     api.post("/api/trial/make-choice", { choice }),
 };
 
@@ -377,4 +377,21 @@ export interface PerformanceData {
   best_trade?: BackendTrade;
   worst_trade?: BackendTrade;
 }
+
+// ── Admin ────────────────────────────────────────────────────────────────────
+const adminHeaders = () => {
+  const secret = typeof window !== "undefined" ? localStorage.getItem("admin_secret") : "";
+  return { "X-Admin-Secret": secret || "" };
+};
+
+export const adminApi = {
+  users: (params?: { page?: number; page_size?: number; search?: string; tier?: string }) =>
+    api.get("/api/admin/users", { params, headers: adminHeaders() }),
+  userDetail: (userId: string) =>
+    api.get(`/api/admin/users/${userId}`, { headers: adminHeaders() }),
+  updateUser: (userId: string, data: { subscription_tier?: string; trial_status?: string; trial_end_date?: string; trading_paused?: boolean; is_active?: boolean }) =>
+    api.patch(`/api/admin/users/${userId}`, data, { headers: adminHeaders() }),
+  metrics: () =>
+    api.get("/api/admin/metrics", { headers: adminHeaders() }),
+};
 

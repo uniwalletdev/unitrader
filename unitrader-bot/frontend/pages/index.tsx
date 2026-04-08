@@ -319,7 +319,7 @@ export default function LandingPage() {
               </p>
             </div>
 
-            <div className="mx-auto grid max-w-3xl gap-6 sm:grid-cols-2">
+            <div className="mx-auto grid max-w-5xl gap-6 sm:grid-cols-3">
               {/* Free plan */}
               <div className="rounded-2xl border border-dark-800 bg-[#0d1117] p-8">
                 <div className="mb-6">
@@ -331,7 +331,7 @@ export default function LandingPage() {
                   <p className="mt-2 text-sm text-dark-400">Get started, no commitment</p>
                 </div>
                 <ul className="mb-8 space-y-3 text-sm text-dark-300">
-                  {["1 exchange connection", "10 AI trades per month", "Paper trading", "Basic chat support", "Performance dashboard"].map((f) => (
+                  {["1 exchange connection", "5 AI trades per month", "Unlimited AI chat", "Paper trading", "Performance dashboard", "Telegram & WhatsApp alerts"].map((f) => (
                     <li key={f} className="flex items-center gap-2.5">
                       <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-dark-800 text-[10px] text-dark-500">✓</span>
                       {f}
@@ -363,13 +363,12 @@ export default function LandingPage() {
                 </div>
                 <ul className="mb-8 space-y-3 text-sm text-dark-200">
                   {[
-                    "Unlimited exchange connections",
+                    "3 exchange connections",
                     "Unlimited AI trades",
-                    "Priority Claude AI",
+                    "Priority Claude AI (Opus)",
+                    "Apex Selects signals",
+                    "Daily briefings",
                     "Advanced analytics",
-                    "Email trade alerts",
-                    "Telegram & WhatsApp alerts",
-                    "Premium support",
                   ].map((f) => (
                     <li key={f} className="flex items-center gap-2.5">
                       <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-brand-500/20 text-[10px] text-brand-400">✓</span>
@@ -387,19 +386,43 @@ export default function LandingPage() {
                 <p className="mt-3 text-center text-[11px] text-dark-500">
                   No credit card required · Cancel anytime
                 </p>
-                <div className="relative flex items-center gap-2 py-1">
-                  <div className="flex-1 border-t border-dark-800" />
-                  <span className="text-[11px] text-dark-700">or</span>
-                  <div className="flex-1 border-t border-dark-800" />
+              </div>
+
+              {/* Elite plan */}
+              <div className="rounded-2xl border border-purple-500/30 bg-purple-500/[0.03] p-8">
+                <div className="mb-6">
+                  <p className="text-sm font-semibold uppercase tracking-widest text-purple-400">Elite</p>
+                  <div className="mt-2 flex items-end gap-1">
+                    <span className="text-4xl font-bold text-white">$29.99</span>
+                    <span className="mb-1 text-sm text-dark-400">/ month</span>
+                  </div>
+                  <p className="mt-2 text-sm text-dark-400">Maximum power for serious traders</p>
                 </div>
+                <ul className="mb-8 space-y-3 text-sm text-dark-200">
+                  {[
+                    "Unlimited exchange connections",
+                    "Unlimited AI trades",
+                    "Full Auto trading mode",
+                    "Custom risk rules",
+                    "API access",
+                    "Priority support",
+                    "All Pro features included",
+                  ].map((f) => (
+                    <li key={f} className="flex items-center gap-2.5">
+                      <span className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-purple-500/20 text-[10px] text-purple-400">✓</span>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
                 <Link
-                  href="/register?checkout=1"
-                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-brand-500/30 py-3 text-sm font-medium text-brand-300 transition hover:border-brand-400 hover:text-brand-200"
+                  href="/register?checkout=elite"
+                  className="flex w-full items-center justify-center gap-2 rounded-xl bg-purple-500 py-3 text-sm font-semibold text-white transition hover:bg-purple-400 active:scale-[0.98]"
                 >
-                  Go Pro now — $9.99/mo
+                  Go Elite
+                  <ArrowRight size={15} />
                 </Link>
-                <p className="mt-2 text-center text-[11px] text-dark-600">
-                  Skip the trial · Billed monthly · Cancel anytime
+                <p className="mt-3 text-center text-[11px] text-dark-500">
+                  14-day free trial · Cancel anytime
                 </p>
               </div>
             </div>

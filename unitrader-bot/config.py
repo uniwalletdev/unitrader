@@ -120,7 +120,8 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_public_key: str = ""
     stripe_webhook_secret: str = ""
-    stripe_pro_price_id: str = ""  # Stripe Price ID for Pro monthly plan
+    stripe_pro_price_id: str = ""    # Stripe Price ID for Pro monthly plan
+    stripe_elite_price_id: str = ""  # Stripe Price ID for Elite monthly plan
     stripe_base_url: str = "https://api.stripe.com"
 
     # ─────────────────────────────────────────────

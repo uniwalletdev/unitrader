@@ -55,6 +55,7 @@ from routers import ws as ws_router
 from routers import exchanges as exchanges_router
 from routers import goals as goals_router
 from routers import signals as signals_router
+from routers import admin as admin_router
 from routers.telegram_webhooks import (
     linking_router as telegram_linking_router,
     set_telegram_bot_service,
@@ -674,13 +675,18 @@ def _is_market_hours(now: datetime) -> bool:
 
 def _is_subscription_active(user: User) -> bool:
     return bool(
-        user.subscription_tier == "pro"
+        user.subscription_tier in {"pro", "elite"}
         or (
             user.trial_status == "active"
             and user.trial_end_date
             and user.trial_end_date > datetime.now(timezone.utc)
         )
     )
+
+
+def _is_any_active_user(user: User) -> bool:
+    """Return True for any registered active user (free, pro, or elite)."""
+    return bool(user.is_active)
 
 
 def _exchange_for_symbol(symbol: str, asset_class: str) -> str:
@@ -803,7 +809,15 @@ async def full_auto_scanner_loop() -> None:
                     )
                 )
                 for trading_account, settings_row, user in result.all():
-                    if not _is_subscription_active(user):
+                    # Full Auto is Elite-only (or active trial)
+                    if not (
+                        user.subscription_tier == "elite"
+                        or (
+                            user.trial_status == "active"
+                            and user.trial_end_date
+                            and user.trial_end_date > datetime.now(timezone.utc)
+                        )
+                    ):
                         continue
                     # Per-account asset class market hours check
                     ac = getattr(trading_account, "asset_class", None) or "stocks"
@@ -1055,7 +1069,7 @@ async def morning_briefing_loop() -> None:
                 top_signals = signals_result.scalars().all()
                 notification_engine = get_unitrader_notification_engine()
                 for settings_row, user in users:
-                    if not _is_subscription_active(user) or not top_signals or not notification_engine:
+                    if not _is_any_active_user(user) or not top_signals or not notification_engine:
                         continue
                     await notification_engine.send_browse_morning_briefing(
                         user_id=str(user.id),
@@ -1507,6 +1521,7 @@ app.include_router(notifications_router.router)
 app.include_router(ws_router.router)
 app.include_router(goals_router.router)
 app.include_router(signals_router.router)
+app.include_router(admin_router.router)
 app.include_router(telegram_webhook_router)
 app.include_router(telegram_linking_router)
 app.include_router(whatsapp_webhook_router)

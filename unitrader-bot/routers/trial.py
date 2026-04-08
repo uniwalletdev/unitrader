@@ -26,21 +26,33 @@ router = APIRouter(prefix="/api/trial", tags=["Trial"])
 TRIAL_DAYS = 14
 
 PRO_BENEFITS = [
-    "Unlimited exchange connections",
+    "3 exchange connections",
     "Unlimited AI trades",
     "Priority Claude AI (Opus)",
-    "Advanced analytics & reports",
+    "Apex Selects signals",
+    "Daily briefings",
+    "Advanced analytics",
     "Email trade alerts",
+]
+
+ELITE_BENEFITS = [
+    "Unlimited exchange connections",
+    "Unlimited AI trades",
+    "Full Auto trading mode",
+    "Priority Claude AI (Opus)",
+    "Custom risk rules",
     "API access",
-    "Premium support",
+    "Priority support",
+    "All Pro features included",
 ]
 
 FREE_LIMITS = [
     "1 exchange connection",
-    "10 AI trades per month",
-    "BTC/USD only",
-    "Basic performance dashboard",
-    "Community support",
+    "5 AI trades per month",
+    "Unlimited AI chat",
+    "Paper trading",
+    "Performance dashboard",
+    "Telegram & WhatsApp alerts",
 ]
 
 
@@ -176,6 +188,21 @@ async def trial_choice_options(
         "ai_name": current_user.ai_name,
         "options": [
             {
+                "choice": "elite",
+                "label": "Go Elite — Maximum Power",
+                "price": "$29.99/month",
+                "price_cents": 2999,
+                "trial_days": 0,
+                "highlighted": False,
+                "cta": "Upgrade to Elite →",
+                "benefits": ELITE_BENEFITS,
+                "action": "upgrade_to_elite",
+                "description": (
+                    f"Unlock Full Auto mode — {current_user.ai_name} trades autonomously "
+                    "with unlimited exchanges, custom risk rules, and API access."
+                ),
+            },
+            {
                 "choice": "pro",
                 "label": "Keep Trading — Go Pro",
                 "price": "$9.99/month",
@@ -187,7 +214,7 @@ async def trial_choice_options(
                 "action": "upgrade_to_pro",
                 "description": (
                     f"Keep {current_user.ai_name} running 24/7 with "
-                    "unlimited trades and all exchanges."
+                    "unlimited trades and 3 exchanges."
                 ),
             },
             {
@@ -237,29 +264,34 @@ async def make_trial_choice(
     - free   → downgrades to free tier, trial_status = converted
     - cancel → deactivates account
     """
-    if body.choice not in ("pro", "free", "cancel"):
+    if body.choice not in ("pro", "elite", "free", "cancel"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="choice must be one of: pro, free, cancel",
+            detail="choice must be one of: pro, elite, free, cancel",
         )
 
-    if body.choice == "pro":
+    if body.choice in ("pro", "elite"):
         # ── Use the billing service so Stripe customer is created correctly ──
         from config import settings as _settings
         checkout_url: str
 
-        if _settings.stripe_secret_key and _settings.stripe_pro_price_id:
+        price_id = (
+            _settings.stripe_elite_price_id
+            if body.choice == "elite"
+            else _settings.stripe_pro_price_id
+        )
+
+        if _settings.stripe_secret_key and price_id:
             try:
-                from src.services.subscription import start_pro_checkout
-                checkout_url = await start_pro_checkout(
+                from src.services.subscription import start_plan_checkout
+                checkout_url = await start_plan_checkout(
                     current_user,
-                    _settings.stripe_pro_price_id,
+                    price_id,
                 )
             except Exception as exc:
                 logger.error("Stripe checkout failed for user %s: %s", current_user.id, exc)
                 checkout_url = "/app?modal=trial"
         else:
-            # Stripe not configured in this environment — redirect back with notice
             checkout_url = "/app?modal=trial&stripe=unconfigured"
             logger.warning("Stripe not configured — cannot create checkout for user %s", current_user.id)
 
@@ -268,7 +300,7 @@ async def make_trial_choice(
         await db.commit()
         return {
             "status": "redirect",
-            "choice": "pro",
+            "choice": body.choice,
             "checkout_url": checkout_url,
             "message": "Redirecting to payment...",
         }
@@ -288,7 +320,7 @@ async def make_trial_choice(
             "limits": {
                 "max_exchanges": 1,
                 "allowed_symbols": ["BTCUSDT", "BTC/USDT", "BTC/USD"],
-                "trades_per_month": 10,
+                "trades_per_month": 5,
             },
         }
 

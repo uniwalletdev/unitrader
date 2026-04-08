@@ -6,9 +6,10 @@
  *   │  TradeMaster's Trial Ends Today!     │
  *   ├──────────────────────────────────────┤
  *   │  🎉 Your AI made you $567!           │
- *   │  Option 1: UPGRADE TO PRO ($9.99)    │
- *   │  Option 2: FREE TIER (Forever)       │
- *   │  Option 3: Say Goodbye               │
+ *   │  Option 1: UPGRADE TO ELITE ($29.99) │
+ *   │  Option 2: UPGRADE TO PRO ($9.99)    │
+ *   │  Option 3: FREE TIER (Forever)       │
+ *   │  Option 4: Say Goodbye               │
  *   └──────────────────────────────────────┘
  */
 import { useState } from "react";
@@ -32,7 +33,7 @@ interface Props {
 
 export default function TrialChoiceModal({ aiName, daysRemaining, stats, onClose }: Props) {
   const router = useRouter();
-  const [loading, setLoading] = useState<"pro" | "free" | "cancel" | null>(null);
+  const [loading, setLoading] = useState<"pro" | "elite" | "free" | "cancel" | null>(null);
   const [error, setError] = useState("");
   const [cancelConfirm, setCancelConfirm] = useState(false);
 
@@ -41,13 +42,13 @@ export default function TrialChoiceModal({ aiName, daysRemaining, stats, onClose
   const pnlAbs = Math.abs(stats.net_pnl).toFixed(2);
   const madeOrLost = pnlPositive ? "made you" : "lost";
 
-  const handleChoice = async (choice: "pro" | "free" | "cancel") => {
+  const handleChoice = async (choice: "pro" | "elite" | "free" | "cancel") => {
     setLoading(choice);
     setError("");
     try {
-      if (choice === "pro") {
+      if (choice === "pro" || choice === "elite") {
         // Hit the dedicated checkout-session endpoint directly
-        const res = await billingApi.checkoutSession();
+        const res = await billingApi.checkoutSession(choice);
         const url: string = res.data?.data?.checkout_url;
         if (url) {
           clearTrialCache();
@@ -55,7 +56,7 @@ export default function TrialChoiceModal({ aiName, daysRemaining, stats, onClose
           return;
         }
         // Fallback: let the trial router handle it
-        const fallback = await trialApi.makeChoice("pro");
+        const fallback = await trialApi.makeChoice(choice);
         if (fallback.data?.checkout_url) {
           clearTrialCache();
           window.location.href = fallback.data.checkout_url;
@@ -130,11 +131,66 @@ export default function TrialChoiceModal({ aiName, daysRemaining, stats, onClose
         {/* ── Options ────────────────────────────────────────────────────────── */}
         <div className="divide-y divide-dark-800">
 
-          {/* Option 1: Pro */}
+          {/* Option 1: Elite */}
+          <div className="px-6 py-5">
+            <div className="flex items-center gap-2 mb-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-purple-400">
+                Option 1
+              </span>
+              <div className="h-px flex-1 bg-purple-500/20" />
+              <span className="rounded-full bg-purple-500 px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                Most Powerful
+              </span>
+            </div>
+
+            <h3 className="text-base font-bold text-white mb-0.5">
+              Upgrade to Elite{" "}
+              <span className="text-purple-400 font-extrabold">($29.99/month)</span>
+            </h3>
+            <p className="text-xs text-dark-400 mb-4">
+              Full Auto mode — let {aiName} trade autonomously
+            </p>
+
+            <ul className="space-y-1.5 mb-4">
+              {[
+                "Full Auto trading mode",
+                "Unlimited exchange connections",
+                "Custom risk rules",
+                "API access",
+                "Priority support",
+                "All Pro features included",
+              ].map((b) => (
+                <li key={b} className="flex items-center gap-2 text-sm text-dark-300">
+                  <Check size={13} className="shrink-0 text-purple-500" />
+                  {b}
+                </li>
+              ))}
+            </ul>
+
+            <button
+              onClick={() => handleChoice("elite")}
+              disabled={!!loading}
+              className="w-full rounded-xl bg-purple-500 py-3 text-base font-bold text-white transition hover:bg-purple-400 active:scale-[0.98] disabled:opacity-50"
+            >
+              {loading === "elite" ? (
+                <span className="flex items-center justify-center gap-2">
+                  <span className="h-4 w-4 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+                  Redirecting…
+                </span>
+              ) : (
+                <>
+                  <Zap size={15} className="mr-1.5 inline" />
+                  Go Elite
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Option 2: Pro */}
           <div className="px-6 py-5">
             <div className="flex items-center gap-2 mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-brand-400">
-                Option 1
+                Option 2
               </span>
               <div className="h-px flex-1 bg-brand-500/20" />
               <span className="rounded-full bg-brand-500 px-2 py-0.5 text-[10px] font-bold uppercase text-dark-950">
@@ -147,16 +203,16 @@ export default function TrialChoiceModal({ aiName, daysRemaining, stats, onClose
               <span className="text-brand-400 font-extrabold">($9.99/month)</span>
             </h3>
             <p className="text-xs text-dark-400 mb-4">
-              Keep {aiName} trading 24/7 with full power
+              Keep {aiName} trading with full power
             </p>
 
             <ul className="space-y-1.5 mb-4">
               {[
-                "Unlimited exchange connections",
-                "Unlimited trading pairs",
-                "Priority Claude AI decisions",
-                "Advanced analytics & reports",
-                "Email trade alerts",
+                "3 exchange connections",
+                "Unlimited AI trades",
+                "Priority Claude AI (Opus)",
+                "Apex Selects signals",
+                "Advanced analytics",
               ].map((b) => (
                 <li key={b} className="flex items-center gap-2 text-sm text-dark-300">
                   <Check size={13} className="shrink-0 text-brand-500" />
@@ -184,11 +240,11 @@ export default function TrialChoiceModal({ aiName, daysRemaining, stats, onClose
             </button>
           </div>
 
-          {/* Option 2: Free */}
+          {/* Option 3: Free */}
           <div className="px-6 py-5">
             <div className="flex items-center gap-2 mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-dark-400">
-                Option 2
+                Option 3
               </span>
               <div className="h-px flex-1 bg-dark-700" />
               <span className="text-xs text-dark-500">Always free</span>
@@ -204,10 +260,11 @@ export default function TrialChoiceModal({ aiName, daysRemaining, stats, onClose
 
             <ul className="space-y-1.5 mb-4">
               {[
-                "Trade 1 pair free (Bitcoin)",
-                "10 AI trades per month",
                 "1 exchange connection",
-                "Basic performance dashboard",
+                "5 AI trades per month",
+                "Unlimited AI chat",
+                "Telegram & WhatsApp alerts",
+                "Paper trading",
               ].map((l) => (
                 <li key={l} className="flex items-center gap-2 text-sm text-dark-400">
                   <Check size={13} className="shrink-0 text-dark-600" />
@@ -225,11 +282,11 @@ export default function TrialChoiceModal({ aiName, daysRemaining, stats, onClose
             </button>
           </div>
 
-          {/* Option 3: Cancel */}
+          {/* Option 4: Cancel */}
           <div className="px-6 py-4">
             <div className="flex items-center gap-2 mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-dark-600">
-                Option 3
+                Option 4
               </span>
               <div className="h-px flex-1 bg-dark-800" />
             </div>
