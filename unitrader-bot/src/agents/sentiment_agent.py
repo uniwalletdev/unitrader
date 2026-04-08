@@ -187,6 +187,9 @@ class SentimentAgent:
         Returns:
             List of news items with headline, author, created_at, url
         """
+        from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
+        alpaca_breaker.check()  # fast-fail if Alpaca is known-broken
+
         # Normalize symbol for Alpaca API
         alpaca_symbol = symbol.replace("/", "")  # BTC/USD -> BTCUSD
 
@@ -210,9 +213,14 @@ class SentimentAgent:
             async with httpx.AsyncClient(timeout=10) as client:
                 await alpaca_limiter.acquire()
                 response = await client.get(url, headers=headers, params=params)
+                if response.status_code == 401:
+                    alpaca_breaker.record_auth_failure(f"News 401 for {symbol}")
                 response.raise_for_status()
+                alpaca_breaker.record_success()
                 data = response.json()
                 return data.get("news", [])
+        except AlpacaUnavailableError:
+            raise
         except Exception as e:
             logger.error(f"Alpaca news API error for {symbol}: {e}")
             raise

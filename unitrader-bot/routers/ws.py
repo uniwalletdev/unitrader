@@ -354,6 +354,9 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
         return await _fetch_binance_price(sym)
 
     # Alpaca (crypto or stock)
+    from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
+    alpaca_breaker.check()  # fast-fail if Alpaca is known-broken
+
     global _warned_missing_alpaca_data_creds
     api_key = (settings.alpaca_paper_api_key or "").strip()
     api_secret = (settings.alpaca_paper_api_secret or "").strip()
@@ -383,6 +386,9 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
                 async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
                     await alpaca_limiter.acquire()
                     resp = await client.get(url, params=params)
+                if resp.status_code == 401:
+                    alpaca_breaker.record_auth_failure(f"WS 401 on {url}")
+                    resp.raise_for_status()
                 if resp.status_code == 429:
                     retry_after = resp.headers.get("retry-after")
                     try:
@@ -393,6 +399,7 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
                     backoff_s = min(10.0, backoff_s * 2)
                     continue
                 resp.raise_for_status()
+                alpaca_breaker.record_success()
                 return resp.json()
             except Exception as exc:
                 last_exc = exc
@@ -468,6 +475,8 @@ async def _poll_and_broadcast(symbol: str, exchange: str | None = None):
 
     Runs until the symbol has no more subscribers.
     """
+    from src.integrations.alpaca_circuit_breaker import AlpacaUnavailableError
+
     logger.info(f"Starting price poll for {symbol}")
     poll_interval = 15  # seconds — stay within Alpaca free-tier rate limits
     error_count = 0
@@ -491,6 +500,11 @@ async def _poll_and_broadcast(symbol: str, exchange: str | None = None):
                 # Wait before next poll
                 await asyncio.sleep(poll_interval)
                 error_count = 0  # Reset error count on success
+
+            except AlpacaUnavailableError:
+                # Circuit breaker is OPEN — stop polling immediately, don't retry
+                logger.warning(f"Price poll for {symbol} stopped — Alpaca circuit breaker OPEN")
+                break
 
             except Exception as e:
                 error_count += 1

@@ -681,6 +681,17 @@ async def get_market_top(
 
         candidates = (await score_universe(market_context=req_market_context))[:5]
 
+        if not candidates:
+            # Alpaca circuit breaker is likely OPEN or all symbols failed.
+            # Return empty list gracefully instead of crashing downstream.
+            return {
+                "status": "success",
+                "resolved_exchange": ex,
+                "data": [],
+                "cached": False,
+                "note": "Market data temporarily unavailable — no candidates scored.",
+            }
+
         # Step 2: AI analysis of candidates only
         ctx = await SharedMemory.load(current_user.id, db, trading_account_id=trading_account_id)
         if ctx is None:
@@ -862,6 +873,13 @@ async def get_ai_picks(
 
         # Dynamic candidates instead of fixed watchlist
         symbols = (await score_universe(market_context=market_ctx))[:5]
+
+        if not symbols:
+            return {
+                "status": "success",
+                "data": [],
+                "note": "Market data temporarily unavailable — no candidates scored.",
+            }
 
         agent = TradingAgent(user_id=current_user.id)
         semaphore = asyncio.Semaphore(3)

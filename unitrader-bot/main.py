@@ -251,6 +251,36 @@ async def lifespan(app: FastAPI):
             "Alpaca paper credentials missing — stock/crypto market data and server-side Alpaca calls will fail until "
             "ALPACA_PAPER_API_KEY and ALPACA_PAPER_API_SECRET (or legacy ALPACA_API_KEY / ALPACA_API_SECRET) are set."
         )
+    else:
+        # Probe Alpaca with a single lightweight request to detect invalid keys early
+        try:
+            import httpx as _httpx
+            _probe_headers = {
+                "APCA-API-KEY-ID": settings.alpaca_paper_api_key.strip(),
+                "APCA-API-SECRET-KEY": settings.alpaca_paper_api_secret.strip(),
+            }
+            _probe_url = (
+                (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
+                + "/v2/stocks/AAPL/quotes/latest"
+            )
+            async with _httpx.AsyncClient(timeout=8.0, headers=_probe_headers) as _probe_client:
+                _probe_resp = await _probe_client.get(_probe_url)
+            if _probe_resp.status_code == 401:
+                from src.integrations.alpaca_circuit_breaker import alpaca_breaker
+                alpaca_breaker.record_auth_failure("Startup probe: 401 Unauthorized")
+                alpaca_breaker.record_auth_failure("Startup probe: 401 Unauthorized")
+                alpaca_breaker.record_auth_failure("Startup probe: 401 Unauthorized")
+                logger.error(
+                    "ALPACA CREDENTIALS INVALID — startup probe returned 401. "
+                    "Circuit breaker is now OPEN. Fix ALPACA_PAPER_API_KEY / ALPACA_PAPER_API_SECRET "
+                    "in Railway env vars and redeploy."
+                )
+            elif _probe_resp.status_code == 200:
+                logger.info("Alpaca credentials validated — startup probe OK (AAPL quote)")
+            else:
+                logger.warning("Alpaca startup probe returned HTTP %d (non-fatal)", _probe_resp.status_code)
+        except Exception as _probe_exc:
+            logger.warning("Alpaca startup probe failed (non-fatal): %s", _probe_exc)
     _alpaca_live_key = bool((settings.alpaca_live_api_key or "").strip())
     _alpaca_live_secret = bool((settings.alpaca_live_api_secret or "").strip())
     if _alpaca_live_key and _alpaca_live_secret:

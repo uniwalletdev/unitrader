@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import settings
 from database import get_db
 from schemas import HealthResponse, ServiceStatus
+from src.integrations.alpaca_circuit_breaker import alpaca_breaker
 from src.integrations.alpaca_rate_limiter import alpaca_limiter
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,7 @@ async def health_check():
             "paper_secret_configured": alpaca_secret_set,
             "status": "ok" if (alpaca_key_set and alpaca_secret_set) else "missing",
         },
+        alpaca_circuit_breaker=alpaca_breaker.status_dict(),
     )
 
 

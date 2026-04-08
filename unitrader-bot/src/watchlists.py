@@ -152,6 +152,15 @@ async def _score_stocks_alpaca(universe: list[str], top_n: int = 10) -> list[str
     Score = abs(price_change_pct) * 0.6 + volume_percentile * 0.4
     """
     from src.integrations.market_data import fetch_market_data
+    from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
+
+    # Fast exit: if circuit breaker is already OPEN, skip the entire loop
+    if alpaca_breaker.state == "OPEN":
+        logger.warning(
+            "score_universe(alpaca): skipped — circuit breaker OPEN (retry in %.0fs)",
+            alpaca_breaker.remaining_cooldown,
+        )
+        return []
 
     symbols = list(universe or [])
     raw: list[tuple[str, float, float]] = []
@@ -162,6 +171,10 @@ async def _score_stocks_alpaca(universe: list[str], top_n: int = 10) -> list[str
             change_pct = abs(float(data.get("price_change_pct") or 0))
             volume = float(data.get("volume") or 0)
             raw.append((symbol, change_pct, volume))
+        except AlpacaUnavailableError:
+            # Circuit breaker tripped during loop — stop iterating
+            logger.warning("score_universe(alpaca): circuit breaker tripped at %s, stopping early", symbol)
+            break
         except Exception as exc:
             logger.warning("score_universe: skipping %s — %s", symbol, exc)
         await asyncio.sleep(0.15)

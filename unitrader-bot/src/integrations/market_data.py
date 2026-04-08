@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 
 from config import settings
+from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
 from src.integrations.alpaca_rate_limiter import alpaca_limiter, kraken_limiter
 
 logger = logging.getLogger(__name__)
@@ -389,8 +390,11 @@ async def _fetch_alpaca_crypto(symbol: str) -> dict:
     """Symbol already normalised to BTC/USD format. Uses Alpaca crypto data API.
     
     Raises httpx.HTTPStatusError on API failures (401, 404, etc).
+    Raises AlpacaUnavailableError if the circuit breaker is OPEN.
     Returns dict with price, high_24h, low_24h, volume, price_change_pct, timestamp.
     """
+    alpaca_breaker.check()  # short-circuit if Alpaca is known-bad
+
     if not symbol or "/" not in symbol:
         raise ValueError(f"Alpaca crypto symbol must be in X/USD format, got: {symbol}")
     
@@ -418,6 +422,7 @@ async def _fetch_alpaca_crypto(symbol: str) -> dict:
             )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
+            alpaca_breaker.record_auth_failure(f"401 on crypto {symbol}")
             logger.error(
                 "Alpaca crypto auth failed (401) for %s - check API credentials. "
                 "Key: %s, Secret configured: %s",
@@ -431,6 +436,8 @@ async def _fetch_alpaca_crypto(symbol: str) -> dict:
                 symbol,
             )
         raise
+
+    alpaca_breaker.record_success()
 
     quotes = (quote_resp.json() or {}).get("quotes", {}).get(symbol, {})
     bars_data = (bars_resp.json() or {}).get("bars", {}).get(symbol, [])
@@ -460,8 +467,11 @@ async def _fetch_alpaca_stock(symbol: str) -> dict:
     """Symbol already normalised to AAPL format. Uses Alpaca stock data API.
     
     Raises httpx.HTTPStatusError on API failures (401, 404, etc).
+    Raises AlpacaUnavailableError if the circuit breaker is OPEN.
     Returns dict with price, high_24h, low_24h, volume, price_change_pct, timestamp.
     """
+    alpaca_breaker.check()  # short-circuit if Alpaca is known-bad
+
     if not symbol or "/" in symbol:
         raise ValueError(f"Alpaca stock symbol must NOT contain '/', got: {symbol}")
     
@@ -488,6 +498,7 @@ async def _fetch_alpaca_stock(symbol: str) -> dict:
             )
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:
+            alpaca_breaker.record_auth_failure(f"401 on stock {symbol}")
             logger.error(
                 "Alpaca stock auth failed (401) for %s - check API credentials. "
                 "Key: %s, Secret configured: %s",
@@ -501,6 +512,8 @@ async def _fetch_alpaca_stock(symbol: str) -> dict:
                 symbol,
             )
         raise
+
+    alpaca_breaker.record_success()
 
     quote = (quote_resp.json() or {}).get("quote", {})
     bars = (bars_resp.json() or {}).get("bars", [])
@@ -609,6 +622,7 @@ async def _fetch_kraken_closes(symbol: str, limit: int) -> list[float]:
 
 
 async def _fetch_alpaca_crypto_closes(symbol: str, limit: int) -> list[float]:
+    alpaca_breaker.check()
     base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
     headers = {}
     if getattr(settings, "alpaca_paper_api_key", None):
@@ -626,6 +640,7 @@ async def _fetch_alpaca_crypto_closes(symbol: str, limit: int) -> list[float]:
 
 
 async def _fetch_alpaca_stock_closes(symbol: str, limit: int) -> list[float]:
+    alpaca_breaker.check()
     base = (settings.alpaca_data_url or "https://data.alpaca.markets").rstrip("/")
     headers = {}
     if getattr(settings, "alpaca_paper_api_key", None):
