@@ -23,6 +23,7 @@ import httpx
 from config import settings
 from src.agents.shared_memory import SharedContext
 from src.integrations.alpaca_rate_limiter import alpaca_limiter
+from src.integrations.massive_market_data import fetch_massive_news
 from src.market_context import Exchange, MarketContext
 
 logger = logging.getLogger(__name__)
@@ -179,7 +180,7 @@ class SentimentAgent:
             return []
 
     async def _fetch_alpaca_news(self, symbol: str) -> list[dict]:
-        """Fetch recent news headlines from Alpaca API.
+        """Fetch recent news headlines — Massive first, Alpaca fallback.
 
         Args:
             symbol: Trading pair
@@ -187,6 +188,15 @@ class SentimentAgent:
         Returns:
             List of news items with headline, author, created_at, url
         """
+        # Try Massive (Polygon-compatible) news first
+        try:
+            articles = await fetch_massive_news(symbol, limit=10)
+            if articles:
+                return articles
+        except Exception as exc:
+            logger.warning("Massive news failed for %s, falling back to Alpaca: %s", symbol, exc)
+
+        # Alpaca fallback
         from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
         alpaca_breaker.check()  # fast-fail if Alpaca is known-broken
 

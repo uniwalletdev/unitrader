@@ -172,6 +172,15 @@ class Settings(BaseSettings):
     alpaca_data_url: str = "https://data.alpaca.markets"
     alpha_vantage_api_key: str = ""
 
+    # ─────────────────────────────────────────────
+    # Massive (market data — quotes, bars, news)
+    # ─────────────────────────────────────────────
+    massive_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("MASSIVE_API_KEY", "POLYGON_API_KEY"),
+    )
+    massive_base_url: str = "https://api.massive.com"
+
     oanda_api_key: str = ""
     oanda_account_id: str = ""
     oanda_base_url: str = "https://api-fxpractice.oanda.com"

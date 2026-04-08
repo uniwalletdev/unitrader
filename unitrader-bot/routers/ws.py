@@ -29,6 +29,7 @@ from jose import JWTError, jwt as jose_jwt
 from config import settings
 from security import verify_token
 from src.integrations.alpaca_rate_limiter import alpaca_limiter, kraken_limiter
+from src.integrations.massive_market_data import fetch_massive_quote
 from src.market_context import Exchange, ExchangeAssetClassError, normalize_symbol, resolve_market_context
 
 logger = logging.getLogger(__name__)
@@ -353,7 +354,14 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
     if source == "binance":
         return await _fetch_binance_price(sym)
 
-    # Alpaca (crypto or stock)
+    # Alpaca (crypto or stock) → route through Massive for market data
+    # Falls back to Alpaca if Massive is unavailable
+    try:
+        return await fetch_massive_quote(sym)
+    except Exception as exc:
+        logger.warning("Massive quote failed for %s, falling back to Alpaca: %s", sym, exc)
+
+    # Legacy Alpaca fallback
     from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
     alpaca_breaker.check()  # fast-fail if Alpaca is known-broken
 
