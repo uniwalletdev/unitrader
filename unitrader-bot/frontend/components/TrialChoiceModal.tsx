@@ -156,7 +156,6 @@ export default function TrialChoiceModal({ aiName, daysRemaining, stats, onClose
                 "Full Auto trading mode",
                 "Unlimited exchange connections",
                 "Custom risk rules",
-                "API access",
                 "Priority support",
                 "All Pro features included",
               ].map((b) => (

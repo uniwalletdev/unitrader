@@ -52,7 +52,6 @@ PLAN_FEATURES = {
         "Full Auto trading mode",
         "Priority Claude AI (Opus)",
         "Custom risk rules",
-        "API access",
         "Priority support",
         "All Pro features included",
     ],

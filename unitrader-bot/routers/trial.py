@@ -41,7 +41,6 @@ ELITE_BENEFITS = [
     "Full Auto trading mode",
     "Priority Claude AI (Opus)",
     "Custom risk rules",
-    "API access",
     "Priority support",
     "All Pro features included",
 ]
@@ -199,7 +198,7 @@ async def trial_choice_options(
                 "action": "upgrade_to_elite",
                 "description": (
                     f"Unlock Full Auto mode — {current_user.ai_name} trades autonomously "
-                    "with unlimited exchanges, custom risk rules, and API access."
+                    "with unlimited exchanges and custom risk rules."
                 ),
             },
             {

@@ -510,7 +510,6 @@ export default function LandingPage() {
                     "Unlimited exchanges",
                     "Full Auto trading mode",
                     "Custom risk rules",
-                    "API access",
                     "Priority support",
                     "Everything in Pro",
                   ].map((f) => (
