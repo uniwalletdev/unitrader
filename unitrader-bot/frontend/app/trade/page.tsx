@@ -14,12 +14,15 @@ import MarketStatusBar, { MarketStatus } from "@/components/trade/MarketStatusBa
 import TrustLadderBanner from "@/components/trade/TrustLadderBanner";
 import BrandPicker, { displayBrandLine } from "@/components/trade/BrandPicker";
 import PriceChart from "@/components/trade/PriceChart";
+import type { TradeMarker } from "@/components/trade/PriceChart";
 import ExplanationToggle from "@/components/trade/ExplanationToggle";
 import TradeConfirmModal from "@/components/trade/TradeConfirmModal";
 import CircuitBreakerAlert from "@/components/trade/CircuitBreakerAlert";
 import RiskWarning from "@/components/layout/RiskWarning";
 import NeverHoldBanner from "@/components/layout/NeverHoldBanner";
 import UnitraderNotificationTicker from "@/components/notifications/UnitraderNotificationTicker";
+import AIConfidenceGauge from "@/components/trade/AIConfidenceGauge";
+import PerformancePulse from "@/components/trade/PerformancePulse";
 import BrowseStack from "@/components/signals/BrowseStack";
 import BotSelectsPanel from "@/components/signals/ApexSelectsPanel";
 import FullAutoPanel from "@/components/signals/FullAutoPanel";
@@ -188,6 +191,8 @@ type OpenPositionRow = {
   symbol: string;
   side?: string | null;
   quantity?: number | null;
+  entry_price?: number | null;
+  created_at?: string | null;
 };
 
 function OpenPositionsPanel({
@@ -464,13 +469,21 @@ function AIAnalysisCard({
       return (
         <div className="rounded-xl border border-brand-500/20 bg-brand-500/5 p-4">
           <div className="mb-3 text-xs font-semibold text-brand-400">Unitrader&apos;s verdict</div>
+          {analysis.confidence != null && (
+            <div className="mb-3">
+              <AIConfidenceGauge
+                confidence={Math.round(Number(analysis.confidence))}
+                aiName={botName}
+                marketCondition={analysis.market_condition ?? null}
+              />
+            </div>
+          )}
           <div className="mb-3 text-sm text-dark-200">
             {analysis.message || analysis.reasoning || "Analysis ready."}
           </div>
-          {analysis.confidence != null && (
-            <div className="text-xs text-brand-300">
-              Confidence: {Math.round(Number(analysis.confidence))}%
-              {analysis.decision && <span className="ml-2 font-semibold">{String(analysis.decision).toUpperCase()}</span>}
+          {analysis.decision && (
+            <div className="text-xs font-semibold text-brand-300">
+              {String(analysis.decision).toUpperCase()}
             </div>
           )}
         </div>
@@ -882,11 +895,13 @@ function TradePage() {
         const d = res.data?.data ?? res.data;
         const positions = Array.isArray(d?.positions) ? d.positions : [];
         setOpenPositionsRows(
-          positions.map((p: { id: unknown; symbol?: unknown; side?: unknown; quantity?: unknown }) => ({
+          positions.map((p: { id: unknown; symbol?: unknown; side?: unknown; quantity?: unknown; entry_price?: unknown; created_at?: unknown }) => ({
             id: String(p.id),
             symbol: String(p.symbol ?? ""),
             side: p.side != null ? String(p.side) : null,
             quantity: p.quantity != null && p.quantity !== "" ? Number(p.quantity) : null,
+            entry_price: p.entry_price != null ? Number(p.entry_price) : null,
+            created_at: p.created_at != null ? String(p.created_at) : null,
           })),
         );
         const count = typeof d?.count === "number" ? d.count : positions.length;
@@ -907,6 +922,19 @@ function TradePage() {
     if (!authLoaded || !isSignedIn) return;
     void refreshOpenPositions();
   }, [bare, authLoaded, isSignedIn, refreshOpenPositions]);
+
+  // Build trade markers for PriceChart from open positions matching current symbol
+  const activeTradeMarkers: TradeMarker[] = useMemo(() => {
+    if (!symbol) return [];
+    return openPositionsRows
+      .filter((p) => p.symbol.toUpperCase() === symbol.toUpperCase() && p.entry_price)
+      .map((p) => ({
+        type: "entry" as const,
+        price: p.entry_price!,
+        time: p.created_at ? p.created_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
+        side: (p.side?.toUpperCase() === "SELL" ? "SELL" : "BUY") as "BUY" | "SELL",
+      }));
+  }, [symbol, openPositionsRows]);
 
   const displayCurrencyCode = useMemo(() => {
     const ex = (selectedAccount?.exchange ?? exchange ?? "").toLowerCase();
@@ -1342,6 +1370,9 @@ function TradePage() {
         </div>
       )}
 
+      {/* Performance pulse banner */}
+      <PerformancePulse />
+
       {/* Trust ladder banner for A */}
       {layout === "A" && trust && (
         <div className="mb-4">
@@ -1624,7 +1655,7 @@ function TradePage() {
                   )}
                   {symbol && (
                     <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                      {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="self_taught" signal="NONE" />}
+                      {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="self_taught" signal="NONE" tradeMarkers={activeTradeMarkers} />}
                     </div>
                   )}
                   <AmountInput
@@ -1742,7 +1773,7 @@ function TradePage() {
 
                   {symbol && (
                     <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                      {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="experienced" signal="NONE" />}
+                      {!dbg("no_chart") && <PriceChart symbol={symbol} traderClass="experienced" signal="NONE" tradeMarkers={activeTradeMarkers} />}
                     </div>
                   )}
 

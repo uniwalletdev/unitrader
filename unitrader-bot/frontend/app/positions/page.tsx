@@ -20,6 +20,7 @@ import { api, authApi, exchangeApi, tradingApi, type AccountBalance } from "@/li
 import RiskWarning from "@/components/layout/RiskWarning";
 import { useLivePrice } from "@/hooks/useLivePrice";
 import { formatPrice } from "@/utils/formatPrice";
+import AIConfidenceGauge from "@/components/trade/AIConfidenceGauge";
 
 type TraderClass =
   | "complete_novice"
@@ -43,6 +44,7 @@ type Position = {
   is_paper?: boolean;
   sector?: string | null;
   beta?: number | null;
+  claude_confidence?: number | null;
 };
 
 const BRAND_NAMES: Record<string, string> = {
@@ -707,6 +709,12 @@ function PositionRow({
             ) : (
               <span className="text-xs text-dark-500">—</span>
             )}
+          </td>
+        )}
+
+        {p.claude_confidence != null && (
+          <td className="px-4 py-3">
+            <AIConfidenceGauge confidence={Math.round(p.claude_confidence)} aiName="AI" compact />
           </td>
         )}
 

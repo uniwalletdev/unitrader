@@ -2383,3 +2383,99 @@ async def submit_trade_feedback(
     SharedMemory.invalidate(current_user.id)
 
     return {"success": True, "new_trust_score": trust_score}
+
+
+# ─────────────────────────────────────────────
+# GET /api/performance/engagement-stats
+# ─────────────────────────────────────────────
+
+_engagement_cache: dict[str, tuple[float, dict]] = {}
+_ENGAGEMENT_TTL = 60  # seconds
+
+@performance_router.get("/engagement-stats")
+async def engagement_stats(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return win-streak, performance pulse, and AI accuracy for engagement UI."""
+    import time as _time
+
+    uid = current_user.id
+    now = _time.monotonic()
+    cached = _engagement_cache.get(uid)
+    if cached and (now - cached[0]) < _ENGAGEMENT_TTL:
+        return {"status": "success", "data": cached[1]}
+
+    result = await db.execute(
+        select(Trade)
+        .where(and_(Trade.user_id == uid, Trade.status == "closed"))
+        .order_by(Trade.closed_at.desc())
+    )
+    trades = result.scalars().all()
+
+    # ── Streak calculation ──
+    current_wins = 0
+    current_losses = 0
+    longest_wins = 0
+    streak_set = False
+    for t in trades:
+        is_win = (t.profit or 0) > 0
+        if not streak_set:
+            if is_win:
+                current_wins += 1
+            else:
+                current_losses += 1
+                streak_set = True
+                longest_wins = current_wins
+        else:
+            break  # only need current streak + first reversal
+    # Scan full history for longest win streak
+    run = 0
+    for t in trades:
+        if (t.profit or 0) > 0:
+            run += 1
+            longest_wins = max(longest_wins, run)
+        else:
+            run = 0
+
+    # ── Time-windowed pulse metrics ──
+    utcnow = datetime.now(timezone.utc)
+    week_ago = utcnow - timedelta(days=7)
+    month_ago = utcnow - timedelta(days=30)
+    today_start = utcnow.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    trades_7d = [t for t in trades if t.closed_at and t.closed_at >= week_ago]
+    trades_30d = [t for t in trades if t.closed_at and t.closed_at >= month_ago]
+    trades_today = [t for t in trades if t.closed_at and t.closed_at >= today_start]
+
+    def _net_pnl(tlist):
+        return round(sum((t.profit or 0) - (t.loss or 0) for t in tlist), 2)
+
+    def _win_rate(tlist):
+        if not tlist:
+            return 0.0
+        return round(len([t for t in tlist if (t.profit or 0) > 0]) / len(tlist) * 100, 1)
+
+    # ── AI accuracy (high-confidence trades) ──
+    hc_trades = [t for t in trades if (t.claude_confidence or 0) >= 70]
+    hc_wins = [t for t in hc_trades if (t.profit or 0) > 0]
+    ai_accuracy = round(len(hc_wins) / len(hc_trades) * 100, 1) if hc_trades else 0.0
+
+    payload = {
+        "ai_name": current_user.ai_name or "Claude",
+        "streak": {
+            "current_wins": current_wins,
+            "current_losses": current_losses,
+            "longest_wins": longest_wins,
+        },
+        "pulse": {
+            "pnl_7d": _net_pnl(trades_7d),
+            "pnl_30d": _net_pnl(trades_30d),
+            "win_rate_7d": _win_rate(trades_7d),
+            "trades_today": len(trades_today),
+            "total_trades": len(trades),
+            "ai_accuracy_pct": ai_accuracy,
+        },
+    }
+    _engagement_cache[uid] = (now, payload)
+    return {"status": "success", "data": payload}

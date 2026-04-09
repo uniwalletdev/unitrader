@@ -76,16 +76,26 @@ function computeRSI(closes: number[], period = 14) {
   return 100 - 100 / (1 + rs);
 }
 
+export type TradeMarker = {
+  type: "entry" | "exit";
+  price: number;
+  time: string; // YYYY-MM-DD or ISO
+  side: "BUY" | "SELL";
+  pnl?: number | null;
+};
+
 export default function PriceChart({
   symbol,
   traderClass,
   signal = "NONE",
   fearGreed,
+  tradeMarkers,
 }: {
   symbol: string;
   traderClass: TraderClass;
   signal?: TradeSignal;
   fearGreed?: { label: string; value: number } | null;
+  tradeMarkers?: TradeMarker[];
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -275,6 +285,44 @@ export default function PriceChart({
 
     chart.timeScale().fitContent();
 
+    // ── Trade markers (entry/exit arrows + price line) ──
+    if (tradeMarkers && tradeMarkers.length > 0 && bars.length > 0) {
+      // Find the main series (first series added)
+      const mainSeries = (chart as any).getSeries?.() ?? [];
+      const series = mainSeries[0] ?? null;
+
+      for (const m of tradeMarkers) {
+        // Dashed horizontal line at entry price
+        if (m.type === "entry" && series) {
+          try {
+            series.createPriceLine({
+              price: m.price,
+              color: m.side === "BUY" ? "rgba(34,197,94,0.6)" : "rgba(239,68,68,0.6)",
+              lineWidth: 1,
+              lineStyle: LineStyle.Dashed,
+              axisLabelVisible: true,
+              title: m.side === "BUY" ? "Entry ▲" : "Entry ▼",
+            });
+          } catch { /* older lightweight-charts versions */ }
+        }
+        if (m.type === "exit" && series) {
+          try {
+            const pnlLabel = m.pnl != null
+              ? (m.pnl >= 0 ? ` +$${m.pnl.toFixed(2)}` : ` -$${Math.abs(m.pnl).toFixed(2)}`)
+              : "";
+            series.createPriceLine({
+              price: m.price,
+              color: (m.pnl ?? 0) >= 0 ? "rgba(34,197,94,0.6)" : "rgba(239,68,68,0.6)",
+              lineWidth: 1,
+              lineStyle: LineStyle.Dotted,
+              axisLabelVisible: true,
+              title: `Exit${pnlLabel}`,
+            });
+          } catch { /* fallback */ }
+        }
+      }
+    }
+
     const onResize = () => {
       if (!containerRef.current || !chartRef.current) return;
       chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
@@ -286,7 +334,7 @@ export default function PriceChart({
       chart.remove();
       chartRef.current = null;
     };
-  }, [bars, config.height, config.type, traderClass]);
+  }, [bars, config.height, config.type, traderClass, tradeMarkers]);
 
   // Realtime: update last bar close with live price
   useEffect(() => {
