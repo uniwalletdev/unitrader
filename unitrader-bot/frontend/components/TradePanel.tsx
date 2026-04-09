@@ -25,7 +25,7 @@ type TraderClass =
   | "semi_institutional"
   | "crypto_native";
 
-interface ConnectedExchange { exchange: string; connected_at: string | null; }
+interface ConnectedExchange { exchange: string; trading_account_id?: string | null; is_paper?: boolean; connected_at: string | null; }
 
 interface TradeResult {
   status: string; reason?: string; decision?: string; confidence?: number;
@@ -321,9 +321,27 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
         setTradingPaused(sRes.data.trading_paused || false);
         setMaxDailyLoss(sRes.data.max_daily_loss || 10);
         setTraderClass(sRes.data.trader_class || "complete_novice");
-        setPreferredTradingAccountId(
-          (sRes.data.preferred_trading_account_id as string | null | undefined) ?? null
-        );
+        const preferredRaw =
+          (sRes.data.preferred_trading_account_id as string | null | undefined) ?? null;
+        // Auto-resolve: if no preferred account stored, fall back to first connected exchange
+        if (preferredRaw) {
+          setPreferredTradingAccountId(preferredRaw);
+        } else {
+          try {
+            const exRes = await exchangeApi.list();
+            const connected = exRes.data.data || [];
+            if (connected.length > 0 && connected[0].trading_account_id) {
+              const resolved = connected[0].trading_account_id;
+              setPreferredTradingAccountId(resolved);
+              // Persist so future loads don't need to re-resolve
+              authApi.updateSettings({ preferred_trading_account_id: resolved }).catch(() => {});
+            } else {
+              setPreferredTradingAccountId(null);
+            }
+          } catch {
+            setPreferredTradingAccountId(null);
+          }
+        }
         const rawMode = sRes.data.trade_mode || "auto";
         setTradeMode(rawMode === "auto" ? "auto" : "picks");
         setTrust(tRes.data?.data ?? tRes.data);
