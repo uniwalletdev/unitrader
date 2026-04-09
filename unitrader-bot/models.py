@@ -157,6 +157,11 @@ class User(TimestampMixin, Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # Clerk SSO — immutable Clerk user ID for dedup across email changes
+    clerk_user_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, unique=True, index=True
+    )
+
     # ── Relationships ──────────────────────────────────────────────────────
     trades: Mapped[list["Trade"]] = relationship(
         "Trade", back_populates="user", cascade="all, delete-orphan"

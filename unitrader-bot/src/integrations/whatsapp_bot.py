@@ -543,7 +543,7 @@ class WhatsAppBotService:
         # pre-filled text was just "LINK" without the code).
         async with AsyncSessionLocal() as db:
             from sqlalchemy import select as sa_select
-            recent_cutoff = _now() - timedelta(minutes=2)
+            recent_cutoff = _now() - timedelta(minutes=5)
             pending_rows = (await db.execute(
                 sa_select(TelegramLinkingCode).where(
                     TelegramLinkingCode.is_used == False,  # noqa: E712

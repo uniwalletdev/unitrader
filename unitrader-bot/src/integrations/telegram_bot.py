@@ -192,12 +192,12 @@ class TelegramBotService:
             # ── Fallback: check for a pending web-initiated linking code ──
             # Telegram sometimes drops ?start= deep-link params (especially
             # when the user already has a chat history with the bot). Look for
-            # the most recent unused code created in the last 2 minutes and
+            # the most recent unused code created in the last 5 minutes and
             # auto-link if exactly one exists (avoids ambiguity with multiple
             # users generating codes simultaneously).
             linked_via_fallback = False
             async with AsyncSessionLocal() as db:
-                recent_cutoff = _now() - timedelta(minutes=2)
+                recent_cutoff = _now() - timedelta(minutes=5)
                 pending_rows = (await db.execute(
                     sa_select(TelegramLinkingCode).where(
                         TelegramLinkingCode.is_used == False,  # noqa: E712

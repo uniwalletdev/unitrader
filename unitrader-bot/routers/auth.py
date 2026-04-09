@@ -777,10 +777,22 @@ async def clerk_sync(
 
     # ── Find or create user ───────────────────────────────────────────
     try:
+        # Primary lookup: by Clerk user ID (immutable, survives email changes)
         result = await db.execute(
-            select(User).where(User.email == email.lower())
+            select(User).where(User.clerk_user_id == clerk_user_id)
         )
         user = result.scalar_one_or_none()
+
+        # Fallback: by email (for users created before clerk_user_id tracking)
+        if not user:
+            result = await db.execute(
+                select(User).where(User.email == email.lower())
+            )
+            user = result.scalar_one_or_none()
+            # Backfill clerk_user_id on existing user
+            if user and not user.clerk_user_id:
+                user.clerk_user_id = clerk_user_id
+                await db.commit()
 
         if not user:
             _now = datetime.now(timezone.utc)
@@ -794,6 +806,7 @@ async def clerk_sync(
                 trial_started_at=_now,
                 trial_end_date=_now + timedelta(days=14),
                 trial_status="active",
+                clerk_user_id=clerk_user_id,
             )
             db.add(user)
             await db.flush()          # obtain user.id before committing
