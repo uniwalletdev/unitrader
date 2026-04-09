@@ -37,6 +37,8 @@ export default function SettingsPage() {
   const [whatsappLinked, setWhatsappLinked] = useState(false);
   const [whatsappNotificationsEnabled, setWhatsappNotificationsEnabled] = useState(false);
   const [linkingInProgress, setLinkingInProgress] = useState(false);
+  const [telegramLinkInfo, setTelegramLinkInfo] = useState<{ bot: string; code: string } | null>(null);
+  const [whatsappLinkInfo, setWhatsappLinkInfo] = useState<{ number: string; code: string } | null>(null);
 
   // Load settings
   useEffect(() => {
@@ -355,34 +357,44 @@ export default function SettingsPage() {
                         }}
                       />
                     ) : (
-                      <button
-                        type="button"
-                        disabled={linkingInProgress}
-                        onClick={async () => {
-                          if (linkingInProgress) return;
-                          setLinkingInProgress(true);
-                          try {
-                            const [infoRes, codeRes] = await Promise.all([
-                              authApi.botInfo(),
-                              authApi.telegramCode(),
-                            ]);
-                            const bot = infoRes.data?.telegram_bot_username;
-                            const code = codeRes.data?.code;
-                            if (bot && code) {
-                              window.open(`https://t.me/${bot}?start=link_${code}`, "_blank");
-                            } else {
-                              setError("Telegram is not configured. Please try again later.");
+                      <div className="flex flex-col items-end gap-2">
+                        <button
+                          type="button"
+                          disabled={linkingInProgress}
+                          onClick={async () => {
+                            if (linkingInProgress) return;
+                            setLinkingInProgress(true);
+                            try {
+                              const [infoRes, codeRes] = await Promise.all([
+                                authApi.botInfo(),
+                                authApi.telegramCode(),
+                              ]);
+                              const bot = infoRes.data?.telegram_bot_username;
+                              const code = codeRes.data?.data?.code;
+                              if (bot && code) {
+                                setTelegramLinkInfo({ bot, code });
+                                window.open(`https://t.me/${bot}?start=link_${code}`, "_blank");
+                              } else {
+                                setError("Telegram is not configured. Please try again later.");
+                              }
+                            } catch {
+                              setError("Could not generate linking code. Please try again.");
+                            } finally {
+                              setLinkingInProgress(false);
                             }
-                          } catch {
-                            setError("Could not generate linking code. Please try again.");
-                          } finally {
-                            setLinkingInProgress(false);
-                          }
-                        }}
-                        className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400 disabled:opacity-50"
-                      >
-                        Connect Telegram
-                      </button>
+                          }}
+                          className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400 disabled:opacity-50"
+                        >
+                          Connect Telegram
+                        </button>
+                        {telegramLinkInfo && (
+                          <div className="rounded-lg border border-dark-700 bg-dark-900 p-3 text-xs w-56">
+                            <p className="text-dark-400 mb-1">If the bot didn't auto-connect, send this in chat:</p>
+                            <p className="font-mono text-brand-400 text-sm select-all">/link {telegramLinkInfo.code}</p>
+                            <p className="text-dark-500 mt-1">Code expires in 15 min</p>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
 
@@ -405,35 +417,45 @@ export default function SettingsPage() {
                         }}
                       />
                     ) : (
-                      <button
-                        type="button"
-                        disabled={linkingInProgress}
-                        onClick={async () => {
-                          if (linkingInProgress) return;
-                          setLinkingInProgress(true);
-                          try {
-                            const [infoRes, codeRes] = await Promise.all([
-                              authApi.botInfo(),
-                              authApi.whatsappCode(),
-                            ]);
-                            const num = infoRes.data?.whatsapp_number;
-                            const code = codeRes.data?.code;
-                            if (num && code) {
-                              const clean = num.replace(/\D/g, "");
-                              window.open(`https://wa.me/${clean}?text=${encodeURIComponent("LINK " + code)}`, "_blank");
-                            } else {
-                              setError("WhatsApp is not configured. Please try again later.");
+                      <div className="flex flex-col items-end gap-2">
+                        <button
+                          type="button"
+                          disabled={linkingInProgress}
+                          onClick={async () => {
+                            if (linkingInProgress) return;
+                            setLinkingInProgress(true);
+                            try {
+                              const [infoRes, codeRes] = await Promise.all([
+                                authApi.botInfo(),
+                                authApi.whatsappCode(),
+                              ]);
+                              const num = infoRes.data?.whatsapp_number;
+                              const code = codeRes.data?.data?.code;
+                              if (num && code) {
+                                const clean = num.replace(/\D/g, "");
+                                setWhatsappLinkInfo({ number: num, code });
+                                window.open(`https://wa.me/${clean}?text=${encodeURIComponent("LINK " + code)}`, "_blank");
+                              } else {
+                                setError("WhatsApp is not configured. Please try again later.");
+                              }
+                            } catch {
+                              setError("Could not generate linking code. Please try again.");
+                            } finally {
+                              setLinkingInProgress(false);
                             }
-                          } catch {
-                            setError("Could not generate linking code. Please try again.");
-                          } finally {
-                            setLinkingInProgress(false);
-                          }
-                        }}
-                        className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400 disabled:opacity-50"
-                      >
-                        Connect WhatsApp
-                      </button>
+                          }}
+                          className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400 disabled:opacity-50"
+                        >
+                          Connect WhatsApp
+                        </button>
+                        {whatsappLinkInfo && (
+                          <div className="rounded-lg border border-dark-700 bg-dark-900 p-3 text-xs w-56">
+                            <p className="text-dark-400 mb-1">Send this to {whatsappLinkInfo.number}:</p>
+                            <p className="font-mono text-brand-400 text-sm select-all">LINK {whatsappLinkInfo.code}</p>
+                            <p className="text-dark-500 mt-1">Code expires in 15 min</p>
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
 

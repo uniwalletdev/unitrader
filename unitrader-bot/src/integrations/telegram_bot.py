@@ -189,29 +189,91 @@ class TelegramBotService:
                     "Type /help for the full command list."
                 )
         else:
-            # ── No account — create a provisional one and start onboarding ─
-            from src.services.bot_onboarding_state import (
-                STEP_AWAITING_AI_NAME,
-                set_onboarding_step,
-            )
-            from src.services.provisional_user import create_provisional_user
-
+            # ── Fallback: check for a pending web-initiated linking code ──
+            # Telegram sometimes drops ?start= deep-link params (especially
+            # when the user already has a chat history with the bot). Look for
+            # the most recent unused code created in the last 2 minutes and
+            # auto-link if exactly one exists (avoids ambiguity with multiple
+            # users generating codes simultaneously).
+            linked_via_fallback = False
             async with AsyncSessionLocal() as db:
-                user = await create_provisional_user(
-                    db,
-                    platform=_PLATFORM,
-                    external_id=tg_id,
-                    external_username=tg_name,
-                )
+                recent_cutoff = _now() - timedelta(minutes=2)
+                pending_rows = (await db.execute(
+                    sa_select(TelegramLinkingCode).where(
+                        TelegramLinkingCode.is_used == False,  # noqa: E712
+                        TelegramLinkingCode.expires_at > _now(),
+                        TelegramLinkingCode.user_id.isnot(None),
+                        TelegramLinkingCode.created_at >= recent_cutoff,
+                    ).order_by(TelegramLinkingCode.created_at.desc())
+                )).scalars().all()
 
-            await set_onboarding_step(tg_id, STEP_AWAITING_AI_NAME)
-            text = (
-                f"👋 Welcome to *Unitrader*, {tg_name}!\n\n"
-                "I'm your personal AI trading companion. Let's get you set up.\n\n"
-                "First — what would you like to name me?\n"
-                "(e.g. Apex, Nova, Max)\n\n"
-                "Just type a name:"
-            )
+                if len(pending_rows) == 1:
+                    pending = pending_rows[0]
+                    # Auto-link: mark code used, create external account
+                    pending.is_used = True
+                    pending.used_at = _now()
+                    ext = UserExternalAccount(
+                        user_id=pending.user_id,
+                        platform=_PLATFORM,
+                        external_id=tg_id,
+                        external_username=tg_name,
+                        is_linked=True,
+                        settings={"notifications": True, "trade_alerts": True},
+                    )
+                    db.add(ext)
+                    await db.commit()
+
+                    user = (await db.execute(
+                        sa_select(User).where(User.id == pending.user_id)
+                    )).scalar_one_or_none()
+                    linked_via_fallback = True
+
+            if linked_via_fallback and user:
+                ai_name = user.ai_name if user else None
+                if not ai_name or ai_name in ("your AI", "Apex"):
+                    from src.services.bot_onboarding_state import (
+                        STEP_AWAITING_AI_NAME,
+                        set_onboarding_step,
+                    )
+                    await set_onboarding_step(tg_id, STEP_AWAITING_AI_NAME)
+                    text = (
+                        "🎉 *Linked successfully!*\n\n"
+                        "Let's set up your AI trader.\n\n"
+                        "First — what would you like to name your AI?\n"
+                        "(e.g. Apex, Nova, Max)\n\n"
+                        "Just type a name:"
+                    )
+                else:
+                    text = (
+                        f"🎉 *Linked successfully!*\n\n"
+                        f"Your Telegram is now connected to your Unitrader account.\n"
+                        f"Your AI companion *{ai_name}* is ready to trade.\n\n"
+                        "Type /help to see available commands."
+                    )
+            else:
+                # ── No account & no pending code — create provisional ──
+                from src.services.bot_onboarding_state import (
+                    STEP_AWAITING_AI_NAME,
+                    set_onboarding_step,
+                )
+                from src.services.provisional_user import create_provisional_user
+
+                async with AsyncSessionLocal() as db:
+                    user = await create_provisional_user(
+                        db,
+                        platform=_PLATFORM,
+                        external_id=tg_id,
+                        external_username=tg_name,
+                    )
+
+                await set_onboarding_step(tg_id, STEP_AWAITING_AI_NAME)
+                text = (
+                    f"👋 Welcome to *Unitrader*, {tg_name}!\n\n"
+                    "I'm your personal AI trading companion. Let's get you set up.\n\n"
+                    "First — what would you like to name me?\n"
+                    "(e.g. Apex, Nova, Max)\n\n"
+                    "Just type a name:"
+                )
 
         ms = int((time.perf_counter() - t0) * 1000)
         await self._reply(update, text, parse_mode="Markdown")
