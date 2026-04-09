@@ -536,7 +536,77 @@ class WhatsAppBotService:
                 "Send HELP to see all commands."
             )
 
-        # ── Mode B: bot generates a code ──────────────────────────────────────
+        # ── Mode B: no code supplied ─────────────────────────────────────────
+        # Before generating a bot-initiated code, check if there's a recent
+        # web-initiated code the user likely meant to include (they clicked
+        # "Connect WhatsApp" on the web which generated a code, but the
+        # pre-filled text was just "LINK" without the code).
+        async with AsyncSessionLocal() as db:
+            from sqlalchemy import select as sa_select
+            recent_cutoff = _now() - timedelta(minutes=2)
+            pending_rows = (await db.execute(
+                sa_select(TelegramLinkingCode).where(
+                    TelegramLinkingCode.is_used == False,  # noqa: E712
+                    TelegramLinkingCode.expires_at > _now(),
+                    TelegramLinkingCode.user_id.isnot(None),
+                    TelegramLinkingCode.created_at >= recent_cutoff,
+                ).order_by(TelegramLinkingCode.created_at.desc())
+            )).scalars().all()
+
+            if len(pending_rows) == 1:
+                pending = pending_rows[0]
+                pending.is_used = True
+                pending.used_at = _now()
+
+                existing = (await db.execute(
+                    sa_select(UserExternalAccount).where(
+                        UserExternalAccount.user_id == pending.user_id,
+                        UserExternalAccount.platform == _PLATFORM,
+                    )
+                )).scalar_one_or_none()
+
+                if existing:
+                    existing.is_linked = True
+                    existing.linked_at = _now()
+                    existing.external_id = phone
+                    existing.external_username = phone
+                else:
+                    db.add(UserExternalAccount(
+                        user_id=pending.user_id,
+                        platform=_PLATFORM,
+                        external_id=phone,
+                        external_username=phone,
+                        is_linked=True,
+                        settings={"notifications": True, "trade_alerts": True},
+                    ))
+
+                fetched = (await db.execute(
+                    sa_select(User).where(User.id == pending.user_id)
+                )).scalar_one_or_none()
+                ai_name = fetched.ai_name if fetched else None
+                await db.commit()
+
+                if not ai_name or ai_name in ("your AI", "Apex"):
+                    from src.services.bot_onboarding_state import (
+                        STEP_AWAITING_AI_NAME,
+                        set_onboarding_step,
+                    )
+                    await set_onboarding_step(phone, STEP_AWAITING_AI_NAME)
+                    return (
+                        "✅ Linked successfully!\n\n"
+                        "Let's set up your AI trader.\n\n"
+                        "First — what would you like to name your AI? "
+                        "(e.g. Apex, Nova, Max)\n\n"
+                        "Just type a name:"
+                    )
+
+                return (
+                    f"✅ Linked successfully!\n\n"
+                    f"Your AI *{ai_name}* is ready to trade.\n\n"
+                    "Send HELP to see all commands."
+                )
+
+        # ── Mode B fallback: bot generates a code ─────────────────────────────
         code    = _generate_code()
         expires = _now() + timedelta(minutes=15)
 
