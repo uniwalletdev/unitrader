@@ -313,6 +313,10 @@ class WhatsAppBotService:
                 response = await self._cmd_unlink(user, phone)
             elif command == "help":
                 response = self._cmd_help()
+            elif not user and command.isdigit() and len(command) == 6:
+                # Bare 6-digit code — treat as LINK <code>
+                log_command = "link"
+                response = await self._cmd_link(user, phone, [command])
             elif user:
                 from src.services.bot_intent import classify_natural_intent
 

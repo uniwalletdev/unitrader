@@ -14,7 +14,9 @@ Auth: Bearer token via Authorization header, or ?apiKey= query param.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -25,6 +27,13 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = 10.0
+
+# ── Simple in-memory TTL cache for quote results ─────────────────────────────
+_quote_cache: dict[str, tuple[float, dict]] = {}   # symbol → (expiry_mono, data)
+_QUOTE_CACHE_TTL = 15.0  # seconds — matches the WS poll interval
+
+# ── Global 429 back-off flag ─────────────────────────────────────────────────
+_massive_backoff_until: float = 0.0  # monotonic time until which we skip Massive
 
 
 def _headers() -> dict[str, str]:
@@ -53,8 +62,16 @@ async def fetch_massive_stock(symbol: str) -> dict:
     ticker = symbol.upper().strip()
     url = f"{_base()}/v2/aggs/ticker/{ticker}/prev"
 
+    global _massive_backoff_until
+    if time.monotonic() < _massive_backoff_until:
+        raise RuntimeError(f"Massive rate-limited — backing off for {ticker}")
+
     async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_headers()) as client:
         resp = await client.get(url)
+        if resp.status_code == 429:
+            retry_after = float(resp.headers.get("retry-after", 30))
+            _massive_backoff_until = time.monotonic() + min(60.0, max(5.0, retry_after))
+            raise RuntimeError(f"Massive 429 for {ticker} — backing off {retry_after}s")
         if resp.status_code == 403:
             raise PermissionError(
                 f"Massive 403 for {ticker} — your plan may not cover this data. "
@@ -118,8 +135,16 @@ async def fetch_massive_crypto(symbol: str) -> dict:
     ticker = _to_massive_crypto_ticker(symbol)
     url = f"{_base()}/v2/aggs/ticker/{ticker}/prev"
 
+    global _massive_backoff_until
+    if time.monotonic() < _massive_backoff_until:
+        raise RuntimeError(f"Massive rate-limited — backing off for {ticker}")
+
     async with httpx.AsyncClient(timeout=_TIMEOUT, headers=_headers()) as client:
         resp = await client.get(url)
+        if resp.status_code == 429:
+            retry_after = float(resp.headers.get("retry-after", 30))
+            _massive_backoff_until = time.monotonic() + min(60.0, max(5.0, retry_after))
+            raise RuntimeError(f"Massive 429 for {ticker} — backing off {retry_after}s")
         if resp.status_code == 403:
             raise PermissionError(
                 f"Massive 403 for {ticker} — check your plan"
@@ -248,7 +273,18 @@ async def fetch_massive_quote(symbol: str) -> dict:
 
     Used by the WS router as a fallback when real-time streaming isn't available.
     Returns {symbol, price, bid, ask, timestamp}.
+
+    Results are cached for _QUOTE_CACHE_TTL seconds to avoid 429s when
+    multiple WS subscribers poll the same symbol simultaneously.
     """
+    key = symbol.upper().strip()
+    now = time.monotonic()
+
+    # Return cached result if still fresh
+    cached = _quote_cache.get(key)
+    if cached and cached[0] > now:
+        return cached[1]
+
     from src.integrations.market_data import classify_asset
 
     asset_type = classify_asset(symbol)
@@ -258,8 +294,8 @@ async def fetch_massive_quote(symbol: str) -> dict:
         data = await fetch_massive_stock(symbol)
 
     price = data["price"]
-    return {
-        "symbol": symbol.upper(),
+    result = {
+        "symbol": key,
         "price": price,
         "bid": price,
         "ask": price,
@@ -268,3 +304,8 @@ async def fetch_massive_quote(symbol: str) -> dict:
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "source": "massive",
     }
+
+    # Cache the result
+    _quote_cache[key] = (now + _QUOTE_CACHE_TTL, result)
+
+    return result

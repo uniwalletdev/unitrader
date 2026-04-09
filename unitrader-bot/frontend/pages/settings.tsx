@@ -36,6 +36,7 @@ export default function SettingsPage() {
   const [telegramNotificationsEnabled, setTelegramNotificationsEnabled] = useState(false);
   const [whatsappLinked, setWhatsappLinked] = useState(false);
   const [whatsappNotificationsEnabled, setWhatsappNotificationsEnabled] = useState(false);
+  const [linkingInProgress, setLinkingInProgress] = useState(false);
 
   // Load settings
   useEffect(() => {
@@ -356,7 +357,10 @@ export default function SettingsPage() {
                     ) : (
                       <button
                         type="button"
+                        disabled={linkingInProgress}
                         onClick={async () => {
+                          if (linkingInProgress) return;
+                          setLinkingInProgress(true);
                           try {
                             const [infoRes, codeRes] = await Promise.all([
                               authApi.botInfo(),
@@ -371,9 +375,11 @@ export default function SettingsPage() {
                             }
                           } catch {
                             setError("Could not generate linking code. Please try again.");
+                          } finally {
+                            setLinkingInProgress(false);
                           }
                         }}
-                        className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400"
+                        className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400 disabled:opacity-50"
                       >
                         Connect Telegram
                       </button>
@@ -401,7 +407,10 @@ export default function SettingsPage() {
                     ) : (
                       <button
                         type="button"
+                        disabled={linkingInProgress}
                         onClick={async () => {
+                          if (linkingInProgress) return;
+                          setLinkingInProgress(true);
                           try {
                             const [infoRes, codeRes] = await Promise.all([
                               authApi.botInfo(),
@@ -417,9 +426,11 @@ export default function SettingsPage() {
                             }
                           } catch {
                             setError("Could not generate linking code. Please try again.");
+                          } finally {
+                            setLinkingInProgress(false);
                           }
                         }}
-                        className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400"
+                        className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400 disabled:opacity-50"
                       >
                         Connect WhatsApp
                       </button>

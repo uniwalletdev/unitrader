@@ -20,6 +20,7 @@ Railway: if Twilio shows 404 with body "Application not found" and header
   returns 200 from the same host you configured in Twilio.
 """
 
+import asyncio
 import logging
 import random
 import string
@@ -148,6 +149,8 @@ async def whatsapp_webhook(
     """Receive and dispatch a Twilio WhatsApp update.
 
     Signature validation is enforced in production; skipped in development.
+    Returns 200 immediately after validation + ack, then processes the
+    message in a background task to avoid Twilio timeout retries.
     """
     svc = _whatsapp_bot_service
     if not svc:
@@ -156,6 +159,8 @@ async def whatsapp_webhook(
 
     # ── Parse Twilio form-data payload ────────────────────────────────────────
     form = await request.form()
+    # Snapshot form data before the request scope closes
+    form_dict = dict(form)
 
     # ── Signature validation (production only) ────────────────────────────────
     if settings.is_production:
@@ -163,7 +168,6 @@ async def whatsapp_webhook(
             from twilio.request_validator import RequestValidator
             validator    = RequestValidator(settings.twilio_auth_token)
             webhook_url  = _twilio_webhook_request_url(request)
-            form_dict    = dict(form)
             sig_valid    = validator.validate(webhook_url, form_dict, x_twilio_signature or "")
             if not sig_valid:
                 logger.warning("Invalid Twilio signature on WhatsApp webhook")
@@ -178,14 +182,14 @@ async def whatsapp_webhook(
         except Exception as exc:
             logger.error("Twilio signature validation error: %s", exc)
 
-    from_field = form.get("From", "")
-    message_body = (form.get("Body") or "").strip()
+    from_field = form_dict.get("From", "")
+    message_body = (form_dict.get("Body") or "").strip()
 
     if not from_field:
         return {"status": "ok"}   # empty update — ignore
 
     # STEP 1 — send acknowledgement instantly for genuine user text messages
-    if _is_genuine_user_text(dict(form)) and twilio_client:
+    if _is_genuine_user_text(form_dict) and twilio_client:
         try:
             to = from_field
             ack = random.choice(TYPING_ACKNOWLEDGEMENTS)
@@ -213,9 +217,17 @@ async def whatsapp_webhook(
         except Exception as exc:
             logger.warning("Failed to send WhatsApp acknowledgement: %s", exc)
 
+    # STEP 2 — dispatch heavy processing as a background task and return 200 now
+    asyncio.create_task(_process_whatsapp_message(svc, from_field, message_body))
+
+    return {"status": "ok"}
+
+
+async def _process_whatsapp_message(svc, from_field: str, message_body: str) -> None:
+    """Background task: run the bot handler + persist the response history."""
     try:
         await svc.handle_incoming_message(from_field, message_body)
-        # STEP 4 — log the final bot response to onboarding_messages (assistant)
+        # Persist the final bot response to onboarding_messages (assistant)
         try:
             phone = from_field.removeprefix("whatsapp:").strip()
             async with AsyncSessionLocal() as db:
@@ -252,14 +264,10 @@ async def whatsapp_webhook(
         except Exception as exc:
             logger.warning("Failed to persist WhatsApp bot response history: %s", exc)
     except Exception as e:
-        import logging
-        logging.getLogger('routers.whatsapp').error(
-            f'Orchestrator call failed: {type(e).__name__}: {e}', exc_info=True
+        logger.error(
+            "Orchestrator call failed: %s: %s", type(e).__name__, e, exc_info=True
         )
         logger.error("Error handling WhatsApp message from %s: %s", from_field, e)
-        # Don't re-raise — a 500 would cause Twilio to retry indefinitely
-
-    return {"status": "ok"}
 
 
 # ─────────────────────────────────────────────
