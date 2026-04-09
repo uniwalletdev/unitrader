@@ -193,6 +193,18 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
     return false;
   }, [trust, traderClass]);
 
+  // Map exchange name → trading_account_id so the correct account follows the active tab
+  const accountByExchange = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const ex of exchanges) {
+      if (ex.trading_account_id) map[ex.exchange] = ex.trading_account_id;
+    }
+    return map;
+  }, [exchanges]);
+
+  const activeTradingAccountId =
+    accountByExchange[selectedExchange] || preferredTradingAccountId;
+
   // Build last-decision lookup from history for watchlist badges
   const lastDecisionBySymbol = useMemo(() => {
     const map: Record<string, { side: string; confidence?: number; created_at?: string }> = {};
@@ -388,7 +400,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   // ── On-demand analysis ──
   const handleOnDemandAnalyze = async () => {
     if (!odSymbol.trim() || !selectedExchange) return;
-    if (!preferredTradingAccountId) {
+    if (!activeTradingAccountId) {
       setOdError("Connect an exchange to run analysis.");
       return;
     }
@@ -411,7 +423,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
       const sym = normaliseSymbol(resolvedSymbol, selectedExchange);
       // Analysis only — no order placed here. User confirms trade in the modal.
       const res = await tradingApi.analyze(sym, selectedExchange, traderClass, {
-        trading_account_id: preferredTradingAccountId,
+        trading_account_id: activeTradingAccountId,
         is_paper: isPaper,
       });
       const data = res.data?.data ?? res.data;
@@ -433,9 +445,9 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
   const handleConfirmedTrade = async () => {
     const sym = normaliseSymbol(odSymbol.trim(), selectedExchange);
     if (!sym) throw new Error("Missing symbol");
-    if (!preferredTradingAccountId) throw new Error("Missing trading account");
+    if (!activeTradingAccountId) throw new Error("Missing trading account");
     const res = await tradingApi.execute(sym, selectedExchange, {
-      trading_account_id: preferredTradingAccountId,
+      trading_account_id: activeTradingAccountId,
       is_paper: isPaper,
     });
     setToast("Trade submitted");
@@ -601,7 +613,7 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
       {tradeMode === "picks" ? (
         <AIPicksPanel
           exchange={selectedExchange}
-          tradingAccountId={preferredTradingAccountId}
+          tradingAccountId={activeTradingAccountId}
           isPaper={isPaper}
           traderClass={traderClass}
         />
