@@ -870,6 +870,28 @@ async def _run_auto_scan_for_account(trading_account: TradingAccount, settings_r
         signal = convergence["signal"]
 
         if signal in ("buy", "sell") and confidence >= threshold:
+            try:
+                from src.services.signal_notification_dispatch import (
+                    dispatch_signal_notification,
+                )
+
+                reasoning = str(analysis.get("reasoning_simple", "") or "").strip()
+                if len(reasoning) > 200:
+                    reasoning = reasoning[:197].rstrip() + "..."
+                await dispatch_signal_notification(
+                    {
+                        "symbol": symbol,
+                        "direction": str(signal).upper(),
+                        "confidence": int(confidence),
+                        "exchange": str(analysis.get("exchange", "") or ""),
+                        "price": float(analysis.get("current_price", 0) or 0),
+                        "reasoning": reasoning,
+                    },
+                    db,
+                )
+            except Exception as exc:
+                logger.debug("Signal broadcast failed (non-fatal): %s", exc)
+
             ctx = await SharedMemory.load(str(user.id), db)
             ctx.exchange = analysis["exchange"]
             result = await orchestrator._trade_execute(  # type: ignore[attr-defined]

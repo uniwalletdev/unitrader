@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import ApexNotification, ApexSelectsApprovalToken, User, UserExternalAccount
+from models import ApexNotification, ApexSelectsApprovalToken, User, UserExternalAccount, UserSettings
 from routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/notifications", tags=["Notifications"])
@@ -147,6 +147,13 @@ async def get_notification_settings(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    min_conf_res = await db.execute(
+        select(UserSettings.signal_notify_min_confidence).where(
+            UserSettings.user_id == current_user.id
+        )
+    )
+    signal_notify_min_confidence = int(min_conf_res.scalar_one_or_none() or 75)
+
     external_accounts = (
         await db.execute(
             select(UserExternalAccount).where(
@@ -158,13 +165,26 @@ async def get_notification_settings(
     telegram = next((acc for acc in external_accounts if acc.platform == "telegram"), None)
     whatsapp = next((acc for acc in external_accounts if acc.platform == "whatsapp"), None)
 
+    # Telegram @handle (optional — many users have no public username)
+    telegram_username: str | None = None
+    if telegram and telegram.external_username:
+        raw = str(telegram.external_username).strip()
+        telegram_username = raw[1:] if raw.startswith("@") else raw
+
+    whatsapp_number: str | None = None
+    if whatsapp and whatsapp.external_id:
+        whatsapp_number = str(whatsapp.external_id).strip()
+
     return {
         "status": "success",
         "data": {
             "telegram_linked": bool(telegram),
+            "telegram_username": telegram_username,
             "telegram_notifications_enabled": bool((telegram.settings or {}).get("notifications", True)) if telegram else False,
             "whatsapp_linked": bool(whatsapp),
+            "whatsapp_number": whatsapp_number,
             "whatsapp_notifications_enabled": bool((whatsapp.settings or {}).get("notifications", True)) if whatsapp else False,
+            "signal_notify_min_confidence": signal_notify_min_confidence,
         },
     }
 

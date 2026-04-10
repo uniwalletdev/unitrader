@@ -502,6 +502,10 @@ class UserSettings(Base):
     auto_trade_threshold: Mapped[int] = mapped_column(
         Integer, default=80, nullable=False
     )
+    # Minimum confidence for broadcast signal alerts (Telegram/WhatsApp).
+    signal_notify_min_confidence: Mapped[int] = mapped_column(
+        Integer, default=75, nullable=False
+    )
     auto_trade_max_per_scan: Mapped[int] = mapped_column(
         Integer, default=1, nullable=False
     )

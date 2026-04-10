@@ -276,6 +276,7 @@ class UserSettingsResponse(BaseModel):
     watchlist: list[str] | None = None
     auto_trade_enabled: bool = False
     auto_trade_threshold: int = 80
+    signal_notify_min_confidence: int = 75
     auto_trade_max_per_scan: int = 1
     apex_selects_threshold: int = 75
     apex_selects_max_trades: int = 2
@@ -317,6 +318,7 @@ class UpdateUserSettingsRequest(BaseModel):
     watchlist: list[str] | None = None
     auto_trade_enabled: bool | None = None
     auto_trade_threshold: int | None = None
+    signal_notify_min_confidence: int | None = None
     auto_trade_max_per_scan: int | None = None
     apex_selects_threshold: int | None = None
     apex_selects_max_trades: int | None = None

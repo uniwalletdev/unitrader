@@ -2,9 +2,10 @@ import Head from "next/head";
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/router";
-import { ArrowLeft, AlertCircle, Loader, Check, Bell, Send } from "lucide-react";
+import { ArrowLeft, AlertCircle, Loader, Check, Bell } from "lucide-react";
 import { authApi, notificationApi } from "@/lib/api";
 import CircuitBreakerAlert from "@/components/trade/CircuitBreakerAlert";
+import { NotificationSettings } from "@/components/settings/NotificationSettings";
 
 interface UserSettings {
   explanation_level?: string;
@@ -20,6 +21,7 @@ interface UserSettings {
   morning_briefing_enabled?: boolean;
   morning_briefing_time?: string;
   daily_digest_enabled?: boolean;
+  signal_notify_min_confidence?: number;
 }
 
 export default function SettingsPage() {
@@ -39,6 +41,9 @@ export default function SettingsPage() {
   const [linkingInProgress, setLinkingInProgress] = useState(false);
   const [telegramLinkInfo, setTelegramLinkInfo] = useState<{ bot: string; code: string } | null>(null);
   const [whatsappLinkInfo, setWhatsappLinkInfo] = useState<{ number: string; code: string } | null>(null);
+  const [telegramBotUsername, setTelegramBotUsername] = useState<string | null>(null);
+  const [telegramUsername, setTelegramUsername] = useState<string | null>(null);
+  const [whatsappNumberDisplay, setWhatsappNumberDisplay] = useState<string | null>(null);
 
   // Load settings
   useEffect(() => {
@@ -60,6 +65,13 @@ export default function SettingsPage() {
         setTelegramNotificationsEnabled(!!notifRes.data?.data?.telegram_notifications_enabled);
         setWhatsappLinked(!!notifRes.data?.data?.whatsapp_linked);
         setWhatsappNotificationsEnabled(!!notifRes.data?.data?.whatsapp_notifications_enabled);
+        if (typeof notifRes.data?.data?.signal_notify_min_confidence === "number") {
+          setSettings((prev) => prev ? { ...prev, signal_notify_min_confidence: notifRes.data.data.signal_notify_min_confidence } : prev);
+        }
+        const tu = notifRes.data?.data?.telegram_username;
+        setTelegramUsername(typeof tu === "string" && tu.length > 0 ? tu : null);
+        const wn = notifRes.data?.data?.whatsapp_number;
+        setWhatsappNumberDisplay(typeof wn === "string" && wn.length > 0 ? wn : null);
       } catch (err: any) {
         if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
           setError("Settings took too long to load. Please refresh the page.");
@@ -336,140 +348,80 @@ export default function SettingsPage() {
               )}
 
               <div className="rounded-xl border border-dark-800 p-4">
-                <p className="mb-3 text-sm font-medium text-white">Notification channels</p>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Send size={14} className="text-sky-400" />
-                      <div>
-                        <p className="text-sm text-white">Telegram notifications</p>
-                        <p className="text-xs text-dark-500">{telegramLinked ? "Unitrader can alert you on Telegram." : "Connect Telegram to receive Unitrader alerts."}</p>
-                      </div>
-                    </div>
-                    {telegramLinked ? (
-                      <input
-                        type="checkbox"
-                        checked={telegramNotificationsEnabled}
-                        onChange={async (e) => {
-                          const next = e.target.checked;
-                          setTelegramNotificationsEnabled(next);
-                          await notificationApi.updateSettings({ telegram_notifications_enabled: next });
-                        }}
-                      />
-                    ) : (
-                      <div className="flex flex-col items-end gap-2">
-                        <button
-                          type="button"
-                          disabled={linkingInProgress}
-                          onClick={async () => {
-                            if (linkingInProgress) return;
-                            setLinkingInProgress(true);
-                            try {
-                              const [infoRes, codeRes] = await Promise.all([
-                                authApi.botInfo(),
-                                authApi.telegramCode(),
-                              ]);
-                              const bot = infoRes.data?.telegram_bot_username;
-                              const code = codeRes.data?.data?.code;
-                              if (bot && code) {
-                                setTelegramLinkInfo({ bot, code });
-                                window.open(`https://t.me/${bot}?start=link_${code}`, "_blank");
-                              } else {
-                                setError("Telegram is not configured. Please try again later.");
-                              }
-                            } catch {
-                              setError("Could not generate linking code. Please try again.");
-                            } finally {
-                              setLinkingInProgress(false);
-                            }
-                          }}
-                          className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400 disabled:opacity-50"
-                        >
-                          Connect Telegram
-                        </button>
-                        {telegramLinkInfo && (
-                          <div className="rounded-lg border border-dark-700 bg-dark-900 p-3 text-xs w-56">
-                            <p className="text-dark-400 mb-1">If the bot didn't auto-connect, send this in chat:</p>
-                            <p className="font-mono text-brand-400 text-sm select-all">/link {telegramLinkInfo.code}</p>
-                            <p className="text-dark-500 mt-1">Code expires in 15 min</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Send size={14} className="text-emerald-400" />
-                      <div>
-                        <p className="text-sm text-white">WhatsApp notifications</p>
-                        <p className="text-xs text-dark-500">{whatsappLinked ? "Unitrader can alert you on WhatsApp." : "Connect WhatsApp to receive Unitrader alerts."}</p>
-                      </div>
-                    </div>
-                    {whatsappLinked ? (
-                      <input
-                        type="checkbox"
-                        checked={whatsappNotificationsEnabled}
-                        onChange={async (e) => {
-                          const next = e.target.checked;
-                          setWhatsappNotificationsEnabled(next);
-                          await notificationApi.updateSettings({ whatsapp_notifications_enabled: next });
-                        }}
-                      />
-                    ) : (
-                      <div className="flex flex-col items-end gap-2">
-                        <button
-                          type="button"
-                          disabled={linkingInProgress}
-                          onClick={async () => {
-                            if (linkingInProgress) return;
-                            setLinkingInProgress(true);
-                            try {
-                              const [infoRes, codeRes] = await Promise.all([
-                                authApi.botInfo(),
-                                authApi.whatsappCode(),
-                              ]);
-                              const num = infoRes.data?.whatsapp_number;
-                              const code = codeRes.data?.data?.code;
-                              if (num && code) {
-                                const clean = num.replace(/\D/g, "");
-                                setWhatsappLinkInfo({ number: num, code });
-                                window.open(`https://wa.me/${clean}?text=${encodeURIComponent("LINK " + code)}`, "_blank");
-                              } else {
-                                setError("WhatsApp is not configured. Please try again later.");
-                              }
-                            } catch {
-                              setError("Could not generate linking code. Please try again.");
-                            } finally {
-                              setLinkingInProgress(false);
-                            }
-                          }}
-                          className="rounded-lg border border-dark-700 px-3 py-1.5 text-xs text-brand-400 disabled:opacity-50"
-                        >
-                          Connect WhatsApp
-                        </button>
-                        {whatsappLinkInfo && (
-                          <div className="rounded-lg border border-dark-700 bg-dark-900 p-3 text-xs w-56">
-                            <p className="text-dark-400 mb-1">Send this to {whatsappLinkInfo.number}:</p>
-                            <p className="font-mono text-brand-400 text-sm select-all">LINK {whatsappLinkInfo.code}</p>
-                            <p className="text-dark-500 mt-1">Code expires in 15 min</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm text-white">Push notifications</p>
-                      <p className="text-xs text-dark-500">
-                        On the web, alerts use email and linked Telegram/WhatsApp. Native push is available when you use the
-                        mobile app and register a device token (stored as push_token).
-                      </p>
-                    </div>
-                    <input type="checkbox" disabled checked={!!settings?.push_token} title="Enabled when a mobile device registers push" />
-                  </div>
-                </div>
+                <NotificationSettings
+                  telegramLinked={telegramLinked}
+                  telegramUsername={telegramUsername}
+                  telegramNotificationsEnabled={telegramNotificationsEnabled}
+                  onToggleTelegram={async (next) => {
+                    setTelegramNotificationsEnabled(next);
+                    await notificationApi.updateSettings({ telegram_notifications_enabled: next });
+                  }}
+                  onConnectTelegram={async () => {
+                    if (linkingInProgress) return;
+                    setLinkingInProgress(true);
+                    try {
+                      const [infoRes, codeRes] = await Promise.all([
+                        authApi.botInfo(),
+                        authApi.telegramCode(),
+                      ]);
+                      const bot = infoRes.data?.telegram_bot_username;
+                      const code = codeRes.data?.data?.code;
+                      if (bot && code) {
+                        setTelegramBotUsername(bot);
+                        setTelegramLinkInfo({ bot, code });
+                        window.open(`https://t.me/${bot}?start=link_${code}`, "_blank");
+                      } else {
+                        setError("Telegram is not configured. Please try again later.");
+                      }
+                    } catch {
+                      setError("Could not generate linking code. Please try again.");
+                    } finally {
+                      setLinkingInProgress(false);
+                    }
+                  }}
+                  telegramLinkInfo={telegramLinkInfo}
+                  botUsername={telegramBotUsername ?? telegramLinkInfo?.bot ?? null}
+                  whatsappLinked={whatsappLinked}
+                  whatsappNumber={whatsappNumberDisplay}
+                  whatsappNotificationsEnabled={whatsappNotificationsEnabled}
+                  onToggleWhatsApp={async (next) => {
+                    setWhatsappNotificationsEnabled(next);
+                    await notificationApi.updateSettings({ whatsapp_notifications_enabled: next });
+                  }}
+                  onConnectWhatsApp={async () => {
+                    if (linkingInProgress) return;
+                    setLinkingInProgress(true);
+                    try {
+                      const [infoRes, codeRes] = await Promise.all([
+                        authApi.botInfo(),
+                        authApi.whatsappCode(),
+                      ]);
+                      const num = infoRes.data?.whatsapp_number;
+                      const code = codeRes.data?.data?.code;
+                      if (num && code) {
+                        const clean = num.replace(/\D/g, "");
+                        setWhatsappLinkInfo({ number: num, code });
+                        window.open(
+                          `https://wa.me/${clean}?text=${encodeURIComponent("LINK " + code)}`,
+                          "_blank"
+                        );
+                      } else {
+                        setError("WhatsApp is not configured. Please try again later.");
+                      }
+                    } catch {
+                      setError("Could not generate linking code. Please try again.");
+                    } finally {
+                      setLinkingInProgress(false);
+                    }
+                  }}
+                  whatsappLinkInfo={whatsappLinkInfo}
+                  linkingInProgress={linkingInProgress}
+                  signalNotifyMinConfidence={settings?.signal_notify_min_confidence ?? 75}
+                  onChangeSignalNotifyMinConfidence={async (next) => {
+                    setSettings((prev) => prev ? { ...prev, signal_notify_min_confidence: next } : prev);
+                    await authApi.updateSettings({ signal_notify_min_confidence: next });
+                  }}
+                />
               </div>
 
               {signalMode === "full_auto" && (

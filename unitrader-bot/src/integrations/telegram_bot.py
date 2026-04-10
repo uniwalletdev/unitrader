@@ -103,6 +103,7 @@ class TelegramBotService:
         handlers: list[tuple] = [
             ("start",       self.cmd_start),
             ("link",        self.cmd_link),
+            ("notify",      self.cmd_notify),
             ("portfolio",   self.cmd_portfolio),
             ("trade",       self.cmd_trade),
             ("close",       self.cmd_close),
@@ -156,6 +157,11 @@ class TelegramBotService:
                 ctx.args = [code]
                 await self.cmd_link(update, ctx)
                 return
+
+        # ── Deep-link: /start notify  (one-tap opt-in) ────────────────────
+        if args and args[0].lower() == "notify":
+            await self.cmd_notify(update, ctx)
+            return
 
         user = await self._get_linked_user(tg_id)
 
@@ -419,6 +425,56 @@ class TelegramBotService:
         )
         await self._reply(update, text, parse_mode="Markdown")
         await self._log(tg_id, "command", "/link", "/link", text, "success")
+
+    # ── /notify ──────────────────────────────────────────────────────────────
+
+    async def cmd_notify(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Enable signal alerts for this Telegram chat (requires linked account)."""
+        from sqlalchemy import update as sa_update
+
+        tg_id = str(update.effective_user.id)
+        t0 = time.perf_counter()
+
+        user = await self._get_linked_user(tg_id)
+        if not user:
+            text = (
+                "❌ Your Telegram is not linked to Unitrader yet.\n\n"
+                "Link your account first:\n"
+                "1) Open your Unitrader dashboard\n"
+                "2) Go to Settings → Connect Telegram\n"
+                "3) Follow the instructions (or use /link)\n\n"
+                "Once linked, send /notify again."
+            )
+            await self._reply(update, text, parse_mode="Markdown")
+            await self._log(tg_id, "command", "/notify", "/notify", "", "error")
+            return
+
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                sa_update(UserExternalAccount)
+                .where(
+                    UserExternalAccount.user_id == user.id,
+                    UserExternalAccount.platform == _PLATFORM,
+                    UserExternalAccount.external_id == tg_id,
+                    UserExternalAccount.is_linked == True,  # noqa: E712
+                )
+                .values(settings={"notifications": True, "trade_alerts": True})
+            )
+            await db.commit()
+
+        text = "✅ You'll now receive high-confidence signal alerts here."
+        await self._reply(update, text, parse_mode="Markdown")
+        ms = int((time.perf_counter() - t0) * 1000)
+        await self._log(
+            tg_id,
+            "command",
+            "/notify",
+            "/notify",
+            "",
+            "success",
+            user_id=str(user.id),
+            response_time_ms=ms,
+        )
 
     # ── Shared text builders (DB session must remain open until returned) ─────
 

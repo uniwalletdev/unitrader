@@ -97,6 +97,7 @@ export const authApi = {
     watchlist?: string[];
     auto_trade_enabled?: boolean;
     auto_trade_threshold?: number;
+    signal_notify_min_confidence?: number;
     auto_trade_max_per_scan?: number;
     apex_selects_threshold?: number;
     apex_selects_max_trades?: number;
