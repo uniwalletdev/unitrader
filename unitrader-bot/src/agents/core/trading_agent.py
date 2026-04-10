@@ -1941,12 +1941,10 @@ Provide your detailed technical analysis with the specified JSON format."""
         Raises:
             Exception on API failure
         """
-        base_url = "https://api.polygon.io"
-        api_key = settings.POLYGON_API_KEY if hasattr(settings, "POLYGON_API_KEY") else None
-
-        # Try Alpaca API first
-        alpaca_url = "https://data.alpaca.markets"
-        headers = {"APCA-API-KEY-ID": settings.ALPACA_KEY} if hasattr(settings, "ALPACA_KEY") else {}
+        # Alpaca market data (same keys as paper trading; data subdomain)
+        alpaca_url = settings.alpaca_data_url.rstrip("/")
+        alpaca_key = (settings.alpaca_paper_api_key or "").strip()
+        headers = {"APCA-API-KEY-ID": alpaca_key} if alpaca_key else {}
 
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
@@ -1970,16 +1968,6 @@ Provide your detailed technical analysis with the specified JSON format."""
                         data = response.json()
                         if "quotes" in data and crypto_symbol in data["quotes"]:
                             return float(data["quotes"][crypto_symbol].get("ap", data["quotes"][crypto_symbol].get("bp", 0)))
-
-                # Fallback to Polygon API
-                if api_key:
-                    url = f"{base_url}/v3/quotes/latest"
-                    params = {"ticker": symbol.upper(), "apikey": api_key}
-                    response = await client.get(url, params=params)
-                    if response.status_code == 200:
-                        data = response.json()
-                        if "results" in data and len(data["results"]) > 0:
-                            return float(data["results"][0].get("last_quote", {}).get("ask", 0))
 
         except Exception as exc:
             logger.error(f"Error fetching price for {symbol}: {exc}")

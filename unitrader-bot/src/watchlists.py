@@ -143,58 +143,37 @@ async def score_universe(market_context=None) -> list[str]:
 
 
 async def _score_stocks_alpaca(universe: list[str], top_n: int = 10) -> list[str]:
-    """Quickly score a stock universe using only raw market data (no Claude).
+    """Momentum pre-score using historical closes from configured stock provider."""
+    from src.integrations.data_providers.factory import get_stock_history_provider
 
-    Fetches price_change_pct and volume sequentially with a short delay between
-    requests to avoid Alpaca rate limits (429). Computes a simple momentum
-    score and returns the top_n tickers sorted by score descending.
+    provider = get_stock_history_provider()
+    scores: dict[str, float] = {}
 
-    Score = abs(price_change_pct) * 0.6 + volume_percentile * 0.4
-    """
-    from src.integrations.market_data import fetch_market_data
-    from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
-
-    # Fast exit: if circuit breaker is already OPEN, skip the entire loop
-    if alpaca_breaker.state == "OPEN":
-        logger.warning(
-            "score_universe(alpaca): skipped — circuit breaker OPEN (retry in %.0fs)",
-            alpaca_breaker.remaining_cooldown,
-        )
-        return []
-
-    symbols = list(universe or [])
-    raw: list[tuple[str, float, float]] = []
-
-    for symbol in symbols:
+    for symbol in universe or []:
         try:
-            data = await fetch_market_data(symbol, "alpaca")
-            change_pct = abs(float(data.get("price_change_pct") or 0))
-            volume = float(data.get("volume") or 0)
-            raw.append((symbol, change_pct, volume))
-        except AlpacaUnavailableError:
-            # Circuit breaker tripped during loop — stop iterating
-            logger.warning("score_universe(alpaca): circuit breaker tripped at %s, stopping early", symbol)
-            break
-        except Exception as exc:
-            logger.warning("score_universe: skipping %s — %s", symbol, exc)
-        await asyncio.sleep(0.15)
+            closes = await provider.get_historical_closes(symbol, days=60)
+            if not closes or len(closes) < 20:
+                continue
 
-    # Normalise volume to 0–1 percentile across the universe
-    volumes = [r[2] for r in raw]
-    if not volumes:
-        return []
-    max_vol = max(volumes) if max(volumes) > 0 else 1.0
+            recent_return = (closes[-1] - closes[-10]) / closes[-10]
+            long_return = (closes[-1] - closes[0]) / closes[0]
+            volatility = (max(closes[-20:]) - min(closes[-20:])) / closes[-1]
 
-    scored = []
-    for sym, change_pct, volume in raw:
-        vol_pct = volume / max_vol
-        score = change_pct * 0.6 + vol_pct * 0.4
-        scored.append((sym, score))
+            score = (recent_return * 0.6) + (long_return * 0.3) - (volatility * 0.1)
+            scores[symbol] = score
 
-    scored.sort(key=lambda x: x[1], reverse=True)
-    top = [sym for sym, _ in scored[:top_n]]
+        except Exception as e:
+            logger.warning("score_universe: skipping %s — %s", symbol, e)
+            continue
 
-    logger.info("score_universe(alpaca): top %d from %d — %s", top_n, len(symbols), top)
+    ranked = sorted(scores, key=scores.get, reverse=True)
+    top = ranked[:top_n]
+    logger.info(
+        "score_universe(alpaca): top %d from %d — %s",
+        top_n,
+        len(scores),
+        top,
+    )
     return top
 
 

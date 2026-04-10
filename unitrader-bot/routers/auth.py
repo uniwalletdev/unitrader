@@ -96,8 +96,25 @@ async def get_current_user(
         user_id: str | None = payload.get("sub")
         if not user_id:
             raise exc
-    except JWTError:
-        raise exc
+    except JWTError as e:
+        error_str = str(e).lower()
+        if "expired" in error_str or "expir" in error_str:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "TOKEN_EXPIRED",
+                    "message": "Token has expired — please refresh",
+                },
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from e
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "TOKEN_INVALID",
+                "message": "Invalid authentication token",
+            },
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from e
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()

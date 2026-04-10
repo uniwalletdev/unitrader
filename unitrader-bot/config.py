@@ -174,6 +174,18 @@ class Settings(BaseSettings):
     alpaca_data_url: str = "https://data.alpaca.markets"
     alpha_vantage_api_key: str = ""
 
+    # Market data provider selection for historical closes / indicators
+    # Options: "yfinance" (default, free), "alpaca"
+    data_provider: str = Field(
+        default="yfinance",
+        validation_alias=AliasChoices("DATA_PROVIDER", "data_provider"),
+    )
+    # Finnhub free tier (optional fallback) — register at https://finnhub.io
+    finnhub_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("FINNHUB_API_KEY", "finnhub_api_key"),
+    )
+
     # ─────────────────────────────────────────────
     # Massive (market data — quotes, bars, news)
     # ─────────────────────────────────────────────

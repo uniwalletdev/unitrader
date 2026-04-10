@@ -29,7 +29,6 @@ from jose import JWTError, jwt as jose_jwt
 from config import settings
 from security import verify_token
 from src.integrations.alpaca_rate_limiter import alpaca_limiter, kraken_limiter
-from src.integrations.massive_market_data import fetch_massive_quote
 from src.market_context import Exchange, ExchangeAssetClassError, normalize_symbol, resolve_market_context
 
 logger = logging.getLogger(__name__)
@@ -354,14 +353,58 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
     if source == "binance":
         return await _fetch_binance_price(sym)
 
-    # Alpaca (crypto or stock) → route through Massive for market data
-    # Falls back to Alpaca if Massive is unavailable
-    try:
-        return await fetch_massive_quote(sym)
-    except Exception as exc:
-        logger.warning("Massive quote failed for %s, falling back to Alpaca: %s", sym, exc)
+    # Alpaca (crypto or stock) — in-memory price store, then provider, then REST
+    from src.integrations.data_providers.factory import (
+        get_realtime_crypto_provider,
+        get_realtime_stock_provider,
+    )
+    from src.integrations.market_data import classify_asset
+    from src.services.price_store import price_store
 
-    # Legacy Alpaca fallback
+    sym_key = sym.upper().strip()
+    cached = price_store.get(sym_key)
+    if cached:
+        p = cached.price
+        return {
+            "symbol": sym_key,
+            "price": p,
+            "bid": p,
+            "ask": p,
+            "bid_size": 0,
+            "ask_size": 0,
+            "timestamp": (
+                cached.timestamp.isoformat()
+                if hasattr(cached.timestamp, "isoformat")
+                else str(cached.timestamp)
+            ),
+            "source": cached.source,
+            "delayed": cached.delayed,
+        }
+
+    try:
+        at = classify_asset(sym_key)
+        if at == "crypto":
+            prov = get_realtime_crypto_provider()
+            px = await prov.get_latest_price(sym_key)
+        else:
+            prov = get_realtime_stock_provider()
+            px = await prov.get_latest_price(sym_key)
+        if px and px > 0:
+            return {
+                "symbol": sym_key,
+                "price": px,
+                "bid": px,
+                "ask": px,
+                "bid_size": 0,
+                "ask_size": 0,
+                "timestamp": datetime.utcnow().isoformat(),
+                "source": "provider",
+                "delayed": False,
+            }
+    except Exception as exc:
+        logger.warning("Provider quote failed for %s: %s", sym_key, exc)
+
+    # Legacy Alpaca REST fallback
     from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
     alpaca_breaker.check()  # fast-fail if Alpaca is known-broken
 
@@ -559,28 +602,22 @@ async def websocket_price_stream(
     """
     WebSocket endpoint for live price streaming.
 
+    Serves cached prices from the in-memory price store when available; otherwise
+    fetches once from Alpaca (stocks) or Coinbase (crypto). Subscribes to live
+    updates keyed by normalized symbol.
+
     Usage:
         ws://localhost:8000/api/ws/prices/AAPL?token=<jwt_token>
 
-    Sends JSON messages with format:
-        {
-            "symbol": "AAPL",
-            "price": 150.25,
-            "bid": 150.24,
-            "ask": 150.26,
-            "bid_size": 1000,
-            "ask_size": 500,
-            "timestamp": "2026-03-14T10:30:00.000000"
-        }
-
     Closes with code 4001 if token is invalid.
     """
-    # Validate token before accepting connection
     try:
         user_id = await _validate_token(token)
     except HTTPException:
         await websocket.close(code=4001, reason="Unauthorized")
         return
+
+    sym_key = symbol.strip().upper().replace(" ", "")
 
     resolved_exchange: str | None = None
     if trading_account_id:
@@ -596,55 +633,123 @@ async def websocket_price_stream(
             await websocket.close(code=4004, reason="Trading account not found")
             return
 
-    # Accept the WebSocket connection
     await websocket.accept()
-    logger.info(f"User {user_id} connected to price stream for {symbol}")
+    logger.info("WS connected: user=%s symbol=%s", user_id, sym_key)
+
+    from src.integrations.data_providers.factory import (
+        get_realtime_crypto_provider,
+        get_realtime_stock_provider,
+    )
+    from src.integrations.market_data import classify_asset
+    from src.services.price_store import price_store
+
+    if resolved_exchange == "coinbase" and _is_stock_symbol(sym_key):
+        await websocket.send_json(
+            {"symbol": sym_key, "price": None, "error": "stocks_require_alpaca"}
+        )
+        await websocket.close(code=4002, reason="Stocks require Alpaca connection")
+        return
+
+    if resolved_exchange:
+        is_crypto = resolved_exchange in ("coinbase", "binance", "kraken")
+    else:
+        is_crypto = classify_asset(sym_key) == "crypto" or "-USD" in sym_key.upper()
+
+    cached = price_store.get(sym_key)
+    if cached:
+        p = cached.price
+        try:
+            await websocket.send_json(
+                {
+                    "symbol": sym_key,
+                    "price": p,
+                    "bid": p,
+                    "ask": p,
+                    "bid_size": 0,
+                    "ask_size": 0,
+                    "timestamp": (
+                        cached.timestamp.isoformat()
+                        if hasattr(cached.timestamp, "isoformat")
+                        else str(cached.timestamp)
+                    ),
+                    "source": cached.source,
+                    "delayed": cached.delayed,
+                }
+            )
+        except Exception:
+            return
+    else:
+        try:
+            provider = (
+                get_realtime_crypto_provider()
+                if is_crypto
+                else get_realtime_stock_provider()
+            )
+            price = await provider.get_latest_price(sym_key)
+            if price:
+                await price_store.update(
+                    symbol=sym_key,
+                    price=price,
+                    source="direct_fetch",
+                    delayed=False,
+                )
+                await websocket.send_json(
+                    {
+                        "symbol": sym_key,
+                        "price": price,
+                        "bid": price,
+                        "ask": price,
+                        "bid_size": 0,
+                        "ask_size": 0,
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "source": "direct_fetch",
+                        "delayed": False,
+                    }
+                )
+        except Exception as e:
+            logger.warning("Initial price fetch failed for %s: %s", sym_key, e)
+
+    async def on_price_update(update):
+        try:
+            p = update.price
+            await websocket.send_json(
+                {
+                    "symbol": update.symbol,
+                    "price": p,
+                    "bid": p,
+                    "ask": p,
+                    "bid_size": 0,
+                    "ask_size": 0,
+                    "timestamp": (
+                        update.timestamp.isoformat()
+                        if hasattr(update.timestamp, "isoformat")
+                        else str(update.timestamp)
+                    ),
+                    "source": update.source,
+                    "delayed": update.delayed,
+                }
+            )
+        except Exception:
+            pass
+
+    await price_store.subscribe(sym_key, on_price_update)
 
     try:
-        # Add this connection to the symbol's subscribers
-        if symbol not in _symbol_subscribers:
-            _symbol_subscribers[symbol] = set()
-
-        _symbol_subscribers[symbol].add(websocket)
-
-        # Coinbase mode: crypto only (stocks require Alpaca connection)
-        if resolved_exchange == "coinbase" and _is_stock_symbol(symbol):
-            await websocket.send_json(
-                {"symbol": symbol.upper(), "price": None, "error": "stocks_require_alpaca"}
-            )
-            await websocket.close(code=4002, reason="Stocks require Alpaca connection")
-            return
-
-        # Subscribe to polling loop (exchange-aware if trading_account_id provided)
-        await _subscribe_to_symbol(symbol, exchange=resolved_exchange)
-
-        # Send initial quote — failure is non-fatal; the poll loop will deliver prices
-        try:
-            initial_quote = await _fetch_latest_quote(symbol, exchange=resolved_exchange)
-            await websocket.send_json(initial_quote)
-        except Exception as e:
-            logger.error(f"Failed to send initial quote for {symbol}: {e}")
-
-        # Keep connection alive, listen for disconnect
         while True:
-            # This will raise WebSocketDisconnect when client disconnects
-            await websocket.receive_text()
-
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
     except WebSocketDisconnect:
-        logger.info(f"Client disconnected from price stream for {symbol}")
+        logger.info("Client disconnected from price stream for %s", sym_key)
     except Exception as e:
-        logger.error(f"WebSocket error for {symbol}: {e}")
+        logger.error("WebSocket error for %s: %s", sym_key, e)
     finally:
-        # Remove this connection from subscribers
-        if symbol in _symbol_subscribers:
-            _symbol_subscribers[symbol].discard(websocket)
-
-            # Clean up symbol if no more subscribers
-            if not _symbol_subscribers[symbol]:
-                logger.info(f"Last subscriber disconnected for {symbol}")
-                del _symbol_subscribers[symbol]
-
-        # Close connection if still open
+        await price_store.unsubscribe(sym_key, on_price_update)
+        logger.info("WS disconnected: user=%s symbol=%s", user_id, sym_key)
         try:
             if websocket.client_state == WebSocketState.CONNECTED:
                 await websocket.close()

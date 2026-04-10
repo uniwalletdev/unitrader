@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLivePrice } from "@/hooks/useLivePrice";
 import { authApi, api } from "@/lib/api";
+import { useDebounce } from "@/lib/useDebounce";
 import { fetchSpotPriceViaOhlcv } from "@/lib/fetchSpotPrice";
 import { formatChangePct, formatPrice } from "@/utils/formatPrice";
 import {
@@ -632,53 +633,55 @@ export default function BrandPicker({
     );
   }, [baseList, search]);
 
-  const runSymbolSearch = useCallback(async () => {
-    const q = search.trim();
-    if (q.length < 1) {
-      setRemoteSearchItems(null);
-      return;
-    }
-    setSearchLoading(true);
-    try {
-      const exForSearch = (resolvedExchange ?? exchange ?? "alpaca").toLowerCase();
-      const res = await api.get("/api/trading/symbol-search", {
-        params: {
-          q,
-          exchange: exForSearch,
-          limit: 12,
-          ...(tradingAccountId ? { trading_account_id: tradingAccountId } : {}),
-        },
-      });
-      const raw = (res.data?.data ?? []) as Array<{ symbol?: string; label?: string }>;
-      const rex = (res.data?.resolved_exchange as string | undefined)?.toLowerCase();
-      if (rex) setResolvedExchange(rex);
-      setRemoteSearchItems(
-        raw
-          .map((d) => ({
-            symbol: String(d.symbol ?? ""),
-            brand: String(d.label ?? d.symbol ?? ""),
-          }))
-          .filter((x) => x.symbol),
-      );
-    } catch {
-      setRemoteSearchItems([]);
-    } finally {
-      setSearchLoading(false);
-    }
-  }, [search, exchange, resolvedExchange, tradingAccountId]);
+  const debouncedSearch = useDebounce(search, 400);
+
+  const runSymbolSearch = useCallback(
+    async (q: string) => {
+      const trimmed = q.trim();
+      if (trimmed.length < 2) {
+        setRemoteSearchItems(null);
+        return;
+      }
+      setSearchLoading(true);
+      try {
+        const exForSearch = (resolvedExchange ?? exchange ?? "alpaca").toLowerCase();
+        const res = await api.get("/api/trading/symbol-search", {
+          params: {
+            q: trimmed,
+            exchange: exForSearch,
+            limit: 12,
+            ...(tradingAccountId ? { trading_account_id: tradingAccountId } : {}),
+          },
+        });
+        const raw = (res.data?.data ?? []) as Array<{ symbol?: string; label?: string }>;
+        const rex = (res.data?.resolved_exchange as string | undefined)?.toLowerCase();
+        if (rex) setResolvedExchange(rex);
+        setRemoteSearchItems(
+          raw
+            .map((d) => ({
+              symbol: String(d.symbol ?? ""),
+              brand: String(d.label ?? d.symbol ?? ""),
+            }))
+            .filter((x) => x.symbol),
+        );
+      } catch {
+        setRemoteSearchItems([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    },
+    [exchange, resolvedExchange, tradingAccountId],
+  );
 
   useEffect(() => {
-    const q = search.trim();
-    if (q.length < 1) {
+    const q = debouncedSearch.trim();
+    if (q.length < 2) {
       setRemoteSearchItems(null);
       setSearchLoading(false);
       return;
     }
-    const t = window.setTimeout(() => {
-      void runSymbolSearch();
-    }, 320);
-    return () => clearTimeout(t);
-  }, [search, runSymbolSearch]);
+    void runSymbolSearch(debouncedSearch);
+  }, [debouncedSearch, runSymbolSearch]);
 
   const gridDisplayItems = useMemo(() => {
     const q = search.trim();
@@ -903,7 +906,7 @@ export default function BrandPicker({
                 />
                 <button
                   type="button"
-                  onClick={() => void runSymbolSearch()}
+                  onClick={() => void runSymbolSearch(search)}
                   disabled={!search.trim() || searchLoading}
                   className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg border border-dark-700 bg-dark-950 px-2.5 py-1 text-[11px] font-semibold text-dark-200 hover:text-white disabled:opacity-40"
                 >

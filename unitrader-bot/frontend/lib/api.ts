@@ -1,8 +1,15 @@
-import axios from "axios";
+import axios, { type InternalAxiosRequestConfig } from "axios";
 
 import { devLogError } from "./devLog";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+/** Clerk → /api/auth/clerk-sync refresh; registered by ApiAuthBridge (browser only). */
+let jwtRefreshHandler: (() => Promise<void>) | null = null;
+
+export function setApiTokenRefreshHandler(fn: (() => Promise<void>) | null): void {
+  jwtRefreshHandler = fn;
+}
 
 export const api = axios.create({
   baseURL: API_URL,
@@ -24,6 +31,12 @@ api.interceptors.response.use(
   (res) => res,
   (err) => {
     const url = err.config?.url || "";
+    const detail = err.response?.data?.detail;
+    const code =
+      typeof detail === "object" && detail !== null && "code" in detail
+        ? (detail as { code?: string }).code
+        : null;
+
     // Skip auth-flow endpoints — the page handles 401 itself for these
     const isAuthEndpoint =
       url.includes("/clerk-sync") ||
@@ -39,6 +52,48 @@ api.interceptors.response.use(
         window.location.pathname.startsWith("/learning") ||
         window.location.pathname.startsWith("/positions") ||
         window.location.pathname.startsWith("/performance"));
+
+    if (err.response?.status === 401 && code === "TOKEN_EXPIRED" && typeof window !== "undefined") {
+      if (url.includes("/clerk-sync")) {
+        localStorage.removeItem("access_token");
+        return Promise.reject(err);
+      }
+      const cfg = err.config as (InternalAxiosRequestConfig & { __jwtRetry?: boolean }) | undefined;
+      if (cfg?.__jwtRetry) {
+        localStorage.removeItem("access_token");
+        if (!isAuthEndpoint && !isAppRouterPath) {
+          window.location.href = "/login?expired=1";
+        }
+        return Promise.reject(err);
+      }
+      if (jwtRefreshHandler && cfg && !isAuthEndpoint) {
+        return jwtRefreshHandler()
+          .then(() => {
+            const token = localStorage.getItem("access_token");
+            const next: InternalAxiosRequestConfig & { __jwtRetry?: boolean } = {
+              ...cfg,
+              __jwtRetry: true,
+            };
+            if (token) {
+              next.headers = next.headers ?? {};
+              next.headers.Authorization = `Bearer ${token}`;
+            }
+            return api.request(next);
+          })
+          .catch(() => {
+            localStorage.removeItem("access_token");
+            if (!isAuthEndpoint && !isAppRouterPath) {
+              window.location.href = "/login?expired=1";
+            }
+            return Promise.reject(err);
+          });
+      }
+      localStorage.removeItem("access_token");
+      if (!isAuthEndpoint && !isAppRouterPath) {
+        window.location.href = "/login?expired=1";
+      }
+      return Promise.reject(err);
+    }
 
     if (
       err.response?.status === 401 &&

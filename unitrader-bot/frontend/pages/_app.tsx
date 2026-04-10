@@ -5,6 +5,7 @@ import { StatusBar, Style } from "@capacitor/status-bar";
 import "@/styles/globals.css";
 import { isNative } from "@/hooks/useCapacitor";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import ApiAuthBridge from "@/components/ApiAuthBridge";
 
 export default function App({ Component, pageProps }: AppProps) {
   useEffect(() => {
@@ -38,6 +39,7 @@ export default function App({ Component, pageProps }: AppProps) {
       }}
     >
       <ErrorBoundary>
+        <ApiAuthBridge />
         <Component {...pageProps} />
       </ErrorBoundary>
     </ClerkProvider>

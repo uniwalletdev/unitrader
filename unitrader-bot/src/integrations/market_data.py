@@ -20,12 +20,6 @@ import httpx
 from config import settings
 from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
 from src.integrations.alpaca_rate_limiter import alpaca_limiter, kraken_limiter
-from src.integrations.massive_market_data import (
-    fetch_massive_stock,
-    fetch_massive_crypto,
-    fetch_massive_stock_closes,
-    fetch_massive_crypto_closes,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -269,27 +263,17 @@ async def fetch_market_data(symbol: str, exchange: str) -> dict:
     validate_exchange_for_symbol(clean_symbol, ex)
     asset_type = classify_asset(clean_symbol)
     
-    # Alpaca exchange: use Massive for market DATA, Alpaca kept for execution only.
-    # Falls back to Alpaca fetchers if Massive is unavailable.
+    # Alpaca exchange: real-time market data via Alpaca Data API (IEX / crypto).
     if ex == "alpaca":
         if asset_type == "crypto":
             normalised = normalise_symbol(clean_symbol, ex)
-            logger.debug("Routing Massive crypto: %s → %s", clean_symbol, normalised)
-            try:
-                return await fetch_massive_crypto(normalised)
-            except Exception as exc:
-                logger.warning("Massive crypto failed for %s, falling back to Alpaca: %s", normalised, exc)
-                return await _fetch_alpaca_crypto(normalised)
-        elif asset_type == "stock":
+            logger.debug("Routing Alpaca crypto market data: %s → %s", clean_symbol, normalised)
+            return await _fetch_alpaca_crypto(normalised)
+        if asset_type == "stock":
             normalised = normalise_symbol(clean_symbol, ex)
-            logger.debug("Routing Massive stock: %s → %s", clean_symbol, normalised)
-            try:
-                return await fetch_massive_stock(normalised)
-            except Exception as exc:
-                logger.warning("Massive stock failed for %s, falling back to Alpaca: %s", normalised, exc)
-                return await _fetch_alpaca_stock(normalised)
-        else:
-            raise ValueError(f"Unsupported asset type '{asset_type}' for Alpaca: {clean_symbol}")
+            logger.debug("Routing Alpaca stock market data: %s → %s", clean_symbol, normalised)
+            return await _fetch_alpaca_stock(normalised)
+        raise ValueError(f"Unsupported asset type '{asset_type}' for Alpaca: {clean_symbol}")
     
     normalised = normalise_symbol(clean_symbol, ex)
     
@@ -601,20 +585,20 @@ async def fetch_ohlcv(symbol: str, exchange: str, limit: int = 200) -> list[floa
     if ex == "kraken":
         return await _fetch_kraken_closes(normalised, limit)
     if ex == "alpaca" and asset_type == "crypto":
-        try:
-            closes = await fetch_massive_crypto_closes(normalised, limit)
-            if closes:
-                return closes
-        except Exception as exc:
-            logger.warning("Massive crypto closes failed for %s: %s", normalised, exc)
+        from src.integrations.data_providers.factory import get_realtime_crypto_provider
+
+        crypto_provider = get_realtime_crypto_provider()
+        daily = await crypto_provider.get_historical_closes(normalised, min(limit, 300))
+        if daily and len(daily) >= 10:
+            return daily[-limit:] if len(daily) > limit else daily
         return await _fetch_alpaca_crypto_closes(normalised, limit)
     if ex == "alpaca" and asset_type == "stock":
-        try:
-            closes = await fetch_massive_stock_closes(normalised, limit)
-            if closes:
-                return closes
-        except Exception as exc:
-            logger.warning("Massive stock closes failed for %s: %s", normalised, exc)
+        from src.integrations.data_providers.factory import get_stock_history_provider
+
+        hist_provider = get_stock_history_provider()
+        daily = await hist_provider.get_historical_closes(normalised, min(limit, 300))
+        if daily and len(daily) >= 10:
+            return daily[-limit:] if len(daily) > limit else daily
         return await _fetch_alpaca_stock_closes(normalised, limit)
     if ex == "oanda":
         return await _fetch_oanda_closes(normalised, limit)

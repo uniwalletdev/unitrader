@@ -253,8 +253,7 @@ async def lifespan(app: FastAPI):
             "ALPACA_PAPER_API_KEY and ALPACA_PAPER_API_SECRET (or legacy ALPACA_API_KEY / ALPACA_API_SECRET) are set."
         )
     else:
-        # Probe Massive (primary market data provider) to detect invalid keys early.
-        # Alpaca is now used for trade execution only — Massive handles all market data.
+        # Optional Massive probe (news / legacy); primary quotes use Alpaca + Coinbase + yfinance.
         _massive_key = (settings.massive_api_key or "").strip()
         if _massive_key:
             try:
@@ -267,22 +266,20 @@ async def lifespan(app: FastAPI):
                 async with _httpx.AsyncClient(timeout=8.0, headers=_probe_headers) as _probe_client:
                     _probe_resp = await _probe_client.get(_probe_url)
                 if _probe_resp.status_code == 200:
-                    logger.info("Massive API key validated — startup probe OK (AAPL prev-close)")
-                elif _probe_resp.status_code == 403:
-                    logger.warning("Massive startup probe returned 403 — check plan/key (non-fatal)")
+                    logger.info("Massive API key OK — optional news/legacy endpoints available")
                 elif _probe_resp.status_code == 401:
-                    logger.error(
-                        "MASSIVE API KEY INVALID — startup probe returned 401. "
-                        "Fix MASSIVE_API_KEY in Railway env vars and redeploy."
+                    logger.warning(
+                        "MASSIVE_API_KEY invalid or expired (401) — "
+                        "news via Massive disabled; set DATA_PROVIDER=yfinance and use Alpaca for data."
                     )
                 else:
-                    logger.warning("Massive startup probe returned HTTP %d (non-fatal)", _probe_resp.status_code)
+                    logger.debug("Massive startup probe HTTP %s (non-fatal)", _probe_resp.status_code)
             except Exception as _probe_exc:
-                logger.warning("Massive startup probe failed (non-fatal): %s", _probe_exc)
+                logger.debug("Massive startup probe skipped: %s", _probe_exc)
         else:
-            logger.warning(
-                "MASSIVE_API_KEY not set — market data will fall back to Alpaca. "
-                "Set MASSIVE_API_KEY in Railway env vars for reliable market data."
+            logger.info(
+                "MASSIVE_API_KEY not set — using Alpaca/Coinbase/yfinance for market data "
+                "(set DATA_PROVIDER=yfinance or alpaca in env).",
             )
     _alpaca_live_key = bool((settings.alpaca_live_api_key or "").strip())
     _alpaca_live_secret = bool((settings.alpaca_live_api_secret or "").strip())
@@ -387,6 +384,16 @@ async def lifespan(app: FastAPI):
     else:
         _wa_bot = None
         logger.info("WhatsApp bot disabled (TWILIO_* credentials not set)")
+
+    # Price store feeds (Alpaca stocks + Coinbase crypto) — background tasks
+    if not _disable_loops:
+        try:
+            from src.services.price_feed import start_price_feeds
+
+            start_price_feeds()
+            logger.info("Price feeds initialised as background tasks")
+        except Exception as _pf_exc:
+            logger.warning("Price feeds failed to start (non-fatal): %s", _pf_exc)
 
     yield
 
