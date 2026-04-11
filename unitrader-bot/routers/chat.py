@@ -329,7 +329,8 @@ async def chat_stream(
             ):
                 partial += token
                 yield token
-        except Exception:
+        except Exception as e:
+            logger.error(f"Chat stream error: {e}", exc_info=True)
             if partial:
                 yield "\n\nResponse interrupted. Please try again."
             else:

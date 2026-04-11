@@ -327,7 +327,9 @@ class SharedMemory:
                 )
             )
             rows: list[tuple[ExchangeAPIKey, TradingAccount | None]] = list(result.all())
+            logger.debug(f"Found {len(rows)} active exchange keys for user {user_id}")
             if not rows:
+                logger.warning(f"No active exchange keys found for user {user_id} (check is_active flag)")
                 return []
             out = list(
                 await asyncio.gather(
@@ -337,6 +339,7 @@ class SharedMemory:
                     ]
                 )
             )
+            logger.debug(f"Fetched balances for {len(out)} exchanges for user {user_id}")
             try:
                 await db.commit()
             except Exception:
