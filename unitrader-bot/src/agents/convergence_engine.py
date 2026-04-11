@@ -45,8 +45,13 @@ class ConvergenceEngine:
         existing_market_data: dict,
         existing_sentiment: dict,
         db: AsyncSession,
+        companion_name: str = "Apex",
     ) -> dict:
-        """Run the v1 vote collectors and return a normalized convergence result."""
+        """Run the v1 vote collectors and return a normalized convergence result.
+        
+        Args:
+            companion_name: User's custom AI name (defaults to 'Apex' for background jobs).
+        """
         results = await self._gather_votes(
             symbol=symbol,
             asset_class=asset_class,
@@ -85,6 +90,7 @@ class ConvergenceEngine:
             confidence=final_score,
             votes=votes,
             votes_for=votes_for,
+            companion_name=companion_name,
         )
 
         return {
@@ -283,6 +289,7 @@ class ConvergenceEngine:
         confidence: int,
         votes: dict,
         votes_for: int,
+        companion_name: str = "Apex",
     ) -> dict:
         vote_lines = []
         for source, data in votes.items():
@@ -295,9 +302,9 @@ class ConvergenceEngine:
             vote_lines.append(f"  [{mark}] {source}: {evidence}")
 
         votes_text = "\n".join(vote_lines)
-        prompt = f"""You are Apex, Unitrader's AI trader. A convergence analysis just completed.
+        prompt = f"""You are {companion_name}, Unitrader's AI trader. A convergence analysis just completed.
 Generate 4 versions of reasoning for this result. Be specific. Reference actual evidence.
-Never say "AI analysis" — say "Apex" or "I". Never use generic language.
+Never say "AI analysis" — say "{companion_name}" or "I". Never use generic language.
 
 Symbol: {symbol} ({asset_class})
 Signal: {signal.upper()} — {confidence}% confidence
