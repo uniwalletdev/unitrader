@@ -30,6 +30,7 @@ from database import AsyncSessionLocal
 from models import Trade, User, OnboardingMessage, UserSettings
 from src.agents.core.unitrader_chat_prompt import build_system_prompt
 from src.agents.shared_memory import SharedContext, SharedMemory
+from src.agents import shared_memory
 from src.services.context_detection import (
     AI_PERFORMANCE,
     GENERAL,
@@ -1650,18 +1651,22 @@ class ConversationAgent:
             ctx = await SharedMemory.load(self.user_id, db)
             # Map field names to context attributes
             field_map = {
-                "goal": "financial_goal",
+                "goal": "goal",
                 "risk_level": "risk_level",
                 "budget": "max_trade_amount",
-                "exchange": "primary_exchange",
+                "exchange": "exchange",
             }
             attr_name = field_map.get(field)
             if attr_name:
                 setattr(ctx, attr_name, value)
-            # Update cache (simplified - may need full cache update)
-            SharedMemory._cache[self.user_id] = (ctx, datetime.utcnow())
+            # Update cache using module-level _cache with correct tuple key
+            cache_key = (self.user_id, "")  # Tuple key as expected by _cache
+            shared_memory._cache[cache_key] = (ctx, datetime.now(timezone.utc))
         except Exception as e:
-            logger.warning(f"Failed to update shared_memory for field {field}: {e}")
+            logger.warning(
+                f"Failed to update shared_memory for field {field}: {e}. "
+                f"Continuing without cache update."
+            )
 
     async def _complete_onboarding_internal(
         self,
