@@ -91,6 +91,7 @@ class TwoFASetupResponse(BaseModel):
     status: str = "success"
     secret: str
     qr_code_url: str
+    qr_code: str
     backup_codes: list[str]
 
 

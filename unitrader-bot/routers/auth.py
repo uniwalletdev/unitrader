@@ -15,10 +15,13 @@ Endpoints:
     DELETE /api/auth/account               — Permanently delete account
 """
 
+import base64
+import io
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import qrcode
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError
@@ -423,11 +426,20 @@ async def setup_2fa(
     backup_codes = generate_backup_codes()
 
     qr_uri = get_totp_uri(secret, current_user.email, issuer=settings.app_name)
+    
+    # Generate QR code image as base64-encoded PNG
+    qr = qrcode.make(qr_uri)
+    buffer = io.BytesIO()
+    qr.save(buffer, format="PNG")
+    qr_b64 = base64.b64encode(buffer.getvalue()).decode()
+    qr_code_b64_uri = f"data:image/png;base64,{qr_b64}"
+    
     await _log_event(db, "2fa_setup_initiated", request, user_id=current_user.id)
 
     return TwoFASetupResponse(
         secret=secret,
         qr_code_url=qr_uri,
+        qr_code=qr_code_b64_uri,
         backup_codes=backup_codes,
     )
 
@@ -453,8 +465,8 @@ async def verify_2fa(
     secret = decrypt_field(current_user.two_fa_secret)
     if not verify_totp(secret, body.code):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid 2FA code",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid or expired 2FA code. Please try again.",
         )
 
     current_user.two_fa_enabled = True

@@ -61,6 +61,7 @@ APScheduler==3.10.4
 # Utilities
 python-dateutil==2.9.0
 pytz==2024.1
+qrcode[pil]>=7.0
 
 # Market data providers (historical + streaming helpers)
 yfinance==0.2.54
