@@ -23,10 +23,121 @@ import httpx
 from config import settings
 from src.agents.shared_memory import SharedContext
 from src.integrations.alpaca_rate_limiter import alpaca_limiter
-from src.integrations.massive_market_data import fetch_massive_news
 from src.market_context import Exchange, MarketContext
 
 logger = logging.getLogger(__name__)
+
+
+async def fetch_news_sentiment(symbol: str) -> dict:
+    """
+    Free news sentiment via Finnhub.
+    Falls back to neutral if FINNHUB_API_KEY not set.
+    Optional Finnhub-backed headline sentiment when the API key is set.
+    """
+    from config import settings
+
+    neutral_result = {
+        "symbol": symbol,
+        "sentiment": "neutral",
+        "score": 0.0,
+        "source": "none",
+        "articles": [],
+    }
+
+    finnhub_key = getattr(settings, "finnhub_api_key", "") or getattr(
+        settings, "FINNHUB_API_KEY", ""
+    )
+
+    if not finnhub_key:
+        logger.info(
+            f"Sentiment skipped for {symbol}: "
+            f"no FINNHUB_API_KEY configured. "
+            f"Register free at finnhub.io for news sentiment."
+        )
+        return neutral_result
+
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                "https://finnhub.io/api/v1/company-news",
+                params={
+                    "symbol": symbol,
+                    "from": (
+                        datetime.utcnow() - timedelta(days=7)
+                    ).strftime("%Y-%m-%d"),
+                    "to": datetime.utcnow().strftime("%Y-%m-%d"),
+                    "token": finnhub_key,
+                },
+            )
+            resp.raise_for_status()
+            articles = resp.json()
+
+        if not articles:
+            return {**neutral_result, "source": "finnhub"}
+
+        positive_words = {
+            "beat",
+            "surge",
+            "rally",
+            "gain",
+            "rise",
+            "high",
+            "record",
+            "growth",
+            "profit",
+            "strong",
+            "upgrade",
+            "buy",
+            "outperform",
+            "raised",
+            "exceeded",
+        }
+        negative_words = {
+            "miss",
+            "fall",
+            "drop",
+            "decline",
+            "low",
+            "loss",
+            "weak",
+            "cut",
+            "concern",
+            "sell",
+            "downgrade",
+            "disappointing",
+            "below",
+            "warning",
+            "risk",
+        }
+
+        pos = neg = 0
+        for article in articles[:10]:
+            headline = article.get("headline", "").lower()
+            pos += sum(1 for w in positive_words if w in headline)
+            neg += sum(1 for w in negative_words if w in headline)
+
+        total = pos + neg
+        score = round((pos - neg) / total, 3) if total > 0 else 0.0
+        sentiment = (
+            "bullish"
+            if score > 0.2
+            else "bearish" if score < -0.2 else "neutral"
+        )
+
+        return {
+            "symbol": symbol,
+            "sentiment": sentiment,
+            "score": score,
+            "source": "finnhub",
+            "articles": articles[:5],
+        }
+
+    except Exception as e:
+        logger.warning(f"Finnhub news failed for {symbol}: {e}")
+        return {**neutral_result, "source": "error"}
+
 
 # Module-level cache: symbol -> (result_dict, cached_at_timestamp)
 _sentiment_cache: dict[str, tuple[dict, datetime]] = {}
@@ -180,7 +291,7 @@ class SentimentAgent:
             return []
 
     async def _fetch_alpaca_news(self, symbol: str) -> list[dict]:
-        """Fetch recent news headlines — Massive first, Alpaca fallback.
+        """Fetch recent news headlines — Alpaca Data API; optional Finnhub if empty.
 
         Args:
             symbol: Trading pair
@@ -188,26 +299,31 @@ class SentimentAgent:
         Returns:
             List of news items with headline, author, created_at, url
         """
-        # Try Massive (Polygon-compatible) news first
-        try:
-            articles = await fetch_massive_news(symbol, limit=10)
-            if articles:
-                return articles
-        except Exception as exc:
-            logger.warning("Massive news failed for %s, falling back to Alpaca: %s", symbol, exc)
-
-        # Alpaca fallback
         from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
         alpaca_breaker.check()  # fast-fail if Alpaca is known-broken
 
+        def _finnhub_rows_from_sentiment(r: dict) -> list[dict]:
+            raw = r.get("articles") or []
+            return [
+                {
+                    "headline": (x.get("headline") or x.get("title") or "")[:500],
+                    "title": (x.get("headline") or x.get("title") or "")[:500],
+                    "url": x.get("url", "") or "",
+                    "source": "finnhub",
+                }
+                for x in raw[:15]
+                if (x.get("headline") or x.get("title"))
+            ]
+
         # Normalize symbol for Alpaca API
         alpaca_symbol = symbol.replace("/", "")  # BTC/USD -> BTCUSD
+        finnhub_symbol = symbol.upper().replace("/", "").strip()[:10] or symbol
 
         api_key = self.alpaca_api_key or settings.alpaca_paper_api_key
         api_secret = settings.alpaca_paper_api_secret or None
         if not api_key:
-            logger.warning(f"No Alpaca API key available — skipping news fetch for {symbol}")
-            return []
+            logger.warning("No Alpaca API key available — skipping Alpaca news for %s", symbol)
+            return _finnhub_rows_from_sentiment(await fetch_news_sentiment(finnhub_symbol))
 
         # News lives on the data subdomain, not the trading API
         url = "https://data.alpaca.markets/v1beta1/news"
@@ -228,12 +344,16 @@ class SentimentAgent:
                 response.raise_for_status()
                 alpaca_breaker.record_success()
                 data = response.json()
-                return data.get("news", [])
+                articles = data.get("news", []) or []
         except AlpacaUnavailableError:
             raise
         except Exception as e:
-            logger.error(f"Alpaca news API error for {symbol}: {e}")
-            raise
+            logger.warning("Alpaca news API error for %s: %s", symbol, e)
+            articles = []
+
+        if articles:
+            return articles
+        return _finnhub_rows_from_sentiment(await fetch_news_sentiment(finnhub_symbol))
 
     async def _fetch_earnings(self, symbol: str) -> dict | None:
         """Fetch next earnings date for a stock.

@@ -277,23 +277,17 @@ class SignalStackAgent:
             return None
 
     def _classify_macd(self, macd_info: dict) -> str:
-        """
-        Classify MACD into signal labels (histogram + line vs signal).
-        Expects keys: line, signal, histogram (same shape as market_data MACD dict).
-        """
-        line = float(macd_info.get("line", 0) or 0)
-        sig = float(macd_info.get("signal", 0) or 0)
-        histogram = float(macd_info.get("histogram", 0) or 0)
-        if line > sig and histogram > 0:
-            threshold = abs(line) * 0.1 if line != 0 else 0.001
-            if histogram > threshold:
-                return "bullish_cross"
-            return "bullish_momentum"
-        if line < sig and histogram < 0:
-            threshold = abs(line) * 0.1 if line != 0 else 0.001
-            if abs(histogram) > threshold:
-                return "bearish_cross"
-            return "bearish_momentum"
+        # Keys: OPTION A uses "macd"; ``calculate_macd`` uses "line" for the MACD line.
+        macd_line = float(macd_info.get("macd", macd_info.get("line", 0.0)) or 0.0)
+        signal_line = float(macd_info.get("signal", 0.0) or 0.0)
+        histogram = float(macd_info.get("histogram", 0.0) or 0.0)
+
+        if macd_line > signal_line and histogram > 0:
+            threshold = abs(macd_line) * 0.1 if macd_line != 0 else 0.001
+            return "bullish_cross" if histogram > threshold else "bullish_momentum"
+        if macd_line < signal_line and histogram < 0:
+            threshold = abs(macd_line) * 0.1 if macd_line != 0 else 0.001
+            return "bearish_cross" if abs(histogram) > threshold else "bearish_momentum"
         return "neutral"
 
     def _get_asset_name(self, symbol: str) -> str:

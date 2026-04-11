@@ -253,34 +253,12 @@ async def lifespan(app: FastAPI):
             "ALPACA_PAPER_API_KEY and ALPACA_PAPER_API_SECRET (or legacy ALPACA_API_KEY / ALPACA_API_SECRET) are set."
         )
     else:
-        # Optional Massive probe (news / legacy); primary quotes use Alpaca + Coinbase + yfinance.
-        _massive_key = (settings.massive_api_key or "").strip()
-        if _massive_key:
-            try:
-                import httpx as _httpx
-                _probe_url = (
-                    (settings.massive_base_url or "https://api.massive.com").rstrip("/")
-                    + "/v2/aggs/ticker/AAPL/prev"
-                )
-                _probe_headers = {"Authorization": f"Bearer {_massive_key}"}
-                async with _httpx.AsyncClient(timeout=8.0, headers=_probe_headers) as _probe_client:
-                    _probe_resp = await _probe_client.get(_probe_url)
-                if _probe_resp.status_code == 200:
-                    logger.info("Massive API key OK — optional news/legacy endpoints available")
-                elif _probe_resp.status_code == 401:
-                    logger.warning(
-                        "MASSIVE_API_KEY invalid or expired (401) — "
-                        "news via Massive disabled; set DATA_PROVIDER=yfinance and use Alpaca for data."
-                    )
-                else:
-                    logger.debug("Massive startup probe HTTP %s (non-fatal)", _probe_resp.status_code)
-            except Exception as _probe_exc:
-                logger.debug("Massive startup probe skipped: %s", _probe_exc)
-        else:
-            logger.info(
-                "MASSIVE_API_KEY not set — using Alpaca/Coinbase/yfinance for market data "
-                "(set DATA_PROVIDER=yfinance or alpaca in env).",
-            )
+        logger.info(
+            "Market data stack: "
+            "yfinance (historical) | "
+            "Alpaca IEX (real-time stocks) | "
+            "Coinbase public WS (real-time crypto)",
+        )
     _alpaca_live_key = bool((settings.alpaca_live_api_key or "").strip())
     _alpaca_live_secret = bool((settings.alpaca_live_api_secret or "").strip())
     if _alpaca_live_key and _alpaca_live_secret:

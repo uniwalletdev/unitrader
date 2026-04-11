@@ -21,6 +21,8 @@ try:
 except ImportError:
     AlpacaREST = None
 
+# httpx: Clerk JWKS fetch; public exchange spot/ticker APIs (Coinbase/Binance/Kraken); Alpaca Data
+# REST fallback when price_store + providers miss (not Massive/Polygon).
 import httpx
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from starlette.websockets import WebSocketState
@@ -28,7 +30,7 @@ from jose import JWTError, jwt as jose_jwt
 
 from config import settings
 from security import verify_token
-from src.integrations.alpaca_rate_limiter import alpaca_limiter, kraken_limiter
+from src.integrations.alpaca_rate_limiter import kraken_limiter
 from src.market_context import Exchange, ExchangeAssetClassError, normalize_symbol, resolve_market_context
 
 logger = logging.getLogger(__name__)
@@ -97,6 +99,7 @@ async def _get_ws_jwks(jwks_url: str) -> dict:
     entry = _ws_jwks_cache.get(jwks_url)
     if entry and (time.monotonic() - entry.get("ts", 0.0)) < 3600:
         return entry["data"]
+    # Clerk RS256 WebSocket auth — fetch signing keys (not a quote call).
     async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
         resp = await client.get(jwks_url)
         resp.raise_for_status()
@@ -240,7 +243,10 @@ def _is_stock_symbol(symbol: str) -> bool:
 
 
 async def _fetch_coinbase_price(symbol: str) -> Dict[str, Any]:
-    """Fetch latest price from Coinbase public spot price API (no auth required)."""
+    """Fetch latest price from Coinbase public spot price API (no auth required).
+
+    Called from _fetch_latest_quote after price_store + providers miss for Coinbase-routed symbols.
+    """
     url = f"https://api.coinbase.com/v2/prices/{symbol.upper()}/spot"
     async with httpx.AsyncClient(timeout=5.0) as client:
         resp = await client.get(url)
@@ -405,7 +411,7 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
         logger.warning("Provider quote failed for %s: %s", sym_key, exc)
 
     # Legacy Alpaca REST fallback
-    from src.integrations.alpaca_circuit_breaker import alpaca_breaker, AlpacaUnavailableError
+    from src.integrations.alpaca_circuit_breaker import alpaca_breaker
     alpaca_breaker.check()  # fast-fail if Alpaca is known-broken
 
     global _warned_missing_alpaca_data_creds
@@ -423,55 +429,19 @@ async def _fetch_latest_quote(symbol: str, exchange: str | None = None) -> Dict[
             )
         raise ValueError("Alpaca credentials not configured for price stream")
 
-    headers = {
-        "APCA-API-KEY-ID": api_key,
-        "APCA-API-SECRET-KEY": api_secret,
-    }
+    from src.services.price_feed import get_direct_price
 
-    async def _alpaca_get_json(url: str, params: dict | None = None) -> dict:
-        # Basic 429 handling (free-tier can throttle aggressively).
-        backoff_s = 1.0
-        last_exc: Exception | None = None
-        for _ in range(3):
-            try:
-                async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
-                    await alpaca_limiter.acquire()
-                    resp = await client.get(url, params=params)
-                if resp.status_code == 401:
-                    alpaca_breaker.record_auth_failure(f"WS 401 on {url}")
-                    resp.raise_for_status()
-                if resp.status_code == 429:
-                    retry_after = resp.headers.get("retry-after")
-                    try:
-                        wait_s = float(retry_after) if retry_after else backoff_s
-                    except Exception:
-                        wait_s = backoff_s
-                    await asyncio.sleep(min(10.0, max(0.5, wait_s)))
-                    backoff_s = min(10.0, backoff_s * 2)
-                    continue
-                resp.raise_for_status()
-                alpaca_breaker.record_success()
-                return resp.json()
-            except Exception as exc:
-                last_exc = exc
-                await asyncio.sleep(min(10.0, backoff_s))
-                backoff_s = min(10.0, backoff_s * 2)
-        raise last_exc or RuntimeError("Alpaca request failed")
-
-    if source == "alpaca_crypto":
-        url = "https://data.alpaca.markets/v1beta3/crypto/us/latest/quotes"
-        payload = await _alpaca_get_json(url, params={"symbols": sym.upper()})
-        quotes = payload.get("quotes", {}) or {}
-        q = quotes.get(sym.upper(), {}) or {}
-        bid = float(q.get("bp", 0) or 0)
-        ask = float(q.get("ap", 0) or 0)
-    else:
-        # Alpaca stocks endpoint
-        url = f"https://data.alpaca.markets/v2/stocks/{sym.upper()}/quotes/latest"
-        payload = await _alpaca_get_json(url)
-        q = payload.get("quote", {}) or {}
-        bid = float(q.get("bp", 0) or 0)
-        ask = float(q.get("ap", 0) or 0)
+    direct = await get_direct_price(
+        sym,
+        is_crypto=(source == "alpaca_crypto"),
+        alpaca_key=api_key,
+        alpaca_secret=api_secret,
+    )
+    if not direct:
+        raise ValueError(f"Alpaca quote unavailable for {sym}")
+    bid = direct["bid"]
+    ask = direct["ask"]
+    q = direct["q"]
 
     price = (bid + ask) / 2 if bid and ask else (ask or bid)
 
