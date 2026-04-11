@@ -621,6 +621,24 @@ function Chat({ user }: { user: User | null }) {
   const [isTyping, setIsTyping] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Update the initial welcome message when AI name loads
+  useEffect(() => {
+    if (!bootstrapLoaded || !historyLoaded) return;
+    setMessages((prev) => {
+      if (prev.length > 0 && prev[0].role === "assistant" && prev[0].content.includes("Hey")) {
+        const firstMsg = prev[0].content;
+        // Only update if it contains the default "Apex" or old personalized name
+        if (firstMsg.includes("I'm")) {
+          const newContent = `Hey — ${resolvedAiName} here. What do you want to do?`;
+          if (newContent !== firstMsg) {
+            return [{ ...prev[0], content: newContent }, ...prev.slice(1)];
+          }
+        }
+      }
+      return prev;
+    });
+  }, [resolvedAiName, bootstrapLoaded, historyLoaded]);
+
   useEffect(() => {
     if (historyLoaded) return;
     if (!bootstrapLoaded) return;

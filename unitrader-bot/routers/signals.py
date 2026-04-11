@@ -105,6 +105,19 @@ def _serialize_signal(signal: SignalStack) -> dict:
     }
 
 
+def _personalize_signal_with_ai_name(serialized: dict, ai_name: str) -> dict:
+    """Replace 'Apex' placeholder with user's custom AI name in signal reasoning."""
+    if ai_name and ai_name.lower() != "apex":
+        # Replace Apex in all reasoning fields
+        for field in ["reasoning_simple", "reasoning_expert", "reasoning_metaphor", "reasoning"]:
+            if serialized.get(field):
+                # Replace "Apex" with AI name (case-sensitive for proper nouns)
+                serialized[field] = serialized[field].replace("Apex", ai_name)
+                # Also handle variations like "Apex will", "Apex's"
+                serialized[field] = serialized[field].replace(f"{ai_name} will", f"{ai_name} will")
+    return serialized
+
+
 def _exchange_for_signal(symbol: str, asset_class: str) -> str:
     if asset_class == "crypto":
         return "coinbase"
@@ -154,10 +167,20 @@ async def get_signal_stack(
     )
     last_run = run_result.scalar_one_or_none()
 
+    # Get user's AI name for personalization
+    user_result = await db.execute(
+        select(User).where(User.id == current_user.id)
+    )
+    user = user_result.scalar_one()
+    ai_name = user.ai_name or "Apex"
+
     return {
         "status": "success",
         "data": {
-            "signals": [_serialize_signal(signal) for signal in signals],
+            "signals": [
+                _personalize_signal_with_ai_name(_serialize_signal(signal), ai_name)
+                for signal in signals
+            ],
             "last_scan_at": last_run.created_at.isoformat() if last_run else None,
             "next_scan_in_minutes": 30,
             "assets_scanned": last_run.assets_scanned if last_run else 0,
@@ -334,13 +357,20 @@ async def get_apex_selects_shortlist(
         )
         .order_by(SignalStack.confidence.desc(), SignalStack.created_at.desc())
     )
+    # Get user's AI name for personalization
+    user_result = await db.execute(
+        select(User).where(User.id == current_user.id)
+    )
+    user = user_result.scalar_one()
+    ai_name = user.ai_name or "Apex"
+
     signals = []
     for signal in signals_result.scalars().all():
         if signal.asset_class not in allowed:
             continue
         if watchlist and signal.symbol not in watchlist:
             continue
-        payload = _serialize_signal(signal)
+        payload = _personalize_signal_with_ai_name(_serialize_signal(signal), ai_name)
         payload["threshold_used"] = threshold
         signals.append(payload)
         if len(signals) >= max_trades:

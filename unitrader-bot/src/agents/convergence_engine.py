@@ -240,7 +240,7 @@ class ConvergenceEngine:
             if days is None:
                 return {"penalty": 0, "days_until": None, "evidence": "Earnings date unknown"}
             if days <= 3:
-                return {"penalty": 80, "days_until": days, "evidence": f"DANGER: Earnings in {days} days — Apex will not trade"}
+                return {"penalty": 80, "days_until": days, "evidence": f"DANGER: Earnings in {days} days — will not trade"}
             if days <= 7:
                 return {"penalty": 50, "days_until": days, "evidence": f"WARNING: Earnings in {days} days — high uncertainty"}
             if days <= 14:
