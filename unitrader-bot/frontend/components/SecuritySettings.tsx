@@ -14,7 +14,7 @@ interface ExternalAccount {
 export default function SecuritySettings() {
   const [accounts, setAccounts] = useState<ExternalAccount[]>([]);
   const [loading, setLoading] = useState(true);
-  const [twoFASetup, setTwoFASetup] = useState<{ secret?: string; qr_uri?: string } | null>(null);
+  const [twoFASetup, setTwoFASetup] = useState<{ secret?: string; qr_code?: string; qr_code_url?: string; backup_codes?: string[] } | null>(null);
   const [twoFACode, setTwoFACode] = useState("");
   const [verifying2FA, setVerifying2FA] = useState(false);
   const [linkingCode, setLinkingCode] = useState<{ platform: string; code: string } | null>(null);
@@ -144,14 +144,17 @@ export default function SecuritySettings() {
             <p className="text-xs text-dark-400">
               Scan this code with your authenticator app (Google Authenticator, Authy, etc.):
             </p>
-            {twoFASetup.qr_uri && (
-              <div className="flex items-center gap-3">
-                <div className="rounded-lg bg-white p-2">
-                  <QrCode size={20} className="text-dark-950" />
+            {twoFASetup.qr_code && (
+              <div className="flex flex-col items-center gap-3">
+                <div className="rounded-lg border border-dark-600 bg-white p-2">
+                  <img src={twoFASetup.qr_code} alt="2FA QR Code" style={{ width: "200px", height: "200px" }} className="rounded" />
                 </div>
-                <code className="flex-1 break-all rounded bg-dark-900 px-2 py-1 text-[10px] text-dark-400">
-                  {twoFASetup.secret}
-                </code>
+                <div className="w-full">
+                  <p className="mb-1 text-[10px] text-dark-500">Or enter manually:</p>
+                  <code className="block w-full break-all rounded bg-dark-900 px-2 py-1 text-center text-[10px] font-mono text-brand-400">
+                    {twoFASetup.secret}
+                  </code>
+                </div>
               </div>
             )}
             <div className="flex gap-2">
