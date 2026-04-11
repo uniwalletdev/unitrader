@@ -278,65 +278,74 @@ async def chat_stream(
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Stream the assistant response token-by-token (web only).
+    """Send user message and return AI response (same as Telegram/WhatsApp).
 
-    Additive endpoint; does not change /api/chat/message.
+    Uses non-streaming approach like Telegram/WhatsApp to ensure reliability.
+    Returns full response at once rather than token-by-token streaming.
     """
     from src.agents.shared_memory import SharedMemory
 
-    ctx = await SharedMemory.load(current_user.id, db)
+    try:
+        ctx = await SharedMemory.load(current_user.id, db)
 
-    # Build conversation_history from onboarding_messages (max 20), oldest -> newest
-    history_rows = (
-        await db.execute(
-            select(OnboardingMessage)
-            .where(OnboardingMessage.user_id == current_user.id)
-            .order_by(OnboardingMessage.created_at.desc())
-            .limit(20)
-        )
-    ).scalars().all()
-    history_rows = list(reversed(list(history_rows)))
-    conversation_history: list[dict[str, str]] = [
-        {"role": str(row.role), "content": str(row.content)} for row in history_rows
-    ]
-    if len(conversation_history) > 20:
-        conversation_history = conversation_history[-20:]
+        # Build conversation_history from onboarding_messages (max 20), oldest -> newest
+        history_rows = (
+            await db.execute(
+                select(OnboardingMessage)
+                .where(OnboardingMessage.user_id == current_user.id)
+                .order_by(OnboardingMessage.created_at.desc())
+                .limit(20)
+            )
+        ).scalars().all()
+        history_rows = list(reversed(list(history_rows)))
+        conversation_history: list[dict[str, str]] = [
+            {"role": str(row.role), "content": str(row.content)} for row in history_rows
+        ]
+        if len(conversation_history) > 20:
+            conversation_history = conversation_history[-20:]
 
-    agent = ConversationAgent(user_id=current_user.id)
-
-    async def token_generator():
-        partial = ""
-        try:
-            if not ctx.onboarding_complete:
-                # Fallback: use existing onboarding chat route and yield once.
-                orchestrator = get_orchestrator()
-                res = await orchestrator.route(
-                    user_id=current_user.id,
-                    action="onboarding_chat",
-                    payload={"message": body.message, "channel": "web"},
-                    db=db,
-                )
-                text = (res.get("message") or res.get("response") or "").strip()
-                yield text
-                return
-
-            async for token in agent.generate_response_stream(
+        # Handle onboarding users differently
+        if not ctx.onboarding_complete:
+            orchestrator = get_orchestrator()
+            res = await orchestrator.route(
+                user_id=current_user.id,
+                action="onboarding_chat",
+                payload={"message": body.message, "channel": "web"},
+                db=db,
+            )
+            ai_response = (res.get("message") or res.get("response") or "").strip()
+        else:
+            # Use respond() like Telegram/WhatsApp instead of streaming
+            agent = ConversationAgent(user_id=current_user.id)
+            result = await agent.respond(
                 user_message=body.message,
                 shared_context=ctx,
                 conversation_history=conversation_history,
                 channel="web",
                 db=db,
-            ):
-                partial += token
-                yield token
-        except Exception as e:
-            logger.error(f"Chat stream error: {e}", exc_info=True)
-            if partial:
-                yield "\n\nResponse interrupted. Please try again."
-            else:
-                yield "Response interrupted. Please try again."
+            )
+            ai_response = (result.get("response") or "").strip()
 
-    return StreamingResponse(token_generator(), media_type="text/plain")
+        if not ai_response:
+            ai_response = "Response interrupted. Please try again."
+
+        # Save messages to history
+        db.add(OnboardingMessage(user_id=current_user.id, role="user", content=body.message))
+        db.add(OnboardingMessage(user_id=current_user.id, role="assistant", content=ai_response))
+        await db.commit()
+
+        # Return response
+        async def response_generator():
+            yield ai_response
+
+        return StreamingResponse(response_generator(), media_type="text/plain")
+
+    except Exception as e:
+        logger.error(f"❌ Chat error: {type(e).__name__}: {e}", exc_info=True)
+        error_msg = "Response interrupted. Please try again."
+        async def error_generator():
+            yield error_msg
+        return StreamingResponse(error_generator(), media_type="text/plain")
 
 
 # ─────────────────────────────────────────────
