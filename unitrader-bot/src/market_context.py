@@ -316,7 +316,9 @@ async def resolve_execution_venue(
     if asset_class is not None:
         filtered = [
             a for a in accounts
-            if getattr(a, "asset_class", None) == asset_class.value
+            if asset_class in EXCHANGE_ASSET_CLASSES.get(
+                Exchange((a.exchange or "").lower()), set()
+            )
         ]
         if not filtered:
             raise ExchangeAssetClassError(
@@ -338,10 +340,16 @@ async def resolve_execution_venue(
 
     # ── Resolve fields ──────────────────────────────────────────────────────
     exchange = Exchange(account.exchange.lower())
-    acct_asset_class = AssetClass(
-        getattr(account, "asset_class", None)
-        or EXCHANGE_PRIMARY_ASSET_CLASS.get(account.exchange.lower(), AssetClass.STOCKS).value
-    )
+    # Derive asset class: use the requested class if supported, otherwise
+    # fall back to the account's stored value or the exchange's primary class.
+    supported = EXCHANGE_ASSET_CLASSES.get(exchange, set())
+    if asset_class is not None and asset_class in supported:
+        acct_asset_class = asset_class
+    else:
+        acct_asset_class = AssetClass(
+            getattr(account, "asset_class", None)
+            or EXCHANGE_PRIMARY_ASSET_CLASS.get(account.exchange.lower(), AssetClass.STOCKS).value
+        )
     paper_mode_type = PaperModeType(
         getattr(account, "paper_mode_type", None)
         or EXCHANGE_PAPER_MODE.get(account.exchange.lower(), PaperModeType.SYNTHETIC).value
@@ -369,7 +377,12 @@ async def get_user_asset_classes(
     user_id: str,
     db: AsyncSession,
 ) -> list[AssetClass]:
-    """Return de-duplicated list of asset classes for a user's active accounts."""
+    """Return de-duplicated list of asset classes for a user's active accounts.
+
+    Uses ``EXCHANGE_ASSET_CLASSES`` so multi-asset exchanges (e.g. Alpaca
+    which supports both stocks and crypto) correctly surface all their
+    capabilities instead of returning only a single hardcoded default.
+    """
     result = await db.execute(
         select(TradingAccount)
         .where(
@@ -381,14 +394,17 @@ async def get_user_asset_classes(
     seen: set[str] = set()
     classes: list[AssetClass] = []
     for a in accounts:
-        ac = (
-            getattr(a, "asset_class", None)
-            or EXCHANGE_PRIMARY_ASSET_CLASS.get(
-                (a.exchange or "").lower(), AssetClass.STOCKS
-            ).value
-        )
-        if ac not in seen:
-            seen.add(ac)
-            classes.append(AssetClass(ac))
+        try:
+            exchange = Exchange((a.exchange or "").lower())
+            supported = EXCHANGE_ASSET_CLASSES.get(exchange, set())
+        except ValueError:
+            supported = set()
+        if not supported:
+            # Fallback: use the stored asset_class on the account row
+            supported = {AssetClass(getattr(a, "asset_class", None) or "stocks")}
+        for ac in supported:
+            if ac.value not in seen:
+                seen.add(ac.value)
+                classes.append(ac)
     return classes
 
