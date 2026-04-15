@@ -23,7 +23,7 @@ _CACHE_TTL_HOURS = 4
 
 # Rate limiting - prevent Yahoo Finance from blocking us
 _LAST_REQUEST_TIME: float = 0
-_MIN_REQUEST_INTERVAL: float = 0.3  # 300ms between requests
+_MIN_REQUEST_INTERVAL: float = 1.0  # 1 second between requests (Yahoo is strict)
 
 
 class YFinanceProvider(MarketDataProvider):
@@ -50,9 +50,26 @@ class YFinanceProvider(MarketDataProvider):
 
             loop = asyncio.get_event_loop()
             _LAST_REQUEST_TIME = time.time()
-            closes = await loop.run_in_executor(
-                None, self._fetch_sync, key, days
-            )
+            
+            # Retry with exponential backoff on rate limit
+            max_retries = 3
+            closes = None
+            for attempt in range(max_retries):
+                try:
+                    closes = await loop.run_in_executor(
+                        None, self._fetch_sync, key, days
+                    )
+                    break
+                except Exception as e:
+                    if "rate" in str(e).lower() or "too many" in str(e).lower():
+                        if attempt < max_retries - 1:
+                            wait_time = (attempt + 1) * 2  # 2s, 4s, 6s
+                            logger.warning(f"yfinance rate limit for {key}, retrying in {wait_time}s...")
+                            await asyncio.sleep(wait_time)
+                        else:
+                            raise
+                    else:
+                        raise
 
             if not closes or len(closes) < 20:
                 logger.warning(
