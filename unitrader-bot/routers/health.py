@@ -2,12 +2,13 @@
 routers/health.py — Health check endpoints for Unitrader.
 
 Endpoints:
-    GET /health             — Basic application liveness
-    GET /health/database    — Database connectivity
-    GET /health/ai          — Anthropic Claude API connectivity
-    GET /health/email       — Resend email API connectivity
-    GET /health/payment     — Stripe API connectivity
-    GET /health/orchestrator — Agent performance metrics and shared memory summary
+    GET /health                  — Basic application liveness
+    GET /health/database         — Database connectivity
+    GET /health/database-ready   — Background DB table initialisation status
+    GET /health/ai               — Anthropic Claude API connectivity
+    GET /health/email            — Resend email API connectivity
+    GET /health/payment          — Stripe API connectivity
+    GET /health/orchestrator     — Agent performance metrics and shared memory summary
 """
 
 import logging
@@ -17,6 +18,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app_state
 from config import settings
 from database import get_db
 from schemas import HealthResponse, ServiceStatus
@@ -90,6 +92,35 @@ async def database_health(db: AsyncSession = Depends(get_db)):
         services={"database": db_status},
     )
 
+
+
+# ─────────────────────────────────────────────
+# GET /health/database-ready
+# ─────────────────────────────────────────────
+
+@router.get("/database-ready", response_model=HealthResponse, summary="Database table initialisation status")
+async def database_ready_health():
+    """Report whether the background database table initialisation task has completed.
+
+    Returns 200 with status 'ready' once tables are initialised, 'initialising'
+    while the background task is still running, or 'failed' if all retry attempts
+    were exhausted.  This endpoint never blocks — it reads in-memory state only.
+    """
+    if app_state.db_init_complete:
+        db_status = ServiceStatus(status="healthy", detail="tables_initialised")
+        overall = "healthy"
+    elif app_state.db_init_failed:
+        db_status = ServiceStatus(status="error", detail="init_failed_all_retries_exhausted")
+        overall = "degraded"
+    else:
+        db_status = ServiceStatus(status="initialising", detail="background_task_running")
+        overall = "initialising"
+
+    return HealthResponse(
+        status=overall,
+        timestamp=datetime.now(timezone.utc),
+        services={"database_init": db_status},
+    )
 
 
 # ─────────────────────────────────────────────
