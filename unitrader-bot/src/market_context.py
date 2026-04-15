@@ -391,6 +391,9 @@ async def get_user_asset_classes(
         )
     )
     accounts = result.scalars().all()
+    logger.info(f"[get_user_asset_classes] user_id={user_id}: Found {len(accounts)} active accounts")
+    for idx, a in enumerate(accounts):
+        logger.info(f"[get_user_asset_classes] Account {idx}: exchange={a.exchange}, asset_class={getattr(a, 'asset_class', None)}")
     seen: set[str] = set()
     classes: list[AssetClass] = []
     for a in accounts:
@@ -406,5 +409,7 @@ async def get_user_asset_classes(
             if ac.value not in seen:
                 seen.add(ac.value)
                 classes.append(ac)
+                logger.info(f"[get_user_asset_classes] Added asset class: {ac.value}")
+    logger.info(f"[get_user_asset_classes] user_id={user_id}: Returning classes={[c.value for c in classes]}")
     return classes
 

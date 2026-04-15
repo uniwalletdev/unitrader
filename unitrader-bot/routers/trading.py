@@ -963,6 +963,7 @@ async def get_user_context(
     from src.market_context import get_user_asset_classes, resolve_execution_venue
 
     classes = await get_user_asset_classes(current_user.id, db)
+    logger.info(f"[user-context] user_id={current_user.id}: get_user_asset_classes returned {[c.value for c in classes]}")
 
     if not classes:
         return {
@@ -994,6 +995,7 @@ async def get_user_context(
             db=db,
         )
 
+    logger.info(f"[user-context] user_id={current_user.id}: Returning available_asset_classes={[c.value for c in classes]}, asset_class_filter={asset_class}")
     return {
         "status": "success",
         "data": {
