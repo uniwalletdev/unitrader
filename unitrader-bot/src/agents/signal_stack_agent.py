@@ -302,5 +302,17 @@ class SignalStackAgent:
         except Exception:
             return None
 
+    def _volume_ratio(self, volume: float | None, avg_volume: float | None = None) -> float:
+        """Compute current volume relative to average.
+
+        If avg_volume is provided, returns volume / avg_volume.
+        Otherwise falls back to 1.0 (neutral).
+        """
+        if volume is None or volume <= 0:
+            return 0.0 if volume is not None and volume <= 0 else 1.0
+        if avg_volume and avg_volume > 0:
+            return round(volume / avg_volume, 2)
+        return 1.0
+
 
 signal_stack_agent = SignalStackAgent()
