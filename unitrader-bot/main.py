@@ -83,6 +83,7 @@ from src.services.unitrader_notifications import (
     get_unitrader_notification_engine,
     set_unitrader_notification_engine,
 )
+import app_state
 
 # ─────────────────────────────────────────────
 # Logging
@@ -222,16 +223,58 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 # Lifespan (startup / shutdown)
 # ─────────────────────────────────────────────
 
+
+# ─────────────────────────────────────────────
+# Database initialisation state (for /health/database-ready)
+# ─────────────────────────────────────────────
+# State is stored in app_state.py to avoid circular imports with health router.
+
+
+async def _db_init_task() -> None:
+    """Initialise database tables in the background with retry logic.
+
+    Runs independently of the lifespan startup sequence so the app can
+    pass healthchecks immediately while the (potentially slow) DDL runs.
+    Retries up to 10 times with exponential back-off (max 60 s between
+    attempts) before giving up.
+    """
+    max_attempts = 10
+    base_delay = 5  # seconds
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            logger.info("DB init background task: attempt %d/%d", attempt, max_attempts)
+            await create_tables()
+            app_state.db_init_complete = True
+            logger.info("DB init background task: tables initialised successfully")
+            return
+        except Exception as exc:
+            delay = min(base_delay * (2 ** (attempt - 1)), 60)
+            if attempt < max_attempts:
+                logger.warning(
+                    "DB init background task: attempt %d failed (%s) — retrying in %ds",
+                    attempt, exc, delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                app_state.db_init_failed = True
+                logger.error(
+                    "DB init background task: all %d attempts failed — "
+                    "tables may not exist; last error: %s",
+                    max_attempts, exc,
+                )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Run startup tasks before serving, cleanup after shutdown."""
     logger.info("Starting %s v%s (%s)", settings.app_name, settings.app_version, settings.environment)
 
-    # 1. Initialise database tables
-    try:
-        await create_tables()
-    except Exception as _db_exc:
-        logger.error("Database init failed (app will still start): %s", _db_exc)
+    # 1. Initialise database tables in the background so startup is non-blocking.
+    #    The app can serve requests (and pass healthchecks) immediately; DDL runs
+    #    asynchronously with retry logic.  Use GET /health/database-ready to check
+    #    whether initialisation has completed.
+    db_init_bg_task = asyncio.create_task(_db_init_task(), name="db_init")
 
     # 2. Verify Anthropic API key is present
     if settings.anthropic_api_key:
@@ -386,8 +429,9 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
 
-    # Background tasks
+    # Background tasks (including the db init task)
     for task in (
+        db_init_bg_task,
         trading_task,
         monitor_task,
         content_task,
@@ -404,6 +448,7 @@ async def lifespan(app: FastAPI):
     try:
         await asyncio.gather(
             *[t for t in (
+                db_init_bg_task,
                 trading_task,
                 monitor_task,
                 content_task,
