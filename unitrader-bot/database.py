@@ -174,6 +174,8 @@ async def create_tables() -> None:
             ("users", "clerk_user_id", "VARCHAR(128)"),
         ]
         async with engine.begin() as conn:
+            # Increase statement timeout for migrations (30 seconds)
+            await conn.exec_driver_sql("SET LOCAL statement_timeout = '30s'")
             for table, col, col_def in pg_new_columns:
                 await conn.exec_driver_sql(
                     f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {col_def}"
