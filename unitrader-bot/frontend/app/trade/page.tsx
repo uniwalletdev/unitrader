@@ -32,7 +32,22 @@ import {
   getCurrencySymbol,
   resolveTradingCurrency,
 } from "@/utils/currency";
-import { isStocksTradingAsset, isUsEquityRegularSessionEt } from "@/utils/usEquitySession";
+import { isUsEquityRegularSessionEt, isStocksTradingAsset } from "@/utils/usEquitySession";
+
+// Crypto bases for detection
+const CRYPTO_BASES = new Set([
+  "BTC", "XBT", "ETH", "SOL", "DOGE", "XDG", "ADA", "XRP", "AVAX", "MATIC",
+  "LINK", "DOT", "ATOM", "LTC", "BCH", "UNI", "AAVE", "BNB", "USDT", "USDC", "BUSD"
+]);
+
+function isCryptoAsset(symbol: string): boolean {
+  const s = symbol.trim().toUpperCase();
+  // Crypto format: BTC/USD, ETH-USDT, etc.
+  if (s.includes("/") || s.includes("-")) return true;
+  // Check if it's a known crypto base
+  const base = s.replace("USDT", "").replace("BUSD", "").replace("USDC", "");
+  return CRYPTO_BASES.has(base);
+}
 
 type TraderClass =
   | "complete_novice"
@@ -1250,9 +1265,11 @@ function TradePage() {
       setConfirmOpen(false);
       return;
     }
+    // Crypto markets are 24/7 - skip market hours check for crypto assets
+    const isCrypto = isCryptoAsset(sym);
     if (
       (analysis as { market_closed?: boolean } | null)?.market_closed === true ||
-      (isStocksTradingAsset(ex, sym) && !isUsEquityRegularSessionEt())
+      (!isCrypto && isStocksTradingAsset(ex, sym) && !isUsEquityRegularSessionEt())
     ) {
       setToast("Market is closed — no order was placed.");
       setConfirmOpen(false);
@@ -1544,29 +1561,74 @@ function TradePage() {
         </div>
       )}
 
-      {/* ── Manual trade (secondary, collapsible) ───────────────────────────── */}
-      <div className="rounded-2xl border border-dark-800 bg-dark-950 p-3">
-        <button
-          type="button"
-          onClick={() => setManualExpanded((v) => !v)}
-          className="w-full flex items-center justify-between rounded-xl px-3 py-2 text-sm font-semibold text-white hover:bg-dark-900 transition-colors"
-        >
-          <span>Search for a specific asset instead</span>
-          <span className="text-dark-400">{manualExpanded ? "▴" : "▾"}</span>
-        </button>
+      {/* ── Manual Trade (prominent section) ─────────────────────────────────── */}
+      <div className="rounded-2xl border border-dark-800 bg-dark-950 p-5">
+        <div className="mb-4 flex items-center justify-between">
+          <div>
+            <h2 className="text-base font-bold text-white">Manual Trade</h2>
+            <p className="text-xs text-dark-400 mt-1">Select an asset and analyse with AI</p>
+          </div>
+          <div className="rounded-lg border border-dark-800 bg-dark-900 px-3 py-2 text-xs">
+            <span className="text-dark-400">Account:</span>{" "}
+            <span className="font-semibold text-white">
+              {userContext?.active_venue?.display_label ||
+                (selectedAccount
+                  ? selectedAccount.account_label?.trim() ||
+                    `${String(selectedAccount.exchange).toUpperCase()} \u00b7 ${selectedAccount.is_paper ? "Paper" : "Live"}`
+                  : `${(activeAssetClass || "stocks").charAt(0).toUpperCase() + (activeAssetClass || "stocks").slice(1)} \u00b7 ${isPaper ? "Paper" : "Live"}`)}
+            </span>
+          </div>
+        </div>
 
-        {manualExpanded && (
-          <div className="mt-3">
-            <div className="mb-3 rounded-xl border border-dark-800 bg-dark-900 px-3 py-2 text-xs text-dark-200">
-              <span className="font-semibold text-white">
-                {userContext?.active_venue?.display_label ||
-                  (selectedAccount
-                    ? selectedAccount.account_label?.trim() ||
-                      `${String(selectedAccount.exchange).toUpperCase()} \u00b7 ${selectedAccount.is_paper ? "Paper" : "Live"}`
-                    : `${(activeAssetClass || "stocks").charAt(0).toUpperCase() + (activeAssetClass || "stocks").slice(1)} \u00b7 ${isPaper ? "Paper" : "Live"}`)}
-              </span>
-              <span className="text-dark-500"> — asset grid and symbol search follow this account.</span>
+        {/* Asset Class Selector (if multiple available) */}
+        {userContext && !userContext.no_exchange_connected && (userContext.available_asset_classes?.length ?? 0) > 1 && (
+          <div className="mb-4">
+            <div className="flex gap-2">
+              {userContext.available_asset_classes.map((ac) => {
+                const isActive = activeAssetClass === ac;
+                const icon = ac === "crypto" ? "₿" : ac === "forex" ? "£" : "📈";
+                return (
+                  <button
+                    key={ac}
+                    type="button"
+                    onClick={async () => {
+                      setActiveAssetClass(ac);
+                      try {
+                        const ucRes = await tradingApi.userContext({ asset_class: ac });
+                        const uc = ucRes.data?.data ?? ucRes.data;
+                        if (uc) {
+                          setUserContext(uc);
+                          if (uc.active_venue) {
+                            setSelectedTradingAccountId(uc.active_venue.trading_account_id);
+                            setExchange(uc.active_venue.exchange);
+                          }
+                        }
+                      } catch {
+                        // keep existing state
+                      }
+                    }}
+                    className={clsx(
+                      "flex-1 rounded-xl border px-4 py-3 text-sm font-semibold transition-all",
+                      isActive
+                        ? ac === "crypto"
+                          ? "border-orange-500/50 bg-orange-500/10 text-orange-400"
+                          : ac === "forex"
+                            ? "border-purple-500/50 bg-purple-500/10 text-purple-400"
+                            : "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
+                        : "border-dark-800 bg-dark-900 text-dark-400 hover:border-dark-700 hover:text-white"
+                    )}
+                  >
+                    <span className="mr-2">{icon}</span>
+                    {ac.charAt(0).toUpperCase() + ac.slice(1)}
+                  </button>
+                );
+              })}
             </div>
+          </div>
+        )}
+
+        {/* Layout sections */}
+        <div>
             {/* Layout A */}
             {layout === "A" && (
               <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -1851,8 +1913,7 @@ function TradePage() {
                 </div>
               </div>
             )}
-          </div>
-        )}
+        </div>
       </div>
 
       {/* Mandatory confirm modal for all layouts */}
