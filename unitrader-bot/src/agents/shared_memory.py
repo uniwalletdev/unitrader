@@ -21,6 +21,7 @@ from sqlalchemy import and_, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from config import settings as app_settings
 from models import Conversation, ExchangeAPIKey, Trade, TradingAccount, User, UserSettings
 from security import decrypt_api_key
 from src.integrations.exchange_client import get_exchange_client
@@ -560,7 +561,8 @@ class SharedMemory:
                 trust_ladder_stage=trust_ladder_stage,
                 trading_paused=bool(settings.trading_paused),
                 subscription_active=(
-                    user.subscription_tier == "pro"
+                    str(getattr(app_settings, "testing_mode", "false")).strip().lower() == "true"
+                    or user.subscription_tier in ("pro", "elite")
                     or (
                         user.trial_status == "active"
                         and user.trial_end_date
