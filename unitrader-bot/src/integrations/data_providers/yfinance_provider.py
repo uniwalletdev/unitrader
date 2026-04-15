@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 _historical_cache: dict[str, tuple[list[float], datetime]] = {}
 _CACHE_TTL_HOURS = 4
 
+# Rate limiting - prevent Yahoo Finance from blocking us
+_LAST_REQUEST_TIME: float = 0
+_MIN_REQUEST_INTERVAL: float = 0.3  # 300ms between requests
+
 
 class YFinanceProvider(MarketDataProvider):
 
@@ -37,7 +41,15 @@ class YFinanceProvider(MarketDataProvider):
                 return closes
 
         try:
+            # Rate limiting - wait if needed to avoid Yahoo Finance blocking
+            global _LAST_REQUEST_TIME
+            import time
+            elapsed = time.time() - _LAST_REQUEST_TIME
+            if elapsed < _MIN_REQUEST_INTERVAL:
+                await asyncio.sleep(_MIN_REQUEST_INTERVAL - elapsed)
+
             loop = asyncio.get_event_loop()
+            _LAST_REQUEST_TIME = time.time()
             closes = await loop.run_in_executor(
                 None, self._fetch_sync, key, days
             )
