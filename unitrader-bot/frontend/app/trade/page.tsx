@@ -857,9 +857,13 @@ function TradePage() {
       // Fetch execution venue context from resolver
       try {
         const ucRes = await tradingApi.userContext();
+        console.log("[userContext] Raw response:", ucRes.data);
         const uc = ucRes.data?.data ?? ucRes.data;
+        console.log("[userContext] Parsed uc:", uc);
         if (mounted && uc) {
           setUserContext(uc);
+          console.log("[userContext] available_asset_classes:", uc.available_asset_classes);
+          console.log("[userContext] active_venue:", uc.active_venue);
           if (uc.active_venue) {
             setActiveAssetClass(uc.active_venue.asset_class);
             // Let resolver override exchange/account if present
@@ -871,7 +875,8 @@ function TradePage() {
             }
           }
         }
-      } catch {
+      } catch (e) {
+        console.error("[userContext] Error fetching:", e);
         // Non-blocking — fall back to existing account-based logic
       }
     })();
@@ -1427,6 +1432,16 @@ function TradePage() {
           >
             Go to Exchanges
           </Link>
+        </div>
+      )}
+
+      {/* ── Debug: Show userContext state ──────────────────────────────────── */}
+      {userContext && (
+        <div className="mb-2 rounded-lg border border-yellow-800 bg-yellow-950/30 p-2 text-xs text-yellow-400">
+          <div>Debug: available_asset_classes = {JSON.stringify(userContext.available_asset_classes)}</div>
+          <div>Debug: length = {userContext.available_asset_classes?.length ?? 0}</div>
+          <div>Debug: no_exchange_connected = {String(userContext.no_exchange_connected)}</div>
+          <div>Debug: active_venue = {userContext.active_venue?.asset_class ?? 'null'}</div>
         </div>
       )}
 
