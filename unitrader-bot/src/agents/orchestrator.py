@@ -26,8 +26,20 @@ from src.agents.core.trading_agent import TradingAgent, validate_trade_amount
 from src.agents.core.conversation_agent import ConversationAgent
 from src.agents.sentiment_agent import SentimentAgent
 from src.agents.portfolio_agent import PortfolioAgent
+from src.agents.token_manager import get_token_manager
 
 logger = logging.getLogger(__name__)
+
+
+# Map orchestrator actions → agent priority class (for TokenManagementAgent).
+# Trading is p0 (real money — never throttled). Everything else is p1.
+_ACTION_TO_AGENT: dict[str, str] = {
+    "trade_analyze":    "trading",
+    "trade_execute":    "trading",
+    "chat":             "conversation",
+    "onboarding_chat":  "conversation",
+    "backtest":         "trading",
+}
 
 
 class MasterOrchestrator:
@@ -220,6 +232,31 @@ class MasterOrchestrator:
             user_id, db, trading_account_id=str(trading_account_id) if trading_account_id else None
         )
         logger.info(f"Orchestrator route for user {user_id}, action={action}")
+
+        # ── Token budget pre-check (non-P0 actions only) ─────────────────
+        agent_name = _ACTION_TO_AGENT.get(action, "conversation")
+        try:
+            tm = get_token_manager()
+            budget_status = await tm.check_budget(agent_name, db)
+            if not budget_status.get("allowed", True):
+                logger.warning(
+                    "Orchestrator: blocking action=%s agent=%s — %s",
+                    action, agent_name, budget_status.get("reason"),
+                )
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "token_budget_exceeded",
+                        "reason": budget_status.get("reason"),
+                        "pct_used": budget_status.get("pct_used"),
+                        "fallback_model": budget_status.get("fallback_model"),
+                    },
+                )
+        except HTTPException:
+            raise
+        except Exception as exc:
+            # Never fail-close on token-manager errors — log and continue.
+            logger.error("TokenManager.check_budget failed (continuing): %s", exc)
 
         try:
             if action == "trade_analyze":

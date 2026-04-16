@@ -54,6 +54,7 @@ from src.services.learning_hub import (
     get_active_instructions,
     record_agent_output,
 )
+from src.agents.token_manager import get_token_manager
 
 logger = logging.getLogger(__name__)
 
@@ -476,9 +477,16 @@ class TradingAgent:
             avg_loss=user_history.get("avg_loss", 0),
         )
 
+        import time as _time
+        _t0 = _time.monotonic()
+        _model = _CLAUDE_MODEL
+        _tokens_in = _tokens_out = _cached = 0
+        _status = "success"
+        _err: str | None = None
+        raw = ""
         try:
             response = await self._claude.messages.create(
-                model=_CLAUDE_MODEL,
+                model=_model,
                 max_tokens=512,
                 system=_SYSTEM_PROMPT.format(
                     ai_name=ai_name,
@@ -487,6 +495,12 @@ class TradingAgent:
                 messages=[{"role": "user", "content": prompt}],
             )
             raw = response.content[0].text.strip()
+            # Capture Anthropic usage for telemetry.
+            _usage = getattr(response, "usage", None)
+            if _usage is not None:
+                _tokens_in = int(getattr(_usage, "input_tokens", 0) or 0)
+                _tokens_out = int(getattr(_usage, "output_tokens", 0) or 0)
+                _cached = int(getattr(_usage, "cache_read_input_tokens", 0) or 0)
             decision = parse_claude_json(raw, context="trade decision")
             logger.info(
                 "Claude decision: %s (confidence=%s) for %s",
@@ -497,10 +511,34 @@ class TradingAgent:
             return decision
         except json.JSONDecodeError:
             logger.error("Claude returned non-JSON trade decision: %s", raw[:200])
+            _status = "error"
+            _err = "json_decode"
             return self._wait_decision("Claude response parse error")
         except Exception as exc:
             logger.error("Claude API call failed: %s", exc)
+            _status = "error"
+            _err = str(exc)
             return self._wait_decision(str(exc))
+        finally:
+            # Fire-and-forget log to TokenManagementAgent.
+            try:
+                _latency_ms = int((_time.monotonic() - _t0) * 1000)
+                asyncio.create_task(
+                    get_token_manager().log_call(
+                        agent_name="trading",
+                        task_type="trade_decision",
+                        model=_model,
+                        tokens_in=_tokens_in,
+                        tokens_out=_tokens_out,
+                        cached_tokens=_cached,
+                        latency_ms=_latency_ms,
+                        user_id=self.user_id,
+                        status=_status,
+                        error_message=_err,
+                    )
+                )
+            except Exception:
+                pass
 
     async def decide_with_context(
         self,

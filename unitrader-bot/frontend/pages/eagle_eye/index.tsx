@@ -3,8 +3,9 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Users, BarChart3, Search, ChevronLeft, ChevronRight,
   Shield, X, Check, AlertTriangle, TrendingUp, RefreshCw,
+  Cpu, DollarSign, Activity, Gauge,
 } from "lucide-react";
-import { adminApi } from "@/lib/api";
+import { adminApi, tokenApi } from "@/lib/api";
 
 // ─────────────────────────────────────────────
 // Types
@@ -75,6 +76,43 @@ interface Metrics {
   mrr_cents: number;
 }
 
+interface TokenBudgetInfo {
+  month_start: string;
+  month_end: string;
+  budget_total: number;
+  budget_used: number;
+  pct_used: number;
+  cost_total_usd: number;
+  status: string;
+  alerts: { "70": boolean; "85": boolean; "95": boolean };
+}
+interface AgentCostRow {
+  agent_name: string;
+  tokens: number;
+  cost_usd: number;
+  calls: number;
+}
+interface DashboardPayload {
+  budget: TokenBudgetInfo;
+  calls_last_24h: number;
+  agents_by_cost: AgentCostRow[];
+}
+interface RateRow {
+  agent_name: string;
+  priority: string;
+  tokens_per_minute: number;
+  tokens_used_this_minute: number;
+  last_reset: string | null;
+}
+interface ConsumptionPoint {
+  day: string;
+  agent_name: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  calls: number;
+}
+
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
@@ -114,7 +152,7 @@ export default function AdminPage() {
   const [authError, setAuthError] = useState("");
 
   // Tab state
-  const [tab, setTab] = useState<"users" | "metrics">("users");
+  const [tab, setTab] = useState<"users" | "metrics" | "tokens">("users");
 
   // User list
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -192,6 +230,38 @@ export default function AdminPage() {
   useEffect(() => {
     if (authed && tab === "metrics") fetchMetrics();
   }, [authed, tab, fetchMetrics]);
+
+  // ── Token dashboard ──────────────────────────
+  const [dashboard, setDashboard] = useState<DashboardPayload | null>(null);
+  const [rates, setRates] = useState<RateRow[]>([]);
+  const [consumption, setConsumption] = useState<ConsumptionPoint[]>([]);
+  const [tokensLoading, setTokensLoading] = useState(false);
+
+  const fetchTokens = useCallback(async () => {
+    setTokensLoading(true);
+    try {
+      const [d, r, c] = await Promise.all([
+        tokenApi.dashboard(),
+        tokenApi.rates(),
+        tokenApi.consumption(undefined, 7),
+      ]);
+      setDashboard(d.data);
+      setRates(r.data?.agents || []);
+      setConsumption(c.data?.series || []);
+    } catch (e) {
+      console.error("tokenApi fetch failed", e);
+    } finally {
+      setTokensLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (authed && tab === "tokens") {
+      fetchTokens();
+      const iv = setInterval(fetchTokens, 30_000); // auto-refresh every 30s
+      return () => clearInterval(iv);
+    }
+  }, [authed, tab, fetchTokens]);
 
   // ── User detail ──────────────────────────────
 
@@ -288,6 +358,12 @@ export default function AdminPage() {
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${tab === "metrics" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white"}`}
             >
               <BarChart3 size={14} /> Metrics
+            </button>
+            <button
+              onClick={() => setTab("tokens")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${tab === "tokens" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white"}`}
+            >
+              <Cpu size={14} /> Tokens
             </button>
           </div>
           <button
@@ -596,8 +672,289 @@ export default function AdminPage() {
             )}
           </div>
         )}
+
+        {/* ── Tokens tab ────────────────────────── */}
+        {tab === "tokens" && (
+          <div className="mx-auto max-w-6xl p-6">
+            <div className="mb-6 flex items-center justify-between">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Cpu size={18} /> Token Management
+              </h2>
+              <button
+                onClick={fetchTokens}
+                disabled={tokensLoading}
+                className="flex items-center gap-1.5 rounded-lg bg-dark-800 px-3 py-1.5 text-xs font-medium text-dark-300 hover:text-white disabled:opacity-50"
+              >
+                <RefreshCw size={12} className={tokensLoading ? "animate-spin" : ""} />
+                Refresh
+              </button>
+            </div>
+
+            {!dashboard && tokensLoading && (
+              <div className="py-12 text-center text-dark-400">Loading…</div>
+            )}
+
+            {dashboard && (
+              <>
+                {/* Budget gauge */}
+                <div className="mb-6 rounded-xl border border-dark-800 bg-dark-900 p-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Gauge size={16} className="text-brand-400" />
+                      <span className="text-sm font-semibold">Monthly Budget</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      {(["70", "85", "95"] as const).map((t) => (
+                        <span
+                          key={t}
+                          className={`rounded-full px-2 py-0.5 font-bold ${
+                            dashboard.budget.alerts[t]
+                              ? t === "95"
+                                ? "bg-red-500/20 text-red-400"
+                                : t === "85"
+                                ? "bg-orange-500/20 text-orange-400"
+                                : "bg-yellow-500/20 text-yellow-400"
+                              : "bg-dark-800 text-dark-500"
+                          }`}
+                        >
+                          {dashboard.budget.alerts[t] ? "●" : "○"} {t}%
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mb-2 flex items-end justify-between">
+                    <div>
+                      <div className="text-2xl font-bold">
+                        {(dashboard.budget.pct_used * 100).toFixed(1)}%
+                      </div>
+                      <div className="text-xs text-dark-400">
+                        {dashboard.budget.budget_used.toLocaleString()} /{" "}
+                        {dashboard.budget.budget_total.toLocaleString()} tokens
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xl font-bold text-brand-400">
+                        ${dashboard.budget.cost_total_usd.toFixed(2)}
+                      </div>
+                      <div className="text-xs text-dark-400">spent this month</div>
+                    </div>
+                  </div>
+
+                  <div className="h-3 w-full overflow-hidden rounded-full bg-dark-800">
+                    <div
+                      className={`h-full transition-all ${
+                        dashboard.budget.pct_used >= 0.95
+                          ? "bg-red-500"
+                          : dashboard.budget.pct_used >= 0.85
+                          ? "bg-orange-500"
+                          : dashboard.budget.pct_used >= 0.70
+                          ? "bg-yellow-500"
+                          : "bg-brand-500"
+                      }`}
+                      style={{ width: `${Math.min(100, dashboard.budget.pct_used * 100)}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Top agents + 24h stats */}
+                <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+                  <div className="md:col-span-2 rounded-xl border border-dark-800 bg-dark-900 p-5">
+                    <div className="mb-3 flex items-center gap-2">
+                      <DollarSign size={16} className="text-brand-400" />
+                      <span className="text-sm font-semibold">Top Agents by Cost (this month)</span>
+                    </div>
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-xs uppercase text-dark-500">
+                          <th className="pb-2">Agent</th>
+                          <th className="pb-2 text-right">Calls</th>
+                          <th className="pb-2 text-right">Tokens</th>
+                          <th className="pb-2 text-right">Cost</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {dashboard.agents_by_cost.length === 0 && (
+                          <tr>
+                            <td colSpan={4} className="py-4 text-center text-dark-500">
+                              No calls yet this month
+                            </td>
+                          </tr>
+                        )}
+                        {dashboard.agents_by_cost.map((a) => (
+                          <tr key={a.agent_name} className="border-t border-dark-800">
+                            <td className="py-2 font-mono text-xs">{a.agent_name}</td>
+                            <td className="py-2 text-right text-dark-300">{a.calls.toLocaleString()}</td>
+                            <td className="py-2 text-right text-dark-300">{a.tokens.toLocaleString()}</td>
+                            <td className="py-2 text-right font-bold text-brand-400">
+                              ${a.cost_usd.toFixed(4)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="rounded-xl border border-dark-800 bg-dark-900 p-5">
+                    <div className="mb-3 flex items-center gap-2">
+                      <Activity size={16} className="text-brand-400" />
+                      <span className="text-sm font-semibold">Last 24h</span>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <div className="text-2xl font-bold">{dashboard.calls_last_24h.toLocaleString()}</div>
+                        <div className="text-xs text-dark-400">API calls</div>
+                      </div>
+                      <div>
+                        <div className="text-lg font-semibold text-dark-200">
+                          {dashboard.budget.status}
+                        </div>
+                        <div className="text-xs text-dark-400">budget status</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Rate limits */}
+                <div className="mb-6 rounded-xl border border-dark-800 bg-dark-900 p-5">
+                  <div className="mb-3 text-sm font-semibold">Rate Limits (per minute)</div>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs uppercase text-dark-500">
+                        <th className="pb-2">Agent</th>
+                        <th className="pb-2">Priority</th>
+                        <th className="pb-2 text-right">Used</th>
+                        <th className="pb-2 text-right">Limit</th>
+                        <th className="pb-2">Usage</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rates.map((r) => {
+                        const pct = r.tokens_per_minute
+                          ? r.tokens_used_this_minute / r.tokens_per_minute
+                          : 0;
+                        const priorityColor =
+                          r.priority === "p0"
+                            ? "bg-red-500/20 text-red-400"
+                            : r.priority === "p1"
+                            ? "bg-yellow-500/20 text-yellow-400"
+                            : "bg-green-500/20 text-green-400";
+                        return (
+                          <tr key={r.agent_name} className="border-t border-dark-800">
+                            <td className="py-2 font-mono text-xs">{r.agent_name}</td>
+                            <td className="py-2">
+                              <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${priorityColor}`}>
+                                {r.priority}
+                              </span>
+                            </td>
+                            <td className="py-2 text-right text-dark-300">
+                              {r.tokens_used_this_minute.toLocaleString()}
+                            </td>
+                            <td className="py-2 text-right text-dark-300">
+                              {r.tokens_per_minute.toLocaleString()}
+                            </td>
+                            <td className="py-2 w-32">
+                              <div className="h-2 overflow-hidden rounded-full bg-dark-800">
+                                <div
+                                  className={`h-full ${pct >= 1 ? "bg-red-500" : pct >= 0.7 ? "bg-orange-500" : "bg-brand-500"}`}
+                                  style={{ width: `${Math.min(100, pct * 100)}%` }}
+                                />
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {/* 7-day chart */}
+                <div className="rounded-xl border border-dark-800 bg-dark-900 p-5">
+                  <div className="mb-3 flex items-center gap-2">
+                    <TrendingUp size={16} className="text-brand-400" />
+                    <span className="text-sm font-semibold">Daily Consumption (last 7 days)</span>
+                  </div>
+                  {consumption.length === 0 ? (
+                    <div className="py-8 text-center text-dark-500 text-sm">No data yet</div>
+                  ) : (
+                    <TokenConsumptionChart points={consumption} />
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Token consumption chart (inline SVG, zero deps)
+// ─────────────────────────────────────────────
+
+function TokenConsumptionChart({ points }: { points: ConsumptionPoint[] }) {
+  const byDay = new Map<string, number>();
+  for (const p of points) {
+    const d = p.day.slice(0, 10);
+    byDay.set(d, (byDay.get(d) || 0) + p.tokens_in + p.tokens_out);
+  }
+  const sorted = Array.from(byDay.entries()).sort(([a], [b]) => a.localeCompare(b));
+  const maxVal = Math.max(1, ...sorted.map(([, v]) => v));
+
+  const W = 600;
+  const H = 160;
+  const PAD = 30;
+  const barW = sorted.length > 0 ? (W - 2 * PAD) / sorted.length - 6 : 0;
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H + 30}`} className="w-full h-40">
+      {sorted.map(([day, val], i) => {
+        const h = (val / maxVal) * (H - 2 * PAD);
+        const x = PAD + i * ((W - 2 * PAD) / sorted.length);
+        const y = H - PAD - h;
+        return (
+          <g key={day}>
+            <rect
+              x={x}
+              y={y}
+              width={barW}
+              height={h}
+              fill="rgb(56, 189, 248)"
+              className="opacity-80 hover:opacity-100"
+            >
+              <title>{`${day}: ${val.toLocaleString()} tokens`}</title>
+            </rect>
+            <text
+              x={x + barW / 2}
+              y={H - PAD + 14}
+              textAnchor="middle"
+              fontSize="9"
+              fill="rgb(148, 163, 184)"
+            >
+              {day.slice(5)}
+            </text>
+            <text
+              x={x + barW / 2}
+              y={y - 3}
+              textAnchor="middle"
+              fontSize="9"
+              fill="rgb(203, 213, 225)"
+            >
+              {(val / 1000).toFixed(0)}k
+            </text>
+          </g>
+        );
+      })}
+      <line
+        x1={PAD}
+        y1={H - PAD}
+        x2={W - PAD}
+        y2={H - PAD}
+        stroke="rgb(51, 65, 85)"
+        strokeWidth={1}
+      />
+    </svg>
   );
 }
 

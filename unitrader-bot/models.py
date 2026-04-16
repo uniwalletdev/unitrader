@@ -1355,3 +1355,147 @@ class SignalScanRun(Base):
     duration_ms = Column(Integer)
     triggered_by = Column(String, default="scheduler")
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TOKEN MANAGEMENT (Phase 0C)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TokenAuditLog(Base):
+    """Immutable ledger of every Anthropic API call.
+
+    Written by TokenManagementAgent.log_call(). One row per LLM request.
+    Never mutated — queried for dashboards, billing, and cost analytics.
+    """
+
+    __tablename__ = "token_audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    task_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    tokens_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    tokens_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cached_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_usd: Mapped[float] = mapped_column(
+        Numeric(12, 8), nullable=False, default=0
+    )
+    latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cache_hit: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    user_id: Mapped[str | None] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    trade_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="success")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    context_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<TokenAuditLog id={self.id} agent={self.agent_name} "
+            f"tokens={self.tokens_in}+{self.tokens_out} cost=${self.cost_usd}>"
+        )
+
+
+class TokenBudget(Base):
+    """Monthly token budget allocation and alert state.
+
+    One row per month. Auto-seeded on first boot of a new month.
+    Alerts fire at 70/85/95% consumption.
+    """
+
+    __tablename__ = "token_budget"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    month_start: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), unique=True, nullable=False
+    )
+    month_end: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    budget_total: Mapped[int] = mapped_column(Integer, nullable=False, default=10_000_000)
+    budget_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_total_usd: Mapped[float] = mapped_column(
+        Numeric(12, 4), nullable=False, default=0
+    )
+    alert_70_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    alert_85_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    alert_95_sent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class AgentRateLimit(Base):
+    """Per-agent token-bucket rate limit.
+
+    Bucket resets every 60 seconds. Priority determines throttling behaviour:
+      p0 = never throttled (real money critical path: trading)
+      p1 = throttle requests if monthly budget > 85%
+      p2 = pause entirely if monthly budget > 85% (batch / non-urgent)
+    """
+
+    __tablename__ = "agent_rate_limits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_name: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+    tokens_per_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=2000)
+    tokens_used_this_minute: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    last_reset: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    priority: Mapped[str] = mapped_column(String(4), nullable=False, default="p1")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class TokenOptimizerConfig(Base):
+    """Per-agent context-window and fallback-model configuration."""
+
+    __tablename__ = "token_optimizer_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_name: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+    context_max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=4000)
+    trim_strategy: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="sliding_window"
+    )
+    fallback_model: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="claude-3-haiku-20240307"
+    )
+    enabled_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

@@ -451,3 +451,18 @@ export const adminApi = {
     api.get("/api/admin/metrics", { headers: adminHeaders() }),
 };
 
+// ── Token Management (admin) ─────────────────────────────────────────────────
+export const tokenApi = {
+  dashboard: () =>
+    api.get("/api/token/dashboard", { headers: adminHeaders() }),
+  budget: () =>
+    api.get("/api/token/budget", { headers: adminHeaders() }),
+  consumption: (agent?: string, days: number = 7) =>
+    api.get("/api/token/consumption", {
+      params: { agent, days },
+      headers: adminHeaders(),
+    }),
+  rates: () =>
+    api.get("/api/token/rates", { headers: adminHeaders() }),
+};
+

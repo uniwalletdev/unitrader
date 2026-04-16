@@ -56,6 +56,7 @@ from routers import exchanges as exchanges_router
 from routers import goals as goals_router
 from routers import signals as signals_router
 from routers import admin as admin_router
+from routers import token_management as token_management_router
 from routers.telegram_webhooks import (
     linking_router as telegram_linking_router,
     set_telegram_bot_service,
@@ -334,6 +335,7 @@ async def lifespan(app: FastAPI):
     if _disable_loops:
         trading_task = monitor_task = content_task = email_task = learning_task = goals_task = None
         full_auto_task = apex_selects_task = morning_briefing_task = daily_digest_task = None
+        token_budget_task = None
         logger.info("Background loops disabled (tests/CI mode)")
     else:
         trading_task  = asyncio.create_task(_trading_loop(),             name="trading_loop")
@@ -346,6 +348,7 @@ async def lifespan(app: FastAPI):
         apex_selects_task = asyncio.create_task(apex_selects_scanner_loop(), name="apex_selects_scanner_loop")
         morning_briefing_task = asyncio.create_task(morning_briefing_loop(), name="morning_briefing_loop")
         daily_digest_task = asyncio.create_task(daily_digest_loop(),     name="daily_digest_loop")
+        token_budget_task = asyncio.create_task(_token_budget_scheduler(), name="token_budget_scheduler")
         logger.info(
             "Background loops started "
             "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly, goals=weekly@8am, full_auto=30min, apex_selects=30min, morning_briefing=hourly, daily_digest=8am)"
@@ -442,6 +445,7 @@ async def lifespan(app: FastAPI):
         apex_selects_task,
         morning_briefing_task,
         daily_digest_task,
+        token_budget_task,
     ):
         if task is not None:
             task.cancel()
@@ -459,6 +463,7 @@ async def lifespan(app: FastAPI):
                 apex_selects_task,
                 morning_briefing_task,
                 daily_digest_task,
+                token_budget_task,
             ) if t is not None],
             return_exceptions=True,
         )
@@ -1367,6 +1372,47 @@ async def _learning_scheduler() -> None:
 
 
 # ─────────────────────────────────────────────
+# Background: Token-Budget Scheduler (every 10 min alerts, 60 s bucket flush)
+# ─────────────────────────────────────────────
+
+async def _token_budget_scheduler() -> None:
+    """Periodic TokenManagementAgent housekeeping.
+
+    • Every 10 minutes: check monthly budget thresholds (70/85/95%) and fire
+      Sentry alerts if crossed.
+    • Every 60 seconds: flush in-memory rate-limit bucket state to DB for
+      dashboard observability (non-blocking, best-effort).
+    """
+    from src.agents.token_manager import get_token_manager
+    from src.agents.token_manager.rate_limiter import get_rate_limiter
+
+    tm = get_token_manager()
+    rl = get_rate_limiter()
+
+    logger.info("Token-budget scheduler started (alerts=10min, bucket flush=60s)")
+    tick = 0
+    while True:
+        try:
+            # Every 60 s: flush bucket counters to DB.
+            async with AsyncSessionLocal() as db:
+                await rl.flush_to_db(db)
+
+            # Every 10 ticks (≈10 min): run alert check.
+            if tick % 10 == 0:
+                await tm.check_and_fire_alerts()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.error("Token-budget scheduler error: %s", exc, exc_info=True)
+
+        tick += 1
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            return
+
+
+# ─────────────────────────────────────────────
 # Background: Goals Scheduler (every Monday 8am UTC)
 # ─────────────────────────────────────────────
 
@@ -1574,6 +1620,7 @@ app.include_router(ws_router.router)
 app.include_router(goals_router.router)
 app.include_router(signals_router.router)
 app.include_router(admin_router.router)
+app.include_router(token_management_router.router)
 app.include_router(telegram_webhook_router)
 app.include_router(telegram_linking_router)
 app.include_router(whatsapp_webhook_router)
