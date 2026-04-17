@@ -11,6 +11,13 @@ import { adminApi, tokenApi, governanceApi } from "@/lib/api";
 // Types
 // ─────────────────────────────────────────────
 
+interface AdminNote {
+  id: string;
+  author: string;
+  body: string;
+  created_at: string;
+}
+
 interface UserRow {
   id: string;
   email: string;
@@ -213,6 +220,18 @@ export default function AdminPage() {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
 
+  // Phase 13 — backoffice actions
+  const [editTrialStatus, setEditTrialStatus] = useState("");
+  const [editTrialEnd, setEditTrialEnd] = useState("");
+  const [editIsActive, setEditIsActive] = useState(true);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [actionMsg, setActionMsg] = useState("");
+  const [panicReason, setPanicReason] = useState("");
+  const [panicConfirm, setPanicConfirm] = useState("");
+  const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [notes, setNotes] = useState<AdminNote[]>([]);
+  const [noteDraft, setNoteDraft] = useState("");
+
   // Metrics
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [metricsLoading, setMetricsLoading] = useState(false);
@@ -372,12 +391,25 @@ export default function AdminPage() {
   const openDetail = async (userId: string) => {
     setDetailLoading(true);
     setSaveMsg("");
+    setActionMsg("");
+    setPanicReason("");
+    setPanicConfirm("");
+    setDeleteConfirm("");
+    setNoteDraft("");
+    setNotes([]);
     try {
       const res = await adminApi.userDetail(userId);
       const d: UserDetail = res.data;
       setDetail(d);
       setEditTier(d.subscription_tier);
       setEditPaused(d.trading_paused);
+      setEditTrialStatus(d.trial_status);
+      setEditTrialEnd(d.trial_end_date ? d.trial_end_date.slice(0, 10) : "");
+      setEditIsActive(d.is_active);
+      // Fetch notes in parallel (non-blocking)
+      adminApi.listNotes(userId)
+        .then((r) => setNotes(r.data || []))
+        .catch(() => setNotes([]));
     } catch {
       setDetail(null);
     }
@@ -389,17 +421,113 @@ export default function AdminPage() {
     setSaving(true);
     setSaveMsg("");
     try {
-      const res = await adminApi.updateUser(detail.id, {
+      const payload: Record<string, unknown> = {
         subscription_tier: editTier,
         trading_paused: editPaused,
-      });
+        trial_status: editTrialStatus,
+        is_active: editIsActive,
+      };
+      if (editTrialEnd) {
+        payload.trial_end_date = new Date(editTrialEnd + "T23:59:59Z").toISOString();
+      }
+      const res = await adminApi.updateUser(detail.id, payload);
       setDetail(res.data);
       setSaveMsg("Saved");
-      fetchUsers(); // refresh list
+      fetchUsers();
     } catch {
       setSaveMsg("Save failed");
     }
     setSaving(false);
+  };
+
+  const refreshNotes = async (userId: string) => {
+    try {
+      const r = await adminApi.listNotes(userId);
+      setNotes(r.data || []);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handlePanicStop = async () => {
+    if (!detail) return;
+    if (panicConfirm !== "PANIC") {
+      setActionMsg('Type "PANIC" to confirm');
+      return;
+    }
+    if (!panicReason.trim()) {
+      setActionMsg("Reason is required");
+      return;
+    }
+    setActionBusy("panic");
+    setActionMsg("");
+    try {
+      const r = await adminApi.panicStop(detail.id, panicReason.trim());
+      setActionMsg(`Panic-stop: closed ${r.data.closed} trade(s), paused.`);
+      setPanicReason("");
+      setPanicConfirm("");
+      await refreshNotes(detail.id);
+      // Refresh detail to show paused flag
+      const upd = await adminApi.userDetail(detail.id);
+      setDetail(upd.data);
+      setEditPaused(upd.data.trading_paused);
+    } catch {
+      setActionMsg("Panic-stop failed");
+    }
+    setActionBusy(null);
+  };
+
+  const handleRevokeKey = async (keyId: string, exchangeLabel: string) => {
+    if (!detail) return;
+    const reason = window.prompt(`Revoke ${exchangeLabel} key? Reason:`);
+    if (!reason || !reason.trim()) return;
+    setActionBusy(`revoke-${keyId}`);
+    setActionMsg("");
+    try {
+      await adminApi.revokeExchangeKey(detail.id, keyId, reason.trim());
+      setActionMsg(`Revoked ${exchangeLabel}`);
+      await refreshNotes(detail.id);
+      const upd = await adminApi.userDetail(detail.id);
+      setDetail(upd.data);
+    } catch {
+      setActionMsg("Revoke failed");
+    }
+    setActionBusy(null);
+  };
+
+  const handleDelete = async () => {
+    if (!detail) return;
+    if (deleteConfirm !== "DELETE") {
+      setActionMsg('Type "DELETE" to confirm');
+      return;
+    }
+    setActionBusy("delete");
+    setActionMsg("");
+    try {
+      await adminApi.deleteUser(detail.id);
+      setActionMsg("User deleted");
+      setDetail(null);
+      setDeleteConfirm("");
+      fetchUsers();
+    } catch {
+      setActionMsg("Delete failed");
+    }
+    setActionBusy(null);
+  };
+
+  const handleAddNote = async () => {
+    if (!detail) return;
+    const text = noteDraft.trim();
+    if (!text) return;
+    setActionBusy("note");
+    try {
+      await adminApi.addNote(detail.id, text);
+      setNoteDraft("");
+      await refreshNotes(detail.id);
+    } catch {
+      setActionMsg("Add note failed");
+    }
+    setActionBusy(null);
   };
 
   // ── Login gate ───────────────────────────────
@@ -652,6 +780,15 @@ export default function AdminPage() {
                                 <span className={e.is_active ? "text-green-400" : "text-red-400"}>
                                   {e.is_active ? "Active" : "Inactive"}
                                 </span>
+                                {e.is_active && (
+                                  <button
+                                    onClick={() => handleRevokeKey(e.id, `${e.exchange} (${e.account_label})`)}
+                                    disabled={actionBusy === `revoke-${e.id}`}
+                                    className="rounded-md border border-red-900 bg-red-950/40 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-red-300 hover:bg-red-900/40 disabled:opacity-50"
+                                  >
+                                    {actionBusy === `revoke-${e.id}` ? "…" : "Revoke"}
+                                  </button>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -694,7 +831,31 @@ export default function AdminPage() {
                         </select>
                       </div>
 
-                      <div className="mb-5">
+                      <div className="mb-4 grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="mb-1 block text-xs text-dark-400">Trial Status</label>
+                          <select
+                            value={editTrialStatus}
+                            onChange={(e) => setEditTrialStatus(e.target.value)}
+                            className="w-full rounded-lg border border-dark-600 bg-dark-800 px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                          >
+                            <option value="active">Active</option>
+                            <option value="expired">Expired</option>
+                            <option value="converted">Converted</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs text-dark-400">Trial End Date</label>
+                          <input
+                            type="date"
+                            value={editTrialEnd}
+                            onChange={(e) => setEditTrialEnd(e.target.value)}
+                            className="w-full rounded-lg border border-dark-600 bg-dark-800 px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="mb-5 flex flex-col gap-2">
                         <label className="flex items-center gap-2 text-sm text-dark-300">
                           <input
                             type="checkbox"
@@ -703,6 +864,15 @@ export default function AdminPage() {
                             className="rounded border-dark-600"
                           />
                           Trading Paused
+                        </label>
+                        <label className="flex items-center gap-2 text-sm text-dark-300">
+                          <input
+                            type="checkbox"
+                            checked={editIsActive}
+                            onChange={(e) => setEditIsActive(e.target.checked)}
+                            className="rounded border-dark-600"
+                          />
+                          Account Active <span className="text-xs text-dark-500">(uncheck to suspend)</span>
                         </label>
                       </div>
 
@@ -720,6 +890,114 @@ export default function AdminPage() {
                           </span>
                         )}
                       </div>
+                    </div>
+
+                    {/* ── Danger zone ── */}
+                    <div className="mt-6 rounded-xl border border-red-900/60 bg-red-950/20 p-5">
+                      <h3 className="mb-4 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-red-400">
+                        <AlertTriangle size={14} /> Danger Zone
+                      </h3>
+
+                      {/* Panic stop */}
+                      <div className="mb-5">
+                        <div className="mb-2 text-sm font-semibold text-white">Panic-Stop Trading</div>
+                        <p className="mb-2 text-xs text-dark-400">
+                          Flattens all bot-opened open trades and sets <code className="text-dark-300">trading_paused=true</code>.
+                          Does not close manually-placed positions on the exchange.
+                        </p>
+                        <input
+                          type="text"
+                          placeholder="Reason (required)"
+                          value={panicReason}
+                          onChange={(e) => setPanicReason(e.target.value)}
+                          className="mb-2 w-full rounded-lg border border-dark-600 bg-dark-800 px-3 py-2 text-sm text-white outline-none focus:border-red-500"
+                        />
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            placeholder='Type "PANIC" to confirm'
+                            value={panicConfirm}
+                            onChange={(e) => setPanicConfirm(e.target.value)}
+                            className="w-40 rounded-lg border border-dark-600 bg-dark-800 px-3 py-2 text-xs text-white outline-none focus:border-red-500"
+                          />
+                          <button
+                            onClick={handlePanicStop}
+                            disabled={actionBusy === "panic" || panicConfirm !== "PANIC"}
+                            className="rounded-lg bg-red-700 px-4 py-2 text-xs font-bold uppercase tracking-wider text-white hover:bg-red-600 disabled:opacity-40"
+                          >
+                            {actionBusy === "panic" ? "Stopping…" : "Panic Stop"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Delete user */}
+                      <div>
+                        <div className="mb-2 text-sm font-semibold text-white">Delete User</div>
+                        <p className="mb-2 text-xs text-dark-400">
+                          Permanent. Cascades to trades, exchange keys, settings, and notes.
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            placeholder='Type "DELETE" to confirm'
+                            value={deleteConfirm}
+                            onChange={(e) => setDeleteConfirm(e.target.value)}
+                            className="w-40 rounded-lg border border-dark-600 bg-dark-800 px-3 py-2 text-xs text-white outline-none focus:border-red-500"
+                          />
+                          <button
+                            onClick={handleDelete}
+                            disabled={actionBusy === "delete" || deleteConfirm !== "DELETE"}
+                            className="rounded-lg border border-red-700 bg-transparent px-4 py-2 text-xs font-bold uppercase tracking-wider text-red-300 hover:bg-red-900/30 disabled:opacity-40"
+                          >
+                            {actionBusy === "delete" ? "Deleting…" : "Delete"}
+                          </button>
+                        </div>
+                      </div>
+
+                      {actionMsg && (
+                        <p className="mt-4 text-xs text-yellow-300">{actionMsg}</p>
+                      )}
+                    </div>
+
+                    {/* ── Support notes ── */}
+                    <div className="mt-6 rounded-xl border border-dark-700 bg-dark-900 p-5">
+                      <h3 className="mb-3 text-xs font-bold uppercase tracking-wider text-dark-500">
+                        Support Notes ({notes.length})
+                      </h3>
+
+                      <div className="mb-4 flex gap-2">
+                        <input
+                          type="text"
+                          placeholder="Add an internal note…"
+                          value={noteDraft}
+                          onChange={(e) => setNoteDraft(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && handleAddNote()}
+                          className="flex-1 rounded-lg border border-dark-600 bg-dark-800 px-3 py-2 text-sm text-white outline-none focus:border-brand-500"
+                        />
+                        <button
+                          onClick={handleAddNote}
+                          disabled={actionBusy === "note" || !noteDraft.trim()}
+                          className="btn-primary px-4 py-2 text-xs font-semibold disabled:opacity-50"
+                        >
+                          Add
+                        </button>
+                      </div>
+
+                      {notes.length === 0 ? (
+                        <p className="text-xs text-dark-500">No notes yet.</p>
+                      ) : (
+                        <div className="max-h-80 space-y-3 overflow-y-auto">
+                          {notes.map((n) => (
+                            <div key={n.id} className="rounded-lg border border-dark-800 bg-dark-950 p-3">
+                              <div className="mb-1 flex items-center justify-between text-[11px] uppercase tracking-wider text-dark-500">
+                                <span className="font-semibold text-dark-300">{n.author}</span>
+                                <span>{fmt(n.created_at)}</span>
+                              </div>
+                              <p className="whitespace-pre-wrap text-xs text-dark-200">{n.body}</p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

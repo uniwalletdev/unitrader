@@ -7,7 +7,7 @@ Sensitive fields (API keys) are stored encrypted via security.py.
 
 import uuid
 from uuid import uuid4
-from datetime import datetime, time
+from datetime import datetime, time, timezone
 
 from sqlalchemy import (
     JSON,
@@ -1601,3 +1601,36 @@ class BusinessSnapshot(Base):
     forecast_30d_cost_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     anomalies: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ADMIN USER NOTES (Phase 13)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class AdminUserNote(Base):
+    """Threaded internal support notes attached to a user.
+
+    Written by admins via Eagle Eye; also used as an audit trail for
+    destructive actions (panic-stop, key revoke, suspend).
+    """
+
+    __tablename__ = "admin_user_notes"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid4())
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    author: Mapped[str] = mapped_column(String(120), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
+        nullable=False,
+        index=True,
+    )

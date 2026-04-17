@@ -21,7 +21,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
 from database import get_db
-from models import Trade, TradingAccount, User, UserExternalAccount, UserSettings
+from models import (
+    AdminUserNote,
+    ExchangeAPIKey,
+    Trade,
+    TradingAccount,
+    User,
+    UserExternalAccount,
+    UserSettings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -361,7 +369,7 @@ async def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Delete the user (cascade will handle related records)
+    # Bulk delete — Postgres ON DELETE CASCADE on FKs handles dependents in prod.
     await db.execute(delete(User).where(User.id == user_id))
     await db.commit()
 
@@ -438,3 +446,201 @@ async def get_metrics(
         trades_this_month=trades_this_month,
         mrr_cents=mrr_cents,
     )
+
+
+# ─────────────────────────────────────────────
+# Phase 13 — Backoffice user operations
+# ─────────────────────────────────────────────
+
+class PanicStopRequest(BaseModel):
+    reason: str
+
+
+class PanicStopResponse(BaseModel):
+    closed: int
+    paused: bool
+
+
+class RevokeKeyRequest(BaseModel):
+    reason: str
+
+
+class AdminNote(BaseModel):
+    id: str
+    author: str
+    body: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CreateNoteRequest(BaseModel):
+    body: str
+
+
+async def _append_system_note(
+    db: AsyncSession, user_id: str, author: str, body: str
+) -> None:
+    """Add an audit-trail note without committing (caller commits)."""
+    db.add(AdminUserNote(user_id=user_id, author=author, body=body))
+
+
+def _author_from_header(x_admin_author: Optional[str]) -> str:
+    return (x_admin_author or "admin").strip()[:120] or "admin"
+
+
+# ── POST /api/admin/users/{user_id}/panic-stop ──────────────────────────────
+
+@router.post("/users/{user_id}/panic-stop", response_model=PanicStopResponse)
+async def panic_stop(
+    user_id: str,
+    body: PanicStopRequest,
+    _: None = Depends(require_admin),
+    x_admin_author: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Flatten all bot-opened open trades and pause auto-trading.
+
+    Does NOT call the exchange to close manually-placed positions — only
+    rows in `trades` with status='open' that we opened.
+    """
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    open_trades = (
+        await db.execute(
+            select(Trade).where(Trade.user_id == user_id, Trade.status == "open")
+        )
+    ).scalars().all()
+
+    closed = 0
+    now = datetime.now(timezone.utc)
+    for trade in open_trades:
+        trade.status = "closed"
+        trade.closed_at = now
+        closed += 1
+
+    # Pause auto-trade so it doesn't immediately re-open
+    user_settings = (
+        await db.execute(select(UserSettings).where(UserSettings.user_id == user_id))
+    ).scalar_one_or_none()
+    if user_settings:
+        user_settings.trading_paused = True
+
+    author = _author_from_header(x_admin_author)
+    await _append_system_note(
+        db, user_id, author,
+        f"PANIC STOP — closed {closed} open trade(s), trading_paused=true. Reason: {body.reason}",
+    )
+    await db.commit()
+
+    logger.warning(
+        "Admin PANIC STOP user=%s closed=%d reason=%s author=%s",
+        user_id, closed, body.reason, author,
+    )
+    return PanicStopResponse(closed=closed, paused=True)
+
+
+# ── POST /api/admin/users/{user_id}/exchange-keys/{key_id}/revoke ───────────
+
+@router.post("/users/{user_id}/exchange-keys/{key_id}/revoke")
+async def revoke_exchange_key(
+    user_id: str,
+    key_id: str,
+    body: RevokeKeyRequest,
+    _: None = Depends(require_admin),
+    x_admin_author: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Soft-disable an exchange API key and its linked trading account.
+
+    Encrypted blob is preserved for forensics; admin can re-activate later.
+    """
+    key = (
+        await db.execute(
+            select(ExchangeAPIKey).where(
+                ExchangeAPIKey.id == key_id,
+                ExchangeAPIKey.user_id == user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if not key:
+        raise HTTPException(status_code=404, detail="Exchange key not found for user")
+
+    key.is_active = False
+
+    account_label = None
+    if key.trading_account_id:
+        account = (
+            await db.execute(
+                select(TradingAccount).where(TradingAccount.id == key.trading_account_id)
+            )
+        ).scalar_one_or_none()
+        if account:
+            account.is_active = False
+            account_label = account.account_label
+
+    author = _author_from_header(x_admin_author)
+    label_suffix = f" ({account_label})" if account_label else ""
+    await _append_system_note(
+        db, user_id, author,
+        f"Exchange key revoked: {key.exchange}{label_suffix}. Reason: {body.reason}",
+    )
+    await db.commit()
+
+    logger.warning(
+        "Admin REVOKE KEY user=%s key=%s exchange=%s reason=%s author=%s",
+        user_id, key_id, key.exchange, body.reason, author,
+    )
+    return {"revoked": True, "key_id": key_id}
+
+
+# ── GET /api/admin/users/{user_id}/notes ────────────────────────────────────
+
+@router.get("/users/{user_id}/notes", response_model=list[AdminNote])
+async def list_notes(
+    user_id: str,
+    _: None = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return the newest 100 admin notes for a user (newest first)."""
+    rows = (
+        await db.execute(
+            select(AdminUserNote)
+            .where(AdminUserNote.user_id == user_id)
+            .order_by(AdminUserNote.created_at.desc())
+            .limit(100)
+        )
+    ).scalars().all()
+    return [AdminNote.model_validate(r) for r in rows]
+
+
+# ── POST /api/admin/users/{user_id}/notes ───────────────────────────────────
+
+@router.post("/users/{user_id}/notes", response_model=AdminNote)
+async def add_note(
+    user_id: str,
+    body: CreateNoteRequest,
+    _: None = Depends(require_admin),
+    x_admin_author: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    text = (body.body or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Note body cannot be empty")
+
+    # Verify the user exists (avoid orphan notes on FK-less backends)
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    note = AdminUserNote(
+        user_id=user_id,
+        author=_author_from_header(x_admin_author),
+        body=text,
+    )
+    db.add(note)
+    await db.commit()
+    await db.refresh(note)
+    return AdminNote.model_validate(note)

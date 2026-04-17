@@ -437,7 +437,10 @@ export interface PerformanceData {
 // ── Admin ────────────────────────────────────────────────────────────────────
 const adminHeaders = () => {
   const secret = typeof window !== "undefined" ? localStorage.getItem("admin_secret") : "";
-  return { "X-Admin-Secret": secret || "" };
+  const author = typeof window !== "undefined" ? localStorage.getItem("admin_author") || "" : "";
+  const h: Record<string, string> = { "X-Admin-Secret": secret || "" };
+  if (author) h["X-Admin-Author"] = author;
+  return h;
 };
 
 export const adminApi = {
@@ -447,8 +450,23 @@ export const adminApi = {
     api.get(`/api/admin/users/${userId}`, { headers: adminHeaders() }),
   updateUser: (userId: string, data: { subscription_tier?: string; trial_status?: string; trial_end_date?: string; trading_paused?: boolean; is_active?: boolean }) =>
     api.patch(`/api/admin/users/${userId}`, data, { headers: adminHeaders() }),
+  deleteUser: (userId: string) =>
+    api.delete(`/api/admin/users/${userId}`, { headers: adminHeaders() }),
   metrics: () =>
     api.get("/api/admin/metrics", { headers: adminHeaders() }),
+  // ── Phase 13 backoffice ops ──
+  panicStop: (userId: string, reason: string) =>
+    api.post(`/api/admin/users/${userId}/panic-stop`, { reason }, { headers: adminHeaders() }),
+  revokeExchangeKey: (userId: string, keyId: string, reason: string) =>
+    api.post(
+      `/api/admin/users/${userId}/exchange-keys/${keyId}/revoke`,
+      { reason },
+      { headers: adminHeaders() },
+    ),
+  listNotes: (userId: string) =>
+    api.get(`/api/admin/users/${userId}/notes`, { headers: adminHeaders() }),
+  addNote: (userId: string, body: string) =>
+    api.post(`/api/admin/users/${userId}/notes`, { body }, { headers: adminHeaders() }),
 };
 
 // ── Token Management (admin) ─────────────────────────────────────────────────
