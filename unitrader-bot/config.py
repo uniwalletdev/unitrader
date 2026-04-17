@@ -204,6 +204,10 @@ class Settings(BaseSettings):
     # ─────────────────────────────────────────────
     telegram_bot_token:    str = ""
     telegram_bot_username: str = "unitrader_bot"  # e.g. unitraderAI_bot (no @)
+    # Chat id that receives governance approval prompts (Phase 12). Only this
+    # chat may approve/deny actions via Telegram inline buttons. Leave blank
+    # to disable Telegram approvals and use the Eagle Eye UI only.
+    telegram_admin_chat_id: str = ""
     # Public HTTPS URL used for Telegram webhook registration and logs.
     # Production (Railway): https://api.unitrader.ai  (set API_BASE_URL in Railway)
     # Development: use ngrok — ngrok http 8000 → copy the https URL

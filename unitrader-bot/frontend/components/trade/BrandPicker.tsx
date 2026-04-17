@@ -644,7 +644,7 @@ export default function BrandPicker({
       }
       setSearchLoading(true);
       try {
-        const exForSearch = (resolvedExchange ?? exchange ?? "alpaca").toLowerCase();
+        const exForSearch = (exchange ?? resolvedExchange ?? "alpaca").toLowerCase();
         const res = await api.get("/api/trading/symbol-search", {
           params: {
             q: trimmed,

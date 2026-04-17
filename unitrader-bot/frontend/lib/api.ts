@@ -466,3 +466,26 @@ export const tokenApi = {
     api.get("/api/token/rates", { headers: adminHeaders() }),
 };
 
+// ── Data Governance (admin, Phase 12) ────────────────────────────────────────
+export const governanceApi = {
+  dashboard: () =>
+    api.get("/api/governance/dashboard", { headers: adminHeaders() }),
+  latest: () =>
+    api.get("/api/governance/latest", { headers: adminHeaders() }),
+  snapshots: (days: number = 30) =>
+    api.get("/api/governance/snapshots", { params: { days }, headers: adminHeaders() }),
+  approvals: (status?: string) =>
+    api.get("/api/governance/approvals", {
+      params: status ? { status } : {},
+      headers: adminHeaders(),
+    }),
+  approve: (id: string) =>
+    api.post(`/api/governance/approvals/${id}/approve`, {}, { headers: adminHeaders() }),
+  deny: (id: string, reason?: string) =>
+    api.post(`/api/governance/approvals/${id}/deny`, { reason }, { headers: adminHeaders() }),
+  egress: (days: number = 7) =>
+    api.get("/api/governance/egress", { params: { days }, headers: adminHeaders() }),
+  allowlist: () =>
+    api.get("/api/governance/allowlist", { headers: adminHeaders() }),
+};
+

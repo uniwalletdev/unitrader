@@ -1499,3 +1499,105 @@ class TokenOptimizerConfig(Base):
         onupdate=func.now(),
         nullable=False,
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DATA GOVERNANCE + BUSINESS OPS (Phase 12)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class EgressAllowlist(Base):
+    """Domains that are allowed to receive outbound HTTP traffic.
+
+    Rows with `category='must_approve'` will trigger an approval workflow
+    (BusinessApproval row) before the request is actually sent.
+    """
+
+    __tablename__ = "egress_allowlist"
+
+    domain: Mapped[str] = mapped_column(String(255), primary_key=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)  # read_only / read_write / must_approve
+    purpose: Mapped[str] = mapped_column(Text, nullable=False)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    added_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
+class EgressAuditLog(Base):
+    """Every outbound HTTP call routed through src/security/egress.py."""
+
+    __tablename__ = "egress_audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ts: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    domain: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    method: Mapped[str] = mapped_column(String(16), nullable=False)
+    path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    purpose: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    bytes_out: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    bytes_in: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    approval_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class BusinessApproval(Base):
+    """Approval queue for any egress or sensitive external action.
+
+    State machine: pending → approved|denied → executed|failed
+    Approvals auto-expire (`status='expired'`) after ttl_expires_at.
+    """
+
+    __tablename__ = "business_approvals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    requested_by_agent: Mapped[str] = mapped_column(String(64), nullable=False)
+    action_category: Mapped[str] = mapped_column(String(32), nullable=False)
+    # ^ egress | hmrc_filing | investigation | external_notification | data_export
+    target_domain: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    action_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    request_payload: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False, index=True)
+    # ^ pending | approved | denied | executed | failed | expired
+    result_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    notified_via: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_via: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    denial_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ttl_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class BusinessSnapshot(Base):
+    """Hourly snapshot of business metrics.
+
+    All data is computed locally from allowlisted read-only API calls.
+    No metric ever leaves this database.
+    """
+
+    __tablename__ = "business_snapshots"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    snapshot_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False, index=True
+    )
+    mrr_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    active_subs: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    new_subs_30d: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    cancelled_subs_30d: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    churn_rate_pct: Mapped[float] = mapped_column(Numeric(5, 2), default=0, nullable=False)
+    costs_total_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    costs_breakdown: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+    margin_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    forecast_30d_mrr_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    forecast_30d_cost_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    anomalies: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)

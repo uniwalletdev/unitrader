@@ -19,6 +19,7 @@
 11. [Running the Project](#11-running-the-project)
 12. [Deployment Guide](#12-deployment-guide)
 13. [Known Fixes Applied](#13-known-fixes-applied)
+14. [Exchange API Reference](#14-exchange-api-reference)
 
 ---
 
@@ -787,6 +788,37 @@ These issues were discovered and fixed during development testing:
 | `claude-3-opus-20240229` → 404 | Model deprecated by Anthropic | Switched all agents to `claude-3-haiku-20240307` |
 | Sync Claude in async endpoints | `asyncio.to_thread` with old sync client | Switched all agents to `AsyncAnthropic` and direct `await` |
 | Port 8000 in use on restart | Old server process not fully terminated | Kill with `netstat -ano | findstr :8000` before restart |
+
+---
+
+## 14. Exchange API Reference
+
+### Alpaca Markets
+
+**Official Documentation:**
+- [Getting Started Guide](https://docs.alpaca.markets/docs/getting-started) - Account setup, API keys, and basic concepts
+- [Account Activities](https://docs.alpaca.markets/docs/account-activities) - Portfolio history, transactions, and P&L tracking
+
+**Supported Features in Unitrader:**
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Paper Trading | ✅ Full | Use `paper-api.alpaca.markets` endpoint |
+| Live Trading | ✅ Full | Use `api.alpaca.markets` endpoint |
+| Stocks | ✅ Full | US equities only |
+| Crypto | ✅ Full | BTC, ETH, and other supported pairs |
+| Fractional Shares | ✅ Supported | Minimum $1 per order |
+| Market Orders | ✅ Full | Immediate execution |
+| Limit Orders | ✅ Full | Price-specified execution |
+| Stop Orders | ✅ Full | Stop-loss and stop-limit |
+| Extended Hours | ⚠️ Limited | Regular market hours recommended |
+
+**API Key Format:**
+- **Paper Keys:** Start with `PK` (public) and contain a secret
+- **Live Keys:** Different format, requires real account verification
+
+**Rate Limits:**
+- 200 requests/minute for most endpoints
+- 500 requests/minute for market data
 
 ---
 

@@ -3,9 +3,9 @@ import { useState, useEffect, useCallback } from "react";
 import {
   Users, BarChart3, Search, ChevronLeft, ChevronRight,
   Shield, X, Check, AlertTriangle, TrendingUp, RefreshCw,
-  Cpu, DollarSign, Activity, Gauge,
+  Cpu, DollarSign, Activity, Gauge, Lock, Globe,
 } from "lucide-react";
-import { adminApi, tokenApi } from "@/lib/api";
+import { adminApi, tokenApi, governanceApi } from "@/lib/api";
 
 // ─────────────────────────────────────────────
 // Types
@@ -113,6 +113,49 @@ interface ConsumptionPoint {
   calls: number;
 }
 
+// ── Phase 12: Governance types ───────────────────────────────────────────────
+interface BusinessSnap {
+  id: string;
+  snapshot_at: string;
+  mrr_cents: number;
+  active_subs: number;
+  new_subs_30d: number;
+  cancelled_subs_30d: number;
+  churn_rate_pct: number;
+  costs_total_cents: number;
+  costs_breakdown: Record<string, number>;
+  margin_cents: number;
+  forecast_30d_mrr_cents: number | null;
+  forecast_30d_cost_cents: number | null;
+  anomalies: Array<{ metric: string; z_score: number; severity: string }>;
+}
+interface ApprovalItem {
+  id: string;
+  created_at: string;
+  requested_by_agent: string;
+  action_category: string;
+  target_domain: string | null;
+  action_summary: string;
+  request_payload: Record<string, unknown>;
+  status: string;
+  notified_via: string[];
+  approved_at: string | null;
+  approved_via: string | null;
+  denial_reason: string | null;
+  ttl_expires_at: string;
+}
+interface EgressByDomain {
+  domain: string;
+  calls: number;
+  bytes_out: number;
+  bytes_in: number;
+}
+interface GovernanceDash {
+  latest: BusinessSnap | null;
+  pending_approvals: number;
+  egress_calls_24h: number;
+}
+
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
@@ -152,7 +195,7 @@ export default function AdminPage() {
   const [authError, setAuthError] = useState("");
 
   // Tab state
-  const [tab, setTab] = useState<"users" | "metrics" | "tokens">("users");
+  const [tab, setTab] = useState<"users" | "metrics" | "tokens" | "governance">("users");
 
   // User list
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -263,6 +306,67 @@ export default function AdminPage() {
     }
   }, [authed, tab, fetchTokens]);
 
+  // ── Governance (Phase 12) ────────────────────
+  const [govDash, setGovDash] = useState<GovernanceDash | null>(null);
+  const [approvals, setApprovals] = useState<ApprovalItem[]>([]);
+  const [approvalFilter, setApprovalFilter] = useState<string>("pending");
+  const [egressByDomain, setEgressByDomain] = useState<EgressByDomain[]>([]);
+  const [snapshots, setSnapshots] = useState<BusinessSnap[]>([]);
+  const [govLoading, setGovLoading] = useState(false);
+  const [govActionBusy, setGovActionBusy] = useState<string>("");
+
+  const fetchGovernance = useCallback(async () => {
+    setGovLoading(true);
+    try {
+      const [d, a, e, s] = await Promise.all([
+        governanceApi.dashboard(),
+        governanceApi.approvals(approvalFilter || undefined),
+        governanceApi.egress(7),
+        governanceApi.snapshots(30),
+      ]);
+      setGovDash(d.data);
+      setApprovals(a.data?.items || []);
+      setEgressByDomain(e.data?.by_domain || []);
+      setSnapshots(s.data?.series || []);
+    } catch (err) {
+      console.error("governanceApi fetch failed", err);
+    } finally {
+      setGovLoading(false);
+    }
+  }, [approvalFilter]);
+
+  useEffect(() => {
+    if (authed && tab === "governance") {
+      fetchGovernance();
+      const iv = setInterval(fetchGovernance, 30_000);
+      return () => clearInterval(iv);
+    }
+  }, [authed, tab, fetchGovernance]);
+
+  const handleApprove = async (id: string) => {
+    setGovActionBusy(id);
+    try {
+      await governanceApi.approve(id);
+      await fetchGovernance();
+    } catch (err) {
+      console.error("approve failed", err);
+    } finally {
+      setGovActionBusy("");
+    }
+  };
+  const handleDeny = async (id: string) => {
+    const reason = window.prompt("Denial reason (optional):") || "";
+    setGovActionBusy(id);
+    try {
+      await governanceApi.deny(id, reason);
+      await fetchGovernance();
+    } catch (err) {
+      console.error("deny failed", err);
+    } finally {
+      setGovActionBusy("");
+    }
+  };
+
   // ── User detail ──────────────────────────────
 
   const openDetail = async (userId: string) => {
@@ -364,6 +468,12 @@ export default function AdminPage() {
               className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${tab === "tokens" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white"}`}
             >
               <Cpu size={14} /> Tokens
+            </button>
+            <button
+              onClick={() => setTab("governance")}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition ${tab === "governance" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white"}`}
+            >
+              <Lock size={14} /> Governance
             </button>
           </div>
           <button
@@ -884,6 +994,205 @@ export default function AdminPage() {
             )}
           </div>
         )}
+
+        {/* ── Governance tab (Phase 12) ─────────── */}
+        {tab === "governance" && (
+          <div className="mx-auto max-w-6xl p-6">
+            <div className="mb-6 flex items-center justify-between">
+              <h2 className="text-lg font-bold flex items-center gap-2">
+                <Lock size={18} /> Data Governance
+              </h2>
+              <button
+                onClick={fetchGovernance}
+                disabled={govLoading}
+                className="flex items-center gap-1.5 rounded-lg bg-dark-800 px-3 py-1.5 text-xs font-medium text-dark-300 hover:text-white disabled:opacity-50"
+              >
+                <RefreshCw size={12} className={govLoading ? "animate-spin" : ""} />
+                Refresh
+              </button>
+            </div>
+
+            {/* Top cards */}
+            <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-4">
+              <MetricCard
+                label="MRR"
+                value={govDash?.latest ? fmtMoney(govDash.latest.mrr_cents) : "—"}
+                accent
+              />
+              <MetricCard
+                label="Costs (month)"
+                value={govDash?.latest ? fmtMoney(govDash.latest.costs_total_cents) : "—"}
+              />
+              <MetricCard
+                label="Margin"
+                value={govDash?.latest ? fmtMoney(govDash.latest.margin_cents) : "—"}
+              />
+              <MetricCard
+                label="Churn"
+                value={govDash?.latest ? `${govDash.latest.churn_rate_pct}%` : "—"}
+              />
+            </div>
+
+            {/* Anomaly banner */}
+            {govDash?.latest && govDash.latest.anomalies && govDash.latest.anomalies.length > 0 && (
+              <div className="mb-6 rounded-xl border border-orange-500/40 bg-orange-500/10 p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-orange-400">
+                  <AlertTriangle size={16} /> {govDash.latest.anomalies.length} anomaly detected
+                </div>
+                <ul className="mt-2 space-y-1 text-xs text-dark-300">
+                  {govDash.latest.anomalies.map((a, i) => (
+                    <li key={i}>
+                      <span className="font-mono">{a.metric}</span> — z={a.z_score.toFixed(2)} ({a.severity})
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Pending approvals */}
+            <div className="mb-6 rounded-xl border border-dark-800 bg-dark-900 p-5">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Shield size={16} className="text-brand-400" />
+                  <span className="text-sm font-semibold">Approvals</span>
+                  {govDash && govDash.pending_approvals > 0 && (
+                    <span className="rounded-full bg-yellow-500/20 px-2 py-0.5 text-[10px] font-bold text-yellow-400">
+                      {govDash.pending_approvals} pending
+                    </span>
+                  )}
+                </div>
+                <select
+                  value={approvalFilter}
+                  onChange={(e) => setApprovalFilter(e.target.value)}
+                  className="rounded-lg bg-dark-800 px-2 py-1 text-xs text-dark-200 focus:outline-none"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="approved">Approved</option>
+                  <option value="denied">Denied</option>
+                  <option value="expired">Expired</option>
+                  <option value="">All</option>
+                </select>
+              </div>
+
+              {approvals.length === 0 ? (
+                <div className="py-6 text-center text-sm text-dark-500">
+                  No approvals in this bucket.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {approvals.map((a) => (
+                    <div key={a.id} className="rounded-lg border border-dark-800 bg-dark-950 p-3">
+                      <div className="mb-2 flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="font-mono text-dark-400">{a.requested_by_agent}</span>
+                            <span className="rounded-full bg-dark-800 px-2 py-0.5 text-[10px] uppercase text-dark-400">
+                              {a.action_category}
+                            </span>
+                            {a.target_domain && (
+                              <span className="rounded-full bg-brand-500/20 px-2 py-0.5 text-[10px] text-brand-400">
+                                {a.target_domain}
+                              </span>
+                            )}
+                          </div>
+                          <p className="mt-1 break-all text-sm text-dark-200">{a.action_summary}</p>
+                          <div className="mt-1 text-[11px] text-dark-500">
+                            Created {fmt(a.created_at)} · TTL {fmt(a.ttl_expires_at)}
+                            {a.notified_via.length > 0 && ` · notified ${a.notified_via.join(", ")}`}
+                            {a.approved_via && ` · ${a.status} via ${a.approved_via}`}
+                            {a.denial_reason && ` · reason: "${a.denial_reason}"`}
+                          </div>
+                        </div>
+                        {a.status === "pending" ? (
+                          <div className="flex gap-2">
+                            <button
+                              onClick={() => handleApprove(a.id)}
+                              disabled={govActionBusy === a.id}
+                              className="flex items-center gap-1 rounded-lg bg-green-500/20 px-3 py-1 text-xs font-semibold text-green-400 hover:bg-green-500/30 disabled:opacity-50"
+                            >
+                              <Check size={12} /> Approve
+                            </button>
+                            <button
+                              onClick={() => handleDeny(a.id)}
+                              disabled={govActionBusy === a.id}
+                              className="flex items-center gap-1 rounded-lg bg-red-500/20 px-3 py-1 text-xs font-semibold text-red-400 hover:bg-red-500/30 disabled:opacity-50"
+                            >
+                              <X size={12} /> Deny
+                            </button>
+                          </div>
+                        ) : (
+                          <span className={`text-[10px] font-bold uppercase ${
+                            a.status === "approved" ? "text-green-400" :
+                            a.status === "denied"   ? "text-red-400" :
+                            a.status === "expired"  ? "text-dark-500" : "text-yellow-400"
+                          }`}>
+                            {a.status}
+                          </span>
+                        )}
+                      </div>
+                      {a.request_payload && (
+                        <details className="mt-1 text-xs text-dark-500">
+                          <summary className="cursor-pointer hover:text-dark-300">Payload</summary>
+                          <pre className="mt-1 max-h-40 overflow-auto rounded bg-dark-950 p-2 text-[11px] text-dark-300">
+                            {JSON.stringify(a.request_payload, null, 2)}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Egress audit */}
+            <div className="mb-6 rounded-xl border border-dark-800 bg-dark-900 p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <Globe size={16} className="text-brand-400" />
+                <span className="text-sm font-semibold">Egress (last 7 days)</span>
+                <span className="ml-auto text-xs text-dark-500">
+                  {govDash?.egress_calls_24h ?? 0} calls in 24h
+                </span>
+              </div>
+              {egressByDomain.length === 0 ? (
+                <div className="py-4 text-center text-sm text-dark-500">No outbound calls yet.</div>
+              ) : (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase text-dark-500">
+                      <th className="pb-2">Domain</th>
+                      <th className="pb-2 text-right">Calls</th>
+                      <th className="pb-2 text-right">Bytes Out</th>
+                      <th className="pb-2 text-right">Bytes In</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {egressByDomain.slice(0, 20).map((e) => (
+                      <tr key={e.domain} className="border-t border-dark-800">
+                        <td className="py-2 font-mono text-xs">{e.domain}</td>
+                        <td className="py-2 text-right text-dark-300">{e.calls.toLocaleString()}</td>
+                        <td className="py-2 text-right text-dark-400">{e.bytes_out.toLocaleString()}</td>
+                        <td className="py-2 text-right text-dark-400">{e.bytes_in.toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* MRR / margin chart */}
+            <div className="rounded-xl border border-dark-800 bg-dark-900 p-5">
+              <div className="mb-3 flex items-center gap-2">
+                <TrendingUp size={16} className="text-brand-400" />
+                <span className="text-sm font-semibold">MRR & Margin (last 30 days)</span>
+              </div>
+              {snapshots.length === 0 ? (
+                <div className="py-8 text-center text-dark-500 text-sm">No snapshots yet</div>
+              ) : (
+                <BusinessTrendChart snapshots={snapshots} />
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </>
   );
@@ -957,6 +1266,81 @@ function TokenConsumptionChart({ points }: { points: ConsumptionPoint[] }) {
     </svg>
   );
 }
+
+// ─────────────────────────────────────────────
+// Business trend chart (MRR / costs / margin, inline SVG)
+// ─────────────────────────────────────────────
+
+function BusinessTrendChart({ snapshots }: { snapshots: BusinessSnap[] }) {
+  // Downsample to one point per day (take the latest snapshot of each day).
+  const byDay = new Map<string, BusinessSnap>();
+  for (const s of snapshots) {
+    const d = s.snapshot_at.slice(0, 10);
+    byDay.set(d, s); // later overwrites earlier → last of day wins
+  }
+  const rows = Array.from(byDay.entries()).sort(([a], [b]) => a.localeCompare(b));
+  if (rows.length === 0) return null;
+
+  const W = 640;
+  const H = 200;
+  const PAD_L = 44;
+  const PAD_B = 22;
+  const PAD_T = 10;
+  const PAD_R = 10;
+  const plotW = W - PAD_L - PAD_R;
+  const plotH = H - PAD_T - PAD_B;
+
+  const mrrs = rows.map(([, s]) => s.mrr_cents);
+  const costs = rows.map(([, s]) => s.costs_total_cents);
+  const margins = rows.map(([, s]) => s.margin_cents);
+  const minY = Math.min(0, ...margins);
+  const maxY = Math.max(1, ...mrrs, ...costs);
+  const yRange = maxY - minY || 1;
+
+  const xAt = (i: number) =>
+    PAD_L + (rows.length <= 1 ? plotW / 2 : (i / (rows.length - 1)) * plotW);
+  const yAt = (v: number) =>
+    PAD_T + plotH - ((v - minY) / yRange) * plotH;
+
+  const buildPath = (vals: number[]) =>
+    vals.map((v, i) => `${i === 0 ? "M" : "L"}${xAt(i).toFixed(1)},${yAt(v).toFixed(1)}`).join(" ");
+
+  return (
+    <div>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-52">
+        {/* y-axis gridlines */}
+        {[0, 0.25, 0.5, 0.75, 1].map((t) => {
+          const v = minY + t * yRange;
+          const y = yAt(v);
+          return (
+            <g key={t}>
+              <line x1={PAD_L} y1={y} x2={W - PAD_R} y2={y} stroke="rgb(30,41,59)" strokeWidth={1} />
+              <text x={PAD_L - 4} y={y + 3} textAnchor="end" fontSize="9" fill="rgb(100,116,139)">
+                ${(v / 100).toFixed(0)}
+              </text>
+            </g>
+          );
+        })}
+        {/* lines */}
+        <path d={buildPath(mrrs)}    fill="none" stroke="rgb(56,189,248)"  strokeWidth={1.8} />
+        <path d={buildPath(costs)}   fill="none" stroke="rgb(249,115,22)"  strokeWidth={1.5} strokeDasharray="4 3" />
+        <path d={buildPath(margins)} fill="none" stroke="rgb(74,222,128)"  strokeWidth={1.5} />
+        {/* x-axis labels (first, middle, last) */}
+        {[0, Math.floor(rows.length / 2), rows.length - 1].map((i) => (
+          <text key={i} x={xAt(i)} y={H - 4} textAnchor="middle" fontSize="9" fill="rgb(100,116,139)">
+            {rows[i]?.[0]?.slice(5)}
+          </text>
+        ))}
+      </svg>
+      <div className="mt-2 flex gap-4 text-xs">
+        <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-sky-400 inline-block" /> MRR</span>
+        <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-orange-500 inline-block" /> Costs</span>
+        <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-green-400 inline-block" /> Margin</span>
+      </div>
+    </div>
+  );
+}
+
 
 // ─────────────────────────────────────────────
 // Sub-components

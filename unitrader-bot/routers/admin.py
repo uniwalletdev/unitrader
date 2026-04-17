@@ -16,7 +16,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import case, func, select
+from sqlalchemy import case, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import settings
@@ -343,6 +343,30 @@ async def update_user(
 
     # Return updated detail
     return await get_user_detail(user_id, _, db)
+
+
+# ─────────────────────────────────────────────
+# DELETE /api/admin/users/{user_id}
+# ─────────────────────────────────────────────
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    _: None = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a user and all associated data."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Delete the user (cascade will handle related records)
+    await db.execute(delete(User).where(User.id == user_id))
+    await db.commit()
+
+    logger.info("Admin deleted user %s (%s)", user_id, user.email)
+    return {"message": f"User {user.email} deleted successfully"}
 
 
 # ─────────────────────────────────────────────

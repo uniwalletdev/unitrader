@@ -1080,6 +1080,94 @@ class TelegramBotService:
         elif data == "unlink_cancel":
             await query.edit_message_text("👍 Cancelled — your account remains linked.")
 
+        # ── Phase 12: Governance approvals ─────────────────────────────────
+        elif data.startswith(("gov_approve:", "gov_deny:", "gov_detail:")):
+            await self._handle_governance_callback(query, data, tg_id)
+
+    async def _handle_governance_callback(self, query, data: str, tg_id: str) -> None:
+        """Process admin approval/deny/detail button presses.
+
+        Only the admin chat id (`settings.telegram_admin_chat_id`) may act.
+        """
+        admin_id = str(getattr(settings, "telegram_admin_chat_id", "") or "").strip()
+        if not admin_id or tg_id != admin_id:
+            await query.edit_message_text(
+                "⛔ Not authorised. Only the admin can approve governance actions."
+            )
+            return
+
+        action, _, approval_id = data.partition(":")
+        if not approval_id:
+            await query.edit_message_text("⚠️ Malformed approval callback.")
+            return
+
+        from datetime import datetime as _dt, timezone as _tz
+        from sqlalchemy import select as _select
+        from models import BusinessApproval
+
+        async with AsyncSessionLocal() as db:
+            approval = (await db.execute(
+                _select(BusinessApproval).where(BusinessApproval.id == approval_id)
+            )).scalar_one_or_none()
+            if approval is None:
+                await query.edit_message_text("⚠️ Approval not found.")
+                return
+
+            if action == "gov_detail":
+                import json as _json
+                payload = _json.dumps(approval.request_payload or {}, indent=2, default=str)
+                # Telegram 4 k limit.
+                if len(payload) > 3500:
+                    payload = payload[:3500] + "\n…(truncated)"
+                await query.edit_message_text(
+                    f"🔍 *Approval {approval.id}*\n\n"
+                    f"*Status:* `{approval.status}`\n"
+                    f"*Agent:* `{approval.requested_by_agent}`\n"
+                    f"*Domain:* `{approval.target_domain or '—'}`\n"
+                    f"*Summary:* {approval.action_summary}\n\n"
+                    f"```\n{payload}\n```",
+                    parse_mode="Markdown",
+                )
+                return
+
+            if approval.status != "pending":
+                await query.edit_message_text(
+                    f"ℹ️ Approval already `{approval.status}`; no action taken.",
+                    parse_mode="Markdown",
+                )
+                return
+
+            # TTL check.
+            if approval.ttl_expires_at and approval.ttl_expires_at < _dt.now(_tz.utc):
+                approval.status = "expired"
+                await db.commit()
+                await query.edit_message_text("⏰ Approval expired — no action taken.")
+                return
+
+            if action == "gov_approve":
+                approval.status = "approved"
+                approval.approved_at = _dt.now(_tz.utc)
+                approval.approved_via = "telegram"
+                await db.commit()
+                await query.edit_message_text(
+                    f"✅ *Approved* — agent may now execute.\n"
+                    f"ID: `{approval.id}`",
+                    parse_mode="Markdown",
+                )
+                logger.info("Approval %s APPROVED via telegram by %s", approval.id, tg_id)
+            elif action == "gov_deny":
+                approval.status = "denied"
+                approval.approved_at = _dt.now(_tz.utc)
+                approval.approved_via = "telegram"
+                approval.denial_reason = "denied via telegram"
+                await db.commit()
+                await query.edit_message_text(
+                    f"🚫 *Denied*.\n"
+                    f"ID: `{approval.id}`",
+                    parse_mode="Markdown",
+                )
+                logger.info("Approval %s DENIED via telegram by %s", approval.id, tg_id)
+
     # ── /help ─────────────────────────────────────────────────────────────────
 
     async def cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:

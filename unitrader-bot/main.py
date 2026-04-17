@@ -57,6 +57,7 @@ from routers import goals as goals_router
 from routers import signals as signals_router
 from routers import admin as admin_router
 from routers import token_management as token_management_router
+from routers import governance as governance_router
 from routers.telegram_webhooks import (
     linking_router as telegram_linking_router,
     set_telegram_bot_service,
@@ -336,6 +337,7 @@ async def lifespan(app: FastAPI):
         trading_task = monitor_task = content_task = email_task = learning_task = goals_task = None
         full_auto_task = apex_selects_task = morning_briefing_task = daily_digest_task = None
         token_budget_task = None
+        business_ops_task = None
         logger.info("Background loops disabled (tests/CI mode)")
     else:
         trading_task  = asyncio.create_task(_trading_loop(),             name="trading_loop")
@@ -349,6 +351,7 @@ async def lifespan(app: FastAPI):
         morning_briefing_task = asyncio.create_task(morning_briefing_loop(), name="morning_briefing_loop")
         daily_digest_task = asyncio.create_task(daily_digest_loop(),     name="daily_digest_loop")
         token_budget_task = asyncio.create_task(_token_budget_scheduler(), name="token_budget_scheduler")
+        business_ops_task = asyncio.create_task(_business_ops_scheduler(), name="business_ops_scheduler")
         logger.info(
             "Background loops started "
             "(trading=5min, monitoring=1min, content=daily, emails=daily@9am, learning=hourly, goals=weekly@8am, full_auto=30min, apex_selects=30min, morning_briefing=hourly, daily_digest=8am)"
@@ -446,6 +449,7 @@ async def lifespan(app: FastAPI):
         morning_briefing_task,
         daily_digest_task,
         token_budget_task,
+        business_ops_task,
     ):
         if task is not None:
             task.cancel()
@@ -464,6 +468,7 @@ async def lifespan(app: FastAPI):
                 morning_briefing_task,
                 daily_digest_task,
                 token_budget_task,
+                business_ops_task,
             ) if t is not None],
             return_exceptions=True,
         )
@@ -1413,6 +1418,67 @@ async def _token_budget_scheduler() -> None:
 
 
 # ─────────────────────────────────────────────
+# Background: Business Ops Scheduler (hourly snapshot, daily forecast,
+# every 5 min approval TTL sweep)
+# ─────────────────────────────────────────────
+
+async def _business_ops_scheduler() -> None:
+    """Phase 12 — hourly business snapshot + approval TTL expiry sweep.
+
+    Cadence:
+      • +30 s after boot: initial snapshot (fast feedback)
+      • Every 60 min:     compute_snapshot()
+      • Every  5 min:     expire any business_approvals past their TTL
+    """
+    from src.agents.business_ops import get_business_ops_agent
+    from sqlalchemy import update
+    from models import BusinessApproval
+
+    agent = get_business_ops_agent()
+    logger.info("Business-ops scheduler started (snapshot=60min, TTL sweep=5min)")
+
+    try:
+        await asyncio.sleep(30)  # let the DB init task finish first
+    except asyncio.CancelledError:
+        return
+
+    tick = 0
+    while True:
+        try:
+            # Every hour: snapshot.
+            if tick % 60 == 0:
+                try:
+                    await agent.compute_snapshot()
+                except Exception:
+                    logger.exception("business_ops.compute_snapshot failed")
+
+            # Every 5 min: expire stale approvals.
+            if tick % 5 == 0:
+                try:
+                    async with AsyncSessionLocal() as db:
+                        from datetime import datetime as _dt, timezone as _tz
+                        await db.execute(
+                            update(BusinessApproval)
+                            .where(
+                                BusinessApproval.status == "pending",
+                                BusinessApproval.ttl_expires_at < _dt.now(_tz.utc),
+                            )
+                            .values(status="expired")
+                        )
+                        await db.commit()
+                except Exception:
+                    logger.exception("business_ops: approval TTL sweep failed")
+        except asyncio.CancelledError:
+            return
+
+        tick += 1
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            return
+
+
+# ─────────────────────────────────────────────
 # Background: Goals Scheduler (every Monday 8am UTC)
 # ─────────────────────────────────────────────
 
@@ -1621,6 +1687,7 @@ app.include_router(goals_router.router)
 app.include_router(signals_router.router)
 app.include_router(admin_router.router)
 app.include_router(token_management_router.router)
+app.include_router(governance_router.router)
 app.include_router(telegram_webhook_router)
 app.include_router(telegram_linking_router)
 app.include_router(whatsapp_webhook_router)
