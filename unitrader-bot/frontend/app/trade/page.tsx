@@ -1226,7 +1226,7 @@ function TradePage() {
   // NOTE: We intentionally keep onboarded users on /trade now (Signal Stack is primary).
 
   // onboarding_complete gate: only render the onboarding wizard full-screen
-  if (!loading && settings?.onboarding_complete === false) {
+  if (isSignedIn && !loading && settings?.onboarding_complete === false) {
     return (
       <div className="relative">
         <BotOnboardingChat />
