@@ -1,6 +1,6 @@
 import { useMemo } from "react";
-import { Activity, BarChart3, Crosshair, LineChart, Settings } from "lucide-react";
-type TabId = "trade" | "positions" | "chat" | "performance" | "settings";
+import { BarChart3, Bot, LineChart, MessageSquare, Settings, TrendingUp } from "lucide-react";
+type TabId = "dashboard" | "trade" | "positions" | "chat" | "performance" | "settings";
 
 export default function MobileNav({
   active,
@@ -13,10 +13,11 @@ export default function MobileNav({
 }) {
   const tabs = useMemo(
     () => [
-      { id: "trade" as const, label: "AI Trader", Icon: Crosshair },
-      { id: "positions" as const, label: "Positions", Icon: BarChart3 },
-      { id: "chat" as const, label: "Chat", Icon: Activity },
-      { id: "performance" as const, label: "Performance", Icon: LineChart },
+      { id: "dashboard" as const, label: "Dashboard", Icon: BarChart3 },
+      { id: "trade" as const, label: "AI Trader", Icon: Bot },
+      { id: "positions" as const, label: "Positions", Icon: TrendingUp },
+      { id: "chat" as const, label: "Chat", Icon: MessageSquare },
+      { id: "performance" as const, label: "Stats", Icon: LineChart },
       { id: "settings" as const, label: "Settings", Icon: Settings },
     ],
     [],
@@ -26,7 +27,7 @@ export default function MobileNav({
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-dark-800/60 bg-[#0a0d14]/95 backdrop-blur-lg">
-      <div className="mx-auto grid max-w-3xl grid-cols-5">
+      <div className="mx-auto grid max-w-3xl grid-cols-6">
         {tabs.map(({ id, label, Icon }) => {
           const isActive = active === id;
           return (

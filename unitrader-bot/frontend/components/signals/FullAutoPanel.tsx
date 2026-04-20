@@ -47,8 +47,7 @@ interface ActivityEntry {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function lockProgressText(stage: number): string {
-  if (stage <= 1) return "Complete stage 2 to unlock curated selects";
-  return "Complete stage 3 to unlock Full Auto";
+  return "Reach Trust Ladder Stage 3 and opt in from Settings to unlock Autonomous mode";
 }
 
 function thresholdNote(botName: string, threshold: number): string {
@@ -428,7 +427,7 @@ export default function FullAutoPanel({
           {/* Watchlist */}
           <div className="flex flex-col gap-2">
             <label className="text-xs text-dark-300 font-medium">Watchlist</label>
-            <p className="text-[11px] text-dark-500">Symbols {botName} monitors in Full Auto mode</p>
+            <p className="text-[11px] text-dark-500">Symbols {botName} monitors in Autonomous mode</p>
             <BrandPicker
               exchange={exchange || ""}
               tradingAccountId={tradingAccountId}

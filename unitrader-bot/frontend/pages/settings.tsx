@@ -44,6 +44,7 @@ export default function SettingsPage() {
   const [telegramBotUsername, setTelegramBotUsername] = useState<string | null>(null);
   const [telegramUsername, setTelegramUsername] = useState<string | null>(null);
   const [whatsappNumberDisplay, setWhatsappNumberDisplay] = useState<string | null>(null);
+  const [aiName, setAiName] = useState<string>("Unitrader");
 
   // Load settings
   useEffect(() => {
@@ -56,10 +57,11 @@ export default function SettingsPage() {
     const loadSettings = async () => {
       try {
         setLoading(true);
-        const response = await authApi.getSettings();
+        const [response, meRes] = await Promise.all([authApi.getSettings(), authApi.me()]);
         const data = response.data;
         setSettings(data);
         setDailyLossPct(data.max_daily_loss || 10);
+        if (meRes.data?.ai_name) setAiName(meRes.data.ai_name);
         const notifRes = await notificationApi.settings();
         setTelegramLinked(!!notifRes.data?.data?.telegram_linked);
         setTelegramNotificationsEnabled(!!notifRes.data?.data?.telegram_notifications_enabled);
@@ -187,6 +189,7 @@ export default function SettingsPage() {
               tradingPaused={true}
               dailyLossPct={0}
               maxDailyLossPct={dailyLossPct}
+              botName={aiName}
             />
           )}
 
