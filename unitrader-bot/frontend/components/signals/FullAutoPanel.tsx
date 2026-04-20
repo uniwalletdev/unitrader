@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Lock, Loader2, TrendingUp, TrendingDown, Minus,
-  CheckCircle, BarChart2, Bot, Info,
+  CheckCircle, BarChart2, Bot, Info, Undo2,
 } from "lucide-react";
 import { signalApi, tradingApi } from "@/lib/api";
 import BrandPicker from "@/components/trade/BrandPicker";
@@ -18,7 +18,8 @@ interface UserSettings {
   auto_trade_max_per_scan?: number;
   watchlist?: string[];
   trader_class?: string;
-  signal_stack_mode?: string;
+  execution_mode?: string;
+  autonomous_mode_unlocked?: boolean;
 }
 
 interface FullAutoPanelProps {
@@ -97,6 +98,16 @@ export default function FullAutoPanel({
   const [pnlToday, setPnlToday] = useState<string>("—");
 
   const sliderDebounce = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── 60-second undo toast ──────────────────────────────────────────────────
+  const [undoTrade, setUndoTrade] = useState<{ id: string; symbol: string; side: string; secondsLeft: number } | null>(null);
+  const knownTradeIds = useRef<Set<string>>(new Set());
+  const undoCountdown = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const clearUndo = useCallback(() => {
+    if (undoCountdown.current) clearInterval(undoCountdown.current);
+    setUndoTrade(null);
+  }, []);
 
   // Load per-account Full Auto settings (NOT user-global)
   useEffect(() => {
@@ -180,6 +191,29 @@ export default function FullAutoPanel({
           ? "—"
           : `${pnlSum >= 0 ? "+" : "-"}$${Math.abs(pnlSum).toFixed(2)}`,
       );
+
+      // Detect newly-closed trades to surface undo toast
+      for (const t of closedRecent as any[]) {
+        const sid = String(t.id);
+        if (!knownTradeIds.current.has(sid)) {
+          knownTradeIds.current.add(sid);
+          if (knownTradeIds.current.size > 1) {
+            // Seed known IDs silently on first load; only show toast on subsequent
+            if (undoCountdown.current) clearInterval(undoCountdown.current);
+            setUndoTrade({ id: sid, symbol: String(t.symbol ?? ""), side: String(t.side ?? ""), secondsLeft: 60 });
+            undoCountdown.current = setInterval(() => {
+              setUndoTrade((prev) => {
+                if (!prev) return null;
+                if (prev.secondsLeft <= 1) {
+                  clearInterval(undoCountdown.current!);
+                  return null;
+                }
+                return { ...prev, secondsLeft: prev.secondsLeft - 1 };
+              });
+            }, 1000);
+          }
+        }
+      }
     } catch {
       setActivity([]);
       setTradesToday(0);
@@ -188,6 +222,16 @@ export default function FullAutoPanel({
       setActivityLoading(false);
     }
   }, [tradingAccountId, exchange, isPaper]);
+
+  const handleUndo = useCallback(async (tradeId: string) => {
+    clearUndo();
+    try {
+      await tradingApi.closePosition(tradeId);
+    } catch {
+      // non-fatal — trade may have already settled
+    }
+    await fetchActivity();
+  }, [clearUndo, fetchActivity]);
 
   useEffect(() => {
     fetchActivity();
@@ -199,7 +243,7 @@ export default function FullAutoPanel({
     setToggling(true);
     setAutoEnabled(next);
     try {
-      await signalApi.updateSettings({ signal_stack_mode: userSettings.signal_stack_mode ?? "full_auto" });
+      await signalApi.updateSettings({ execution_mode: userSettings.execution_mode ?? "autonomous" });
       if (tradingAccountId) {
         await signalApi.updateAccountSettings({ trading_account_id: tradingAccountId, auto_trade_enabled: next });
       }
@@ -254,17 +298,17 @@ export default function FullAutoPanel({
           <Lock className="w-5 h-5 text-dark-400" />
         </div>
         <div>
-          <p className="text-base font-semibold text-white">Full Auto is locked</p>
+          <p className="text-base font-semibold text-white">Autonomous mode is locked</p>
           <p className="text-sm text-dark-400 mt-1 max-w-xs mx-auto">
-            Complete the Trust Ladder first. {botName} needs to prove itself with your money before
-            trading solo.
+            Reach Trust Ladder Stage 3 and opt in from Settings. {botName} needs to prove itself
+            before trading solo.
           </p>
         </div>
         <div className="w-full rounded-xl border border-dark-700 bg-dark-800 px-4 py-3 flex flex-col gap-1.5">
           <div className="flex items-center justify-between text-xs">
             <span className="text-dark-400">Progress</span>
             <span className="text-dark-300 font-medium">
-              Stage {trustLadderStage} of 4
+              Stage {trustLadderStage} of 3
             </span>
           </div>
           <div className="h-1.5 w-full rounded-full bg-dark-700 overflow-hidden">
@@ -479,6 +523,34 @@ export default function FullAutoPanel({
           </div>
         ))}
       </div>
+
+      {/* ── 60-second undo toast ────────────────────────────────────────────── */}
+      {undoTrade && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+          <div className="flex items-center gap-2 min-w-0">
+            <Undo2 className="w-4 h-4 text-amber-400 flex-shrink-0" />
+            <p className="text-xs text-amber-200 truncate">
+              <span className="font-semibold">{undoTrade.symbol}</span>{" "}
+              {undoTrade.side?.toUpperCase()} was just placed
+            </p>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="text-xs font-mono text-amber-400 w-6 text-right">{undoTrade.secondsLeft}s</span>
+            <button
+              onClick={() => handleUndo(undoTrade.id)}
+              className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-400 transition-colors"
+            >
+              Undo
+            </button>
+            <button
+              onClick={clearUndo}
+              className="rounded-lg border border-dark-600 px-2 py-1.5 text-xs text-dark-400 hover:text-white transition-colors"
+            >
+              Keep
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── Undo note ───────────────────────────────────────────────────────── */}
       <div className="flex items-start gap-2 rounded-xl border border-dark-700 bg-dark-800 px-3 py-2.5">

@@ -25,6 +25,7 @@ import AIConfidenceGauge from "@/components/trade/AIConfidenceGauge";
 import PerformancePulse from "@/components/trade/PerformancePulse";
 import BrowseStack from "@/components/signals/BrowseStack";
 import BotSelectsPanel from "@/components/signals/ApexSelectsPanel";
+import GuidedPanel from "@/components/signals/GuidedPanel";
 import FullAutoPanel from "@/components/signals/FullAutoPanel";
 import { useSignalStack } from "@/hooks/useSignalStack";
 import {
@@ -65,10 +66,11 @@ type UserSettings = {
   trading_paused?: boolean;
   max_daily_loss?: number;
   onboarding_complete?: boolean;
-  signal_stack_mode?: "browse" | "apex_selects" | "full_auto";
+  execution_mode?: "watch" | "assisted" | "guided" | "autonomous";
+  autonomous_mode_unlocked?: boolean;
   risk_disclosure_accepted?: boolean;
   max_trade_amount?: number;
-  apex_selects_threshold?: number;
+  guided_confidence_threshold?: number;
   apex_selects_max_trades?: number;
   apex_selects_asset_classes?: string[];
   auto_trade_enabled?: boolean;
@@ -98,16 +100,17 @@ const getAmountHelperText = (
   traderClass: string,
   trustLadderStage: number,
   min: number,
+  botName = "Unitrader",
 ): string | null => {
   if (traderClass === "complete_novice") {
     return trustLadderStage === 1
-      ? `${currencySymbol}25 maximum during Watch Mode \u2014 Unitrader is proving itself`
-      : "Unitrader will grow your limit as it builds your trust";
+      ? `${currencySymbol}25 maximum during Watch Mode \u2014 ${botName} is proving itself`
+      : `${botName} will grow your limit as it builds your trust`;
   }
   if (traderClass === "experienced" || traderClass === "semi_institutional") {
     return null;
   }
-  return `Unitrader works best with ${currencySymbol}25 or more \u2014 smaller amounts earn very small returns`;
+  return `${botName} works best with ${currencySymbol}25 or more \u2014 smaller amounts earn very small returns`;
 };
 
 const getAmountLimits = (traderClass: string, trustLadderStage: number) => {
@@ -652,8 +655,8 @@ function TradePage() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [positionsCount, setPositionsCount] = useState<number | null>(null);
 
-  // Signal Stack UI state
-  const [signalMode, setSignalMode] = useState<"browse" | "apex_selects" | "full_auto">("browse");
+  // Execution mode UI state (watch | assisted | guided | autonomous)
+  const [signalMode, setSignalMode] = useState<"watch" | "assisted" | "guided" | "autonomous">("watch");
   const [manualExpanded, setManualExpanded] = useState(false);
   const [modeSaving, setModeSaving] = useState(false);
 
@@ -973,8 +976,8 @@ function TradePage() {
 
   const amountHelperText = useMemo(
     () =>
-      getAmountHelperText(currencySymbol, traderClass, trust?.stage ?? 1, amountLimits.min),
-    [currencySymbol, traderClass, trust?.stage, amountLimits.min],
+      getAmountHelperText(currencySymbol, traderClass, trust?.stage ?? 1, amountLimits.min, resolvedBotName),
+    [currencySymbol, traderClass, trust?.stage, amountLimits.min, resolvedBotName],
   );
 
   useEffect(() => {
@@ -1107,13 +1110,13 @@ function TradePage() {
     if (!settings) return;
     const tc = settings.trader_class ?? "complete_novice";
     const defaultMode =
-      tc === "experienced" || tc === "semi_institutional" ? "apex_selects" : "browse";
-    setSignalMode(settings.signal_stack_mode ?? defaultMode);
+      tc === "experienced" || tc === "semi_institutional" ? "assisted" : "watch";
+    setSignalMode(settings.execution_mode ?? defaultMode);
     const manualDefaultExpanded =
       tc === "experienced" || tc === "semi_institutional" || tc === "self_taught";
     setManualExpanded(manualDefaultExpanded);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [settings?.signal_stack_mode, settings?.trader_class]);
+  }, [settings?.execution_mode, settings?.trader_class]);
 
   const explanationLevel = useMemo(() => {
     const level = settings?.explanation_level;
@@ -1122,24 +1125,25 @@ function TradePage() {
     return "expert";
   }, [settings?.explanation_level, traderClass]);
 
-  const fullAutoLocked = useMemo(() => {
-    if (traderClass === "experienced" || traderClass === "semi_institutional") return false;
-    const stage = trust?.stage ?? 1;
-    return stage < 3;
-  }, [traderClass, trust?.stage]);
+  const stage = trust?.stage ?? 1;
+  const guidedLocked = useMemo(() => stage < 3, [stage]);
+  const autonomousLocked = useMemo(
+    () => stage < 3 || !settings?.autonomous_mode_unlocked,
+    [stage, settings?.autonomous_mode_unlocked],
+  );
 
   const modeDescription = useMemo(() => {
-    if (signalMode === "browse") {
-      return `${resolvedBotName} has pre-analysed assets. Best opportunities ranked below.`;
-    }
-    if (signalMode === "apex_selects") {
-      return `Set your parameters. ${resolvedBotName} finds the best match.`;
-    }
-    return `${resolvedBotName} is trading automatically on your schedule.`;
+    if (signalMode === "watch")
+      return `${resolvedBotName} has pre-analysed assets. You review and click execute.`;
+    if (signalMode === "assisted")
+      return `${resolvedBotName} ranks 2–3 best options. You choose, then confirm.`;
+    if (signalMode === "guided")
+      return `${resolvedBotName} runs the full analysis. Auto-confirms when confidence ≥ threshold.`;
+    return `${resolvedBotName} acts autonomously. 60 s undo window after each trade.`;
   }, [resolvedBotName, signalMode]);
 
   const { signals, isLoading: signalsLoading, isRefreshing, lastScanAt, nextScanInMinutes, assetsScanned, error: signalsError, acceptSignal, skipSignal, refresh } =
-    useSignalStack({ signal_stack_mode: signalMode }, { tradingAccountId: selectedTradingAccountId });
+    useSignalStack({ execution_mode: signalMode }, { tradingAccountId: selectedTradingAccountId });
 
   const maxSignals = useMemo(() => {
     if (traderClass === "complete_novice") return 3;
@@ -1149,17 +1153,21 @@ function TradePage() {
 
   const browseSignals = useMemo(() => signals.slice(0, maxSignals), [signals, maxSignals]);
 
-  const handleSetMode = async (mode: "browse" | "apex_selects" | "full_auto") => {
+  const handleSetMode = async (mode: "watch" | "assisted" | "guided" | "autonomous") => {
     if (mode === signalMode) return;
-    if (mode === "full_auto" && fullAutoLocked) {
-      setToast("Full Auto is locked — complete the Trust Ladder first.");
+    if (mode === "guided" && guidedLocked) {
+      setToast("Guided mode unlocks at Trust Ladder Stage 3.");
+      return;
+    }
+    if (mode === "autonomous" && autonomousLocked) {
+      setToast("Autonomous mode requires Stage 3 + explicit opt-in in Settings.");
       return;
     }
     setSignalMode(mode);
-    setSettings((prev) => (prev ? { ...prev, signal_stack_mode: mode } : prev));
+    setSettings((prev) => (prev ? { ...prev, execution_mode: mode } : prev));
     setModeSaving(true);
     try {
-      await signalApi.updateSettings({ signal_stack_mode: mode });
+      await signalApi.updateSettings({ execution_mode: mode });
     } catch {
       // non-fatal: keep optimistic UI
     } finally {
@@ -1377,7 +1385,7 @@ function TradePage() {
 
       {/* Circuit breaker */}
       <div className="mb-4">
-        <CircuitBreakerAlert tradingPaused={tradingPaused} dailyLossPct={0} maxDailyLossPct={maxDailyLoss} />
+        <CircuitBreakerAlert tradingPaused={tradingPaused} dailyLossPct={0} maxDailyLossPct={maxDailyLoss} botName={resolvedBotName} />
       </div>
 
       {/* Market status */}
@@ -1407,6 +1415,7 @@ function TradePage() {
             paperTradesCount={trust.paperTradesCount}
             currencySymbol={currencySymbol}
             currencyCode={displayCurrencyCode}
+            botName={resolvedBotName}
           />
         </div>
       )}
@@ -1486,39 +1495,52 @@ function TradePage() {
         <div className="mb-6">
           {/* Mode toggle */} 
           <div className="rounded-2xl border border-dark-800 bg-dark-950 p-3 mb-3">
-            <div className="grid grid-cols-3 gap-1 rounded-xl border border-dark-800 bg-dark-900 p-1">
+            <div className="grid grid-cols-4 gap-1 rounded-xl border border-dark-800 bg-dark-900 p-1">
               <button
                 type="button"
-                onClick={() => handleSetMode("browse")}
+                onClick={() => handleSetMode("watch")}
                 className={clsx(
-                  "rounded-lg px-3 py-2 text-xs font-semibold transition-all",
-                  signalMode === "browse" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white",
+                  "rounded-lg px-2 py-2 text-xs font-semibold transition-all",
+                  signalMode === "watch" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white",
                 )}
               >
-                Browse signals · You choose
+                Watch · You choose
               </button>
               <button
                 type="button"
-                onClick={() => handleSetMode("apex_selects")}
+                onClick={() => handleSetMode("assisted")}
                 className={clsx(
-                  "rounded-lg px-3 py-2 text-xs font-semibold transition-all",
-                  signalMode === "apex_selects" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white",
+                  "rounded-lg px-2 py-2 text-xs font-semibold transition-all",
+                  signalMode === "assisted" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white",
                 )}
               >
-                {resolvedBotName} selects · AI curates
+                Assisted · AI curates
               </button>
               <button
                 type="button"
-                onClick={() => handleSetMode("full_auto")}
-                title={fullAutoLocked ? "Complete Trust Ladder first" : undefined}
+                onClick={() => handleSetMode("guided")}
+                title={guidedLocked ? "Unlocks at Trust Ladder Stage 3" : undefined}
                 className={clsx(
-                  "rounded-lg px-3 py-2 text-xs font-semibold transition-all",
-                  signalMode === "full_auto" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white",
-                  fullAutoLocked && "opacity-50 cursor-not-allowed",
+                  "rounded-lg px-2 py-2 text-xs font-semibold transition-all",
+                  signalMode === "guided" ? "bg-dark-700 text-white" : "text-dark-400 hover:text-white",
+                  guidedLocked && "opacity-50 cursor-not-allowed",
                 )}
-                disabled={fullAutoLocked}
+                disabled={guidedLocked}
               >
-                Full auto · {resolvedBotName} acts alone
+                Guided · Auto-confirm
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSetMode("autonomous")}
+                title={autonomousLocked ? "Stage 3 + Settings opt-in required" : undefined}
+                className={clsx(
+                  "rounded-lg px-2 py-2 text-xs font-semibold transition-all",
+                  signalMode === "autonomous" ? "bg-brand-500 text-white" : "text-dark-400 hover:text-white",
+                  autonomousLocked && "opacity-50 cursor-not-allowed",
+                )}
+                disabled={autonomousLocked}
+              >
+                Auto · 60 s undo
               </button>
             </div>
             <div className="mt-2 flex items-center justify-between text-[11px] text-dark-400">
@@ -1527,8 +1549,8 @@ function TradePage() {
             </div>
           </div>
 
-          {/* Panel */} 
-          {signalMode === "browse" && (
+          {/* Panel */}
+          {signalMode === "watch" && (
             <BrowseStack
               botName={resolvedBotName}
               signals={browseSignals}
@@ -1543,7 +1565,7 @@ function TradePage() {
               onRefresh={refresh}
             />
           )}
-          {signalMode === "apex_selects" && (
+          {signalMode === "assisted" && (
             <BotSelectsPanel
               botName={resolvedBotName}
               userSettings={settings ?? {}}
@@ -1556,7 +1578,18 @@ function TradePage() {
               }}
             />
           )}
-          {signalMode === "full_auto" && (
+          {signalMode === "guided" && (
+            <GuidedPanel
+              botName={resolvedBotName}
+              userSettings={settings ?? {}}
+              trustLadderStage={trust?.stage ?? 1}
+              tradingAccountId={selectedTradingAccountId}
+              currencySymbol={currencySymbol}
+              onExecute={handleAcceptSignal}
+              onSettingsUpdate={(updates: object) => setSettings((prev) => (prev ? { ...prev, ...(updates as any) } : prev))}
+            />
+          )}
+          {signalMode === "autonomous" && (
             <FullAutoPanel
               botName={resolvedBotName}
               userSettings={settings ?? {}}
@@ -1660,6 +1693,7 @@ function TradePage() {
                       onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
                       selectedSymbols={symbol ? [symbol] : []}
                       assetClass={activeAssetClass as "stocks" | "crypto" | "forex" | undefined}
+                      botName={resolvedBotName}
                     />
                   )}
                   <AmountInput
@@ -1728,6 +1762,7 @@ function TradePage() {
                       onChangeSelectedSymbols={(syms) => setSymbol((syms[0] || "").toUpperCase())}
                       selectedSymbols={symbol ? [symbol] : []}
                       assetClass={activeAssetClass as "stocks" | "crypto" | "forex" | undefined}
+                      botName={resolvedBotName}
                     />
                   )}
                   {symbol && (
@@ -1949,6 +1984,7 @@ function TradePage() {
         currencySymbol={currencySymbol}
         isPaper={isPaper}
         traderClass={traderClass}
+        botName={resolvedBotName}
       />
       </div>
     </div>

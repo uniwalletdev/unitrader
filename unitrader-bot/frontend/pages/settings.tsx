@@ -17,7 +17,7 @@ interface UserSettings {
   approved_assets?: string[];
   first_trade_done?: boolean;
   push_token?: string;
-  signal_stack_mode?: string;
+  execution_mode?: string;
   morning_briefing_enabled?: boolean;
   morning_briefing_time?: string;
   daily_digest_enabled?: boolean;
@@ -143,7 +143,7 @@ export default function SettingsPage() {
 
   const calculatedLossAmount = (portfolioValue * dailyLossPct) / 100;
   const isTradingPaused = settings?.trading_paused || false;
-  const signalMode = settings?.signal_stack_mode || "browse";
+  const signalMode = settings?.execution_mode || "watch";
 
   return (
     <>
@@ -424,7 +424,7 @@ export default function SettingsPage() {
                 />
               </div>
 
-              {signalMode === "full_auto" && (
+              {signalMode === "autonomous" && (
                 <div className="rounded-xl border border-dark-800 p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div>

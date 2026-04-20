@@ -43,6 +43,8 @@ interface BrandPickerProps {
   onManualSymbol?: (symbol: string) => void;
   /** Asset-class-first override — locks the category tab to the given asset class. */
   assetClass?: "stocks" | "crypto" | "forex";
+  /** User's personalised bot name */
+  botName?: string;
 }
 
 // Display-name lookup for AI-returned symbols — not a tradeable list
@@ -326,6 +328,7 @@ export default function BrandPicker({
   onChangeSelectedSymbols,
   onManualSymbol,
   assetClass: assetClassProp,
+  botName = "Unitrader",
 }: BrandPickerProps) {
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [traderClass, setTraderClass] = useState<TraderClass>("complete_novice");
@@ -602,7 +605,7 @@ export default function BrandPicker({
         return { title: "AI's picks right now", items: aiFeatureItemsForExchange };
       }
       const picks = favourites.slice(0, 3).map((sym) => ({ symbol: sym, brand: BRAND_MAP[sym] ?? sym }));
-      return picks.length ? { title: "Unitrader's picks for you", items: picks } : null;
+      return picks.length ? { title: `${botName}'s picks for you`, items: picks } : null;
     }
     if (traderClass === "curious_saver") {
       if (aiFeatureItemsForExchange && aiFeatureItemsForExchange.length >= 2) {

@@ -126,20 +126,22 @@ SYMBOL_LABELS: dict[str, str] = {
 # ─────────────────────────────────────────────
 
 async def score_universe(market_context=None) -> list[str]:
+    """Dispatch to the exchange adapter's pre-scorer via the registry.
+
+    Falls back to Alpaca stock scoring when no market_context is provided.
+    """
+    import src.exchanges  # noqa: F401 — populate registry
+    from src.exchanges.registry import get_optional
+
     if market_context is None:
+        # Default to Alpaca stocks (backwards-compat)
         return await _score_stocks_alpaca(STOCK_UNIVERSE)
-    if market_context.exchange.value == "alpaca":
-        return await _score_stocks_alpaca(STOCK_UNIVERSE)
-    elif market_context.exchange.value == "coinbase":
-        return await _score_crypto_coinbase(CRYPTO_UNIVERSE)
-    elif market_context.exchange.value == "binance":
-        return await _score_crypto_binance(
-            [s.replace("-USD", "USDT") for s in CRYPTO_UNIVERSE]
-        )
-    elif market_context.exchange.value == "kraken":
-        return await _score_crypto_kraken(KRAKEN_UNIVERSE)
-    else:
-        return []
+
+    exchange_id = market_context.exchange.value
+    spec = get_optional(exchange_id)
+    if spec is not None and spec.score_universe is not None:
+        return await spec.score_universe()
+    return []
 
 
 async def _score_stocks_alpaca(universe: list[str], top_n: int = 10) -> list[str]:

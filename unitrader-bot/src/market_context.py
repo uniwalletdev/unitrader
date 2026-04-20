@@ -29,15 +29,21 @@ class AssetClass(str, Enum):
     FOREX = "forex"
 
 
-EXCHANGE_ASSET_CLASSES: dict[Exchange, set[AssetClass]] = {
-    # Alpaca supports both stocks and crypto market data; execution still depends on your
-    # connected account and TRADING_MODE elsewhere.
-    Exchange.ALPACA: {AssetClass.STOCKS, AssetClass.CRYPTO},
-    Exchange.COINBASE: {AssetClass.CRYPTO},
-    Exchange.BINANCE: {AssetClass.CRYPTO},
-    Exchange.KRAKEN: {AssetClass.CRYPTO},
-    Exchange.OANDA: {AssetClass.FOREX},
-}
+def _build_exchange_asset_classes() -> dict[Exchange, set[AssetClass]]:
+    """Live view built from the canonical exchange registry."""
+    import src.exchanges  # noqa: F401 — populate registry
+    from src.exchanges.registry import all_specs
+    from src.exchanges.registry import AssetClass as RegAC
+
+    _map = {RegAC.STOCKS: AssetClass.STOCKS, RegAC.CRYPTO: AssetClass.CRYPTO, RegAC.FOREX: AssetClass.FOREX}
+    out: dict[Exchange, set[AssetClass]] = {}
+    for spec in all_specs():
+        ex = Exchange(spec.id)
+        out[ex] = {_map[ac] for ac in spec.asset_classes if ac in _map}
+    return out
+
+
+EXCHANGE_ASSET_CLASSES: dict[Exchange, set[AssetClass]] = _build_exchange_asset_classes()
 
 
 CRYPTO_BASES = {
@@ -220,22 +226,24 @@ class PaperModeType(str, Enum):
 # EXCHANGE → ASSET CLASS DEFAULTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Primary asset class for each exchange (used when creating accounts).
-EXCHANGE_PRIMARY_ASSET_CLASS: dict[str, AssetClass] = {
-    "alpaca": AssetClass.STOCKS,
-    "coinbase": AssetClass.CRYPTO,
-    "binance": AssetClass.CRYPTO,
-    "kraken": AssetClass.CRYPTO,
-    "oanda": AssetClass.FOREX,
-}
+def _build_primary_and_paper() -> tuple[dict[str, AssetClass], dict[str, PaperModeType]]:
+    """Live views built from the canonical exchange registry."""
+    import src.exchanges  # noqa: F401 — populate registry
+    from src.exchanges.registry import all_specs
+    from src.exchanges.registry import AssetClass as RegAC, PaperMode as RegPM
 
-EXCHANGE_PAPER_MODE: dict[str, PaperModeType] = {
-    "alpaca": PaperModeType.NATIVE,
-    "coinbase": PaperModeType.SYNTHETIC,
-    "binance": PaperModeType.SYNTHETIC,
-    "kraken": PaperModeType.SYNTHETIC,
-    "oanda": PaperModeType.SYNTHETIC,
-}
+    _ac_map = {RegAC.STOCKS: AssetClass.STOCKS, RegAC.CRYPTO: AssetClass.CRYPTO, RegAC.FOREX: AssetClass.FOREX}
+    _pm_map = {RegPM.NATIVE: PaperModeType.NATIVE, RegPM.SYNTHETIC: PaperModeType.SYNTHETIC, RegPM.NONE: PaperModeType.SYNTHETIC}
+    primary: dict[str, AssetClass] = {}
+    paper: dict[str, PaperModeType] = {}
+    for spec in all_specs():
+        primary[spec.id] = _ac_map.get(spec.primary_asset_class, AssetClass.STOCKS)
+        paper[spec.id] = _pm_map.get(spec.paper_mode, PaperModeType.SYNTHETIC)
+    return primary, paper
+
+
+# Primary asset class for each exchange (used when creating accounts).
+EXCHANGE_PRIMARY_ASSET_CLASS, EXCHANGE_PAPER_MODE = _build_primary_and_paper()
 
 
 def set_account_defaults(exchange: str) -> dict:

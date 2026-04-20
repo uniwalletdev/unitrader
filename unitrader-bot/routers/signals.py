@@ -8,7 +8,7 @@ from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,14 +41,33 @@ class SignalInteractionRequest(BaseModel):
     trade_id: str | None = None
 
 
+_ALLOWED_EXECUTION_MODES = {"watch", "assisted", "guided", "autonomous"}
+
+
 class UpdateSignalSettingsRequest(BaseModel):
-    signal_stack_mode: str | None = None
+    execution_mode: str | None = None
     # NOTE: Full Auto settings are per trading_account_id (see /account-settings).
-    apex_selects_threshold: int | None = None
+    guided_confidence_threshold: int | None = None
     apex_selects_max_trades: int | None = None
     apex_selects_asset_classes: list[str] | None = None
     morning_briefing_enabled: bool | None = None
     morning_briefing_time: str | None = None
+
+    @field_validator("execution_mode")
+    @classmethod
+    def _validate_execution_mode(cls, v: str | None) -> str | None:
+        if v is not None and v not in _ALLOWED_EXECUTION_MODES:
+            raise ValueError(
+                f"execution_mode must be one of {sorted(_ALLOWED_EXECUTION_MODES)}"
+            )
+        return v
+
+    @field_validator("guided_confidence_threshold")
+    @classmethod
+    def _validate_threshold(cls, v: int | None) -> int | None:
+        if v is not None and not (1 <= int(v) <= 100):
+            raise ValueError("guided_confidence_threshold must be between 1 and 100")
+        return v
 
 
 class TradingAccountSettingsResponse(BaseModel):
@@ -342,7 +361,7 @@ async def get_apex_selects_shortlist(
             return {"status": "success", "data": {"signals": []}}
         raise
 
-    threshold = settings.apex_selects_threshold or 75
+    threshold = settings.guided_confidence_threshold or 70
     max_trades = settings.apex_selects_max_trades or 2
     allowed = settings.apex_selects_asset_classes or ["stocks", "crypto"]
     watchlist = set(settings.watchlist or [])

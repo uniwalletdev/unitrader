@@ -6,7 +6,7 @@ import { Bell, ChevronRight, Radar, Sparkles, SunMedium, Zap } from "lucide-reac
 import { notificationApi, signalApi } from "@/lib/api";
 import { countdownTo, readString, relativeTime, type NotificationItem } from "@/components/notifications/notificationUtils";
 
-type SignalMode = "browse" | "apex_selects" | "full_auto";
+type SignalMode = "watch" | "assisted" | "guided" | "autonomous";
 
 type SignalSummary = {
   id: string;
@@ -23,16 +23,25 @@ type SignalStackResponse = {
 };
 
 function statusTone(botName: string, mode: SignalMode) {
-  if (mode === "full_auto") {
+  if (mode === "autonomous") {
     return {
       dot: "bg-emerald-400",
       badge: "bg-emerald-500/12 text-emerald-300 border-emerald-500/20",
       title: `${botName} Autopilot is active`,
-      subtitle: "Scanning live markets and managing trades for you.",
+      subtitle: "Scanning live markets and managing trades autonomously.",
       icon: <Zap size={14} />,
     };
   }
-  if (mode === "apex_selects") {
+  if (mode === "guided") {
+    return {
+      dot: "bg-brand-400",
+      badge: "bg-brand-500/12 text-brand-300 border-brand-500/20",
+      title: `${botName} is auto-confirming at threshold`,
+      subtitle: "Trades that meet your confidence threshold execute automatically.",
+      icon: <Radar size={14} />,
+    };
+  }
+  if (mode === "assisted") {
     return {
       dot: "bg-sky-400",
       badge: "bg-sky-500/12 text-sky-300 border-sky-500/20",
@@ -78,14 +87,16 @@ export default function UnitraderActivityStatus({
     setLoading(true);
     try {
       const typeFilter =
-        mode === "full_auto"
+        mode === "autonomous"
           ? "auto_trade_executed,stop_loss_triggered,take_profit_triggered"
-          : mode === "apex_selects"
-            ? "apex_selects_ready,apex_selects_executed"
-            : "browse_morning_briefing,daily_digest";
+          : mode === "guided"
+            ? "auto_trade_executed,stop_loss_triggered,take_profit_triggered"
+            : mode === "assisted"
+              ? "apex_selects_ready,apex_selects_executed"
+              : "browse_morning_briefing,daily_digest";
 
       const [notifRes, stackRes] = await Promise.all([
-        notificationApi.list(mode === "full_auto" ? 3 : 5, { type: typeFilter }),
+        notificationApi.list(mode === "autonomous" || mode === "guided" ? 3 : 5, { type: typeFilter }),
         signalApi.stack({ trading_account_id: tradingAccountId ?? undefined }),
       ]);
 
@@ -153,7 +164,7 @@ export default function UnitraderActivityStatus({
         </div>
       ) : (
         <div className="mt-4 space-y-3">
-          {mode === "full_auto" && (
+          {(mode === "autonomous" || mode === "guided") && (
             <>
               <div className="rounded-xl border border-dark-800 bg-dark-900/70 p-3 text-xs text-dark-300">
                 Last scan {stackMeta?.last_scan_at ? relativeTime(stackMeta.last_scan_at) : "recently"}.
@@ -175,7 +186,7 @@ export default function UnitraderActivityStatus({
             </>
           )}
 
-          {mode === "apex_selects" && pendingApproval && (
+          {mode === "assisted" && pendingApproval && (
             <div className="rounded-xl border border-amber-500/20 bg-amber-500/8 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
@@ -200,13 +211,13 @@ export default function UnitraderActivityStatus({
             </div>
           )}
 
-          {mode === "apex_selects" && !pendingApproval && (
+          {mode === "assisted" && !pendingApproval && (
             <div className="rounded-xl border border-dark-800 bg-dark-900/50 p-3 text-xs text-dark-400">
               {botName} is monitoring your thresholds and will ask for approval when a shortlist is ready.
             </div>
           )}
 
-          {mode === "browse" && (
+          {mode === "watch" && (
             <>
               <div className="rounded-xl border border-dark-800 bg-dark-900/60 p-3">
                 <div className="flex items-center justify-between gap-3">

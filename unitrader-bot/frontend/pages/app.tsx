@@ -42,7 +42,7 @@ interface Trade {
 interface ChatMessage { role: "user" | "assistant"; content: string; context?: string; }
 
 interface User { id: string; email: string; ai_name: string; subscription_tier: string; }
-type SignalStackMode = "browse" | "apex_selects" | "full_auto";
+type SignalStackMode = "watch" | "assisted" | "guided" | "autonomous";
 
 // ─────────────────────────────────────────────
 // Sidebar
@@ -605,7 +605,7 @@ function Chat({ user }: { user: User | null }) {
   const [hasExchangeConnected, setHasExchangeConnected] = useState<boolean | null>(null);
   const [aiName, setAiName] = useState<string | null>(null);
 
-  const resolvedAiName = aiName || user?.ai_name || "Apex";
+  const resolvedAiName = aiName || user?.ai_name || "Unitrader";
 
   const connectedWelcome = `Hey. I'm ${resolvedAiName}.\n\nI'm already looking at your account snapshot right now.\n\nWhat do you want to check first?`;
 
@@ -1456,8 +1456,8 @@ export default function AppPage() {
           // Gate: send users who haven't finished onboarding to /trade
           try {
             const sRes = await authApi.getSettings();
-            const mode = sRes.data?.signal_stack_mode;
-            if (mode === "browse" || mode === "apex_selects" || mode === "full_auto") {
+            const mode = sRes.data?.execution_mode;
+            if (mode === "watch" || mode === "assisted" || mode === "guided" || mode === "autonomous") {
               setDashboardSignalMode(mode);
             }
           setPreferredTradingAccountId(
@@ -1493,8 +1493,8 @@ export default function AppPage() {
         // Gate: send users who haven't finished onboarding to /trade
         try {
           const sRes = await authApi.getSettings();
-          const mode = sRes.data?.signal_stack_mode;
-          if (mode === "browse" || mode === "apex_selects" || mode === "full_auto") {
+          const mode = sRes.data?.execution_mode;
+          if (mode === "watch" || mode === "assisted" || mode === "guided" || mode === "autonomous") {
             setDashboardSignalMode(mode);
           }
           setPreferredTradingAccountId(

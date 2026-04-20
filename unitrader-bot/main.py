@@ -1006,7 +1006,7 @@ async def apex_selects_scanner_loop() -> None:
                         select(UserSettings, User)
                         .join(User, User.id == UserSettings.user_id)
                         .where(
-                            UserSettings.signal_stack_mode == "apex_selects",
+                            UserSettings.execution_mode == "assisted",
                             UserSettings.trading_paused == False,  # noqa: E712
                             User.is_active == True,  # noqa: E712
                         )
@@ -1026,7 +1026,7 @@ async def apex_selects_scanner_loop() -> None:
 
 
 async def _run_apex_selects_for_user(settings_row: UserSettings, user: User, db) -> None:
-    threshold = settings_row.apex_selects_threshold or 75
+    threshold = settings_row.guided_confidence_threshold or 70
     max_trades = settings_row.apex_selects_max_trades or 2
     allowed_classes = settings_row.apex_selects_asset_classes or ["stocks", "crypto"]
     watchlist = settings_row.watchlist or ["AAPL", "BTC/USD", "NVDA", "TSLA", "ETH/USD"]
@@ -1108,7 +1108,7 @@ async def morning_briefing_loop() -> None:
                     select(UserSettings, User)
                     .join(User, User.id == UserSettings.user_id)
                     .where(
-                        UserSettings.signal_stack_mode == "browse",
+                        UserSettings.execution_mode.in_(["watch", "assisted"]),
                         UserSettings.morning_briefing_enabled == True,  # noqa: E712
                         UserSettings.morning_briefing_time == current_hour,
                         User.is_active == True,  # noqa: E712

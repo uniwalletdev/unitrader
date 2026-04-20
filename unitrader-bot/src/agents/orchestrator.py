@@ -42,6 +42,29 @@ _ACTION_TO_AGENT: dict[str, str] = {
 }
 
 
+def _allowed_execution_modes(ctx: SharedContext) -> set[str]:
+    """Return the execution modes permitted for this user.
+
+    Trust Ladder stages gate mode availability:
+      Stage 1: watch only (analyse, user executes manually).
+      Stage 2: watch + assisted (user chooses between ranked options).
+      Stage 3: watch + assisted + guided (auto-confirm when confidence ≥ threshold).
+      Stage 3 + `autonomous_mode_unlocked`: all four modes (fire + 60 s undo).
+
+    Autonomous never auto-unlocks — user must explicitly opt in via
+    `POST /api/settings/unlock-autonomous`.
+    """
+    stage = int(ctx.trust_ladder_stage or 1)
+    if stage < 2:
+        return {"watch"}
+    if stage < 3:
+        return {"watch", "assisted"}
+    modes = {"watch", "assisted", "guided"}
+    if ctx.autonomous_mode_unlocked:
+        modes.add("autonomous")
+    return modes
+
+
 class MasterOrchestrator:
     """Routes requests to agents with shared context injection."""
 
@@ -516,6 +539,23 @@ class MasterOrchestrator:
                 },
             )
 
+        # Execution-mode permission gate — Trust Ladder × execution_mode.
+        # Frontend should prevent this path but server enforces it.
+        if ctx.execution_mode not in _allowed_execution_modes(ctx):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "error": "execution_mode_locked",
+                    "message": (
+                        f"Execution mode '{ctx.execution_mode}' is not available at "
+                        f"Trust Ladder stage {ctx.trust_ladder_stage}."
+                    ),
+                    "execution_mode": ctx.execution_mode,
+                    "trust_ladder_stage": ctx.trust_ladder_stage,
+                    "autonomous_mode_unlocked": ctx.autonomous_mode_unlocked,
+                },
+            )
+
         # Resolve execution venue so agents use the correct exchange
         try:
             venue = await resolve_execution_venue(
@@ -569,6 +609,22 @@ class MasterOrchestrator:
                 "success": False,
                 "reason": portfolio_check.get("reason"),
             }
+
+        # Step 4b: Guided mode — below-threshold confidence returns a review card
+        # instead of auto-executing. Frontend shows the analysis; user can re-submit
+        # with `force_execute: true` to override, or reject.
+        if ctx.execution_mode == "guided" and not payload.get("force_execute"):
+            threshold = int(ctx.guided_confidence_threshold or 70)
+            analysis_conf = float(getattr(agent_analysis, "confidence", 0) or 0)
+            if analysis_conf < threshold:
+                return {
+                    "success": True,
+                    "status": "review_required",
+                    "execution_mode": "guided",
+                    "confidence": analysis_conf,
+                    "threshold": threshold,
+                    "analysis": agent_analysis.model_dump(),
+                }
 
         # Step 5: Write comprehensive audit log BEFORE execution
         # CRITICAL: If this fails, raises HTTPException 500 and trade is NOT executed

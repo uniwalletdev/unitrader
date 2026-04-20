@@ -273,15 +273,17 @@ class UserSettingsResponse(BaseModel):
     first_trade_done: bool
     leaderboard_opt_out: bool
     push_token: str | None
-    signal_stack_mode: str = "browse"
+    execution_mode: str = "watch"
     watchlist: list[str] | None = None
     auto_trade_enabled: bool = False
     auto_trade_threshold: int = 80
     signal_notify_min_confidence: int = 75
     auto_trade_max_per_scan: int = 1
-    apex_selects_threshold: int = 75
+    guided_confidence_threshold: int = 70
     apex_selects_max_trades: int = 2
     apex_selects_asset_classes: list[str] | None = None
+    autonomous_mode_unlocked: bool = False
+    autonomous_unlocked_at: datetime | None = None
     morning_briefing_enabled: bool = True
     morning_briefing_time: str = "08:00"
     daily_digest_enabled: bool = True
@@ -315,13 +317,13 @@ class UpdateUserSettingsRequest(BaseModel):
     approved_assets: list[str] | None = None
     first_trade_done: bool | None = None
     push_token: str | None = None
-    signal_stack_mode: str | None = None
+    execution_mode: str | None = None
     watchlist: list[str] | None = None
     auto_trade_enabled: bool | None = None
     auto_trade_threshold: int | None = None
     signal_notify_min_confidence: int | None = None
     auto_trade_max_per_scan: int | None = None
-    apex_selects_threshold: int | None = None
+    guided_confidence_threshold: int | None = None
     apex_selects_max_trades: int | None = None
     apex_selects_asset_classes: list[str] | None = None
     morning_briefing_enabled: bool | None = None

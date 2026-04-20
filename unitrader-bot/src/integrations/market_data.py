@@ -68,13 +68,28 @@ async def _alpaca_get_with_retry(
 # STEP 1 — Asset classification constants
 # ─────────────────────────────────────────────
 
-EXCHANGE_CAPABILITIES = {
-    "alpaca": {"stocks": True, "crypto": True, "forex": False},
-    "binance": {"stocks": False, "crypto": True, "forex": False},
-    "coinbase": {"stocks": False, "crypto": True, "forex": False},
-    "kraken": {"stocks": False, "crypto": True, "forex": False},
-    "oanda": {"stocks": False, "crypto": False, "forex": True},
-}
+def _build_exchange_capabilities() -> dict[str, dict[str, bool]]:
+    """Back-compat mapping built from the canonical exchange registry.
+
+    Kept for callers outside this module that still expect the flat dict
+    shape ``{exchange: {asset_class: bool}}``. New code should use
+    ``src.exchanges.registry.get(exchange).asset_classes`` directly.
+    """
+    import src.exchanges  # noqa: F401 — populate registry
+    from src.exchanges.registry import all_specs, AssetClass
+
+    out: dict[str, dict[str, bool]] = {}
+    for spec in all_specs():
+        classes = spec.asset_classes
+        out[spec.id] = {
+            "stocks": AssetClass.STOCKS in classes,
+            "crypto": AssetClass.CRYPTO in classes,
+            "forex": AssetClass.FOREX in classes,
+        }
+    return out
+
+
+EXCHANGE_CAPABILITIES = _build_exchange_capabilities()
 
 CRYPTO_SYMBOLS = {
     "BTC",
@@ -147,71 +162,19 @@ def classify_asset(symbol: str) -> str:
 
 
 def normalise_symbol(symbol: str, exchange: str) -> str:
+    """Dispatch to the registered exchange adapter's normaliser.
+
+    Backwards-compatible wrapper around
+    ``src.exchanges.registry.get(exchange).normalise_symbol(symbol)``.
+    Unknown exchange → return the uppercased input (pre-registry fallback).
     """
-    Convert any symbol format to what the exchange API expects.
-    Alpaca stocks: AAPL, TSLA. Alpaca crypto: BTC/USD.
-    Binance: BTCUSDT. OANDA: EUR_USD.
-    """
-    clean = symbol.upper().strip()
-    parts = clean.split("/")
-    if len(parts) == 3:
-        clean = f"{parts[0]}/{parts[1]}"
+    import src.exchanges  # noqa: F401 — populate registry
+    from src.exchanges.registry import get_optional
 
-    asset_type = classify_asset(clean)
-    ex = exchange.lower()
-
-    if ex == "alpaca":
-        if asset_type == "crypto":
-            base = clean.split("/")[0].split("_")[0]
-            for s in ["USDT", "USDC", "BUSD"]:
-                if base.endswith(s):
-                    base = base[: -len(s)]
-            return f"{base}/USD"
-        return clean.split("/")[0].split("_")[0]
-
-    if ex == "binance":
-        if asset_type != "crypto":
-            raise ValueError(
-                f"Binance only supports crypto — cannot trade {symbol} ({asset_type})"
-            )
-        base = clean.split("/")[0].split("_")[0]
-        for s in ["USDT", "USDC", "BUSD", "USD"]:
-            if base.endswith(s):
-                base = base[: -len(s)]
-        return f"{base}USDT"
-
-    if ex == "coinbase":
-        if asset_type != "crypto":
-            raise ValueError(
-                f"Coinbase only supports crypto — cannot trade {symbol} ({asset_type})"
-            )
-        base = clean.split("/")[0].split("_")[0].split("-")[0]
-        for s in ["USDT", "USDC", "BUSD", "USD"]:
-            if base.endswith(s):
-                base = base[: -len(s)]
-        return f"{base}-USD"
-
-    if ex == "kraken":
-        if asset_type != "crypto":
-            raise ValueError(
-                f"Kraken only supports crypto — cannot trade {symbol} ({asset_type})"
-            )
-        base = clean.split("/")[0].split("_")[0].split("-")[0]
-        for s in ["USDT", "USDC", "BUSD", "USD"]:
-            if base.endswith(s):
-                base = base[: -len(s)]
-        kraken_map = {"BTC": "XBT", "DOGE": "XDG"}
-        kb = kraken_map.get(base, base)
-        return f"{kb}USD"
-
-    if ex == "oanda":
-        if asset_type != "forex":
-            raise ValueError(
-                f"OANDA only supports forex — cannot trade {symbol} ({asset_type})"
-            )
-        return clean.replace("/", "_")
-
-    return clean
+    spec = get_optional(exchange)
+    if spec is None:
+        return symbol.upper().strip()
+    return spec.normalise_symbol(symbol)
 
 
 def validate_exchange_for_symbol(symbol: str, exchange: str) -> None:
@@ -244,16 +207,15 @@ def validate_exchange_for_symbol(symbol: str, exchange: str) -> None:
 # ─────────────────────────────────────────────
 
 async def fetch_market_data(symbol: str, exchange: str) -> dict:
-    """
-    Main entry point. Validates exchange can trade this asset,
-    normalises symbol, then routes to the correct fetcher.
-    
-    For Alpaca, explicitly detects crypto (contains "/" or is in CRYPTO_SYMBOLS)
-    to prevent routing to stock endpoint with invalid symbols like "BTC/USD".
+    """Validate → normalise → dispatch to the exchange adapter's fetcher.
+
+    The concrete ``_fetch_*`` helpers below remain the wire implementations;
+    each adapter's ``fetch_market_data`` callable wraps them (and picks
+    stock-vs-crypto for Alpaca).
     """
     if not symbol or not exchange:
         raise ValueError("symbol and exchange are required")
-    
+
     clean_symbol = symbol.upper().strip()
     parts = clean_symbol.split("/")
     if len(parts) == 3:
@@ -261,32 +223,14 @@ async def fetch_market_data(symbol: str, exchange: str) -> dict:
 
     ex = exchange.lower()
     validate_exchange_for_symbol(clean_symbol, ex)
-    asset_type = classify_asset(clean_symbol)
-    
-    # Alpaca exchange: real-time market data via Alpaca Data API (IEX / crypto).
-    if ex == "alpaca":
-        if asset_type == "crypto":
-            normalised = normalise_symbol(clean_symbol, ex)
-            logger.debug("Routing Alpaca crypto market data: %s → %s", clean_symbol, normalised)
-            return await _fetch_alpaca_crypto(normalised)
-        if asset_type == "stock":
-            normalised = normalise_symbol(clean_symbol, ex)
-            logger.debug("Routing Alpaca stock market data: %s → %s", clean_symbol, normalised)
-            return await _fetch_alpaca_stock(normalised)
-        raise ValueError(f"Unsupported asset type '{asset_type}' for Alpaca: {clean_symbol}")
-    
-    normalised = normalise_symbol(clean_symbol, ex)
-    
-    if ex == "binance":
-        return await _fetch_binance(normalised)
-    if ex == "coinbase":
-        return await _fetch_coinbase_spot(normalised)
-    if ex == "kraken":
-        return await _fetch_kraken(normalised)
-    if ex == "oanda":
-        return await _fetch_oanda(normalised)
-    
-    raise ValueError(f"Unknown exchange: {exchange}")
+
+    import src.exchanges  # noqa: F401 — populate registry
+    from src.exchanges.registry import get_optional
+
+    spec = get_optional(ex)
+    if spec is None or spec.fetch_market_data is None:
+        raise ValueError(f"Unknown exchange: {exchange}")
+    return await spec.fetch_market_data(clean_symbol)
 
 
 async def _fetch_binance(symbol: str) -> dict:

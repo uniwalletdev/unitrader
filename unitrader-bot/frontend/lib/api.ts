@@ -148,15 +148,17 @@ export const authApi = {
     onboarding_complete?: boolean;
     financial_goal?: string;
     risk_level_setting?: string;
-    signal_stack_mode?: string;
+    execution_mode?: string;
     watchlist?: string[];
     auto_trade_enabled?: boolean;
     auto_trade_threshold?: number;
     signal_notify_min_confidence?: number;
     auto_trade_max_per_scan?: number;
-    apex_selects_threshold?: number;
+    guided_confidence_threshold?: number;
     apex_selects_max_trades?: number;
     apex_selects_asset_classes?: string[];
+    autonomous_mode_unlocked?: boolean;
+    autonomous_unlocked_at?: string | null;
     morning_briefing_enabled?: boolean;
     morning_briefing_time?: string;
     daily_digest_enabled?: boolean;
@@ -171,6 +173,9 @@ export const authApi = {
     trader_class?: string;
   }) => api.post("/api/onboarding/complete-wizard", data ?? {}),
   skipOnboarding: () => api.post("/api/onboarding/skip", {}),
+  advanceTrustLadder: () => api.post("/api/onboarding/trust-ladder/advance", {}),
+  trustLadderStatus: () => api.get("/api/onboarding/trust-ladder/status"),
+  unlockAutonomous: () => api.post("/api/onboarding/unlock-autonomous", {}),
   botInfo: () => api.get("/health/bot-info"),
   claim: (claim_token: string, clerk_token: string) =>
     api.post("/api/auth/claim", { claim_token, clerk_token }),
@@ -323,7 +328,7 @@ export const signalApi = {
     api.get("/api/signals/stack", { params: { trading_account_id: opts?.trading_account_id ?? undefined } }),
   interact: (signalId: string, action: string, tradeId?: string | null) =>
     api.post(`/api/signals/${signalId}/interact`, { action, trade_id: tradeId ?? null }),
-  updateSettings: (data: { signal_stack_mode?: string; watchlist?: string[]; auto_trade_enabled?: boolean; auto_trade_threshold?: number; auto_trade_max_per_scan?: number; apex_selects_threshold?: number; apex_selects_max_trades?: number; apex_selects_asset_classes?: string[]; morning_briefing_enabled?: boolean; morning_briefing_time?: string; daily_digest_enabled?: boolean }) =>
+  updateSettings: (data: { execution_mode?: string; watchlist?: string[]; auto_trade_enabled?: boolean; auto_trade_threshold?: number; auto_trade_max_per_scan?: number; guided_confidence_threshold?: number; apex_selects_max_trades?: number; apex_selects_asset_classes?: string[]; morning_briefing_enabled?: boolean; morning_briefing_time?: string; daily_digest_enabled?: boolean }) =>
     api.patch("/api/signals/settings", data),
   accountSettings: (trading_account_id: string) =>
     api.get("/api/signals/account-settings", { params: { trading_account_id } }),

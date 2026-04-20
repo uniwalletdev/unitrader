@@ -976,13 +976,18 @@ Real-world analogy:"""
         return guidance_map.get(risk_level, guidance_map["balanced"])
 
     def _get_trust_guidance(self, trust_stage: int) -> str:
-        """Return guidance based on user's trust ladder stage."""
+        """Return guidance based on user's Trust Ladder stage.
+
+        Stage 1 (Watch):    analyse/explain only; user executes manually.
+        Stage 2 (Assisted): present ranked options; user selects.
+        Stage 3 (Guided):   generate + risk check; auto-confirm ≥ threshold.
+        Autonomous is not a Trust Ladder stage — it's an explicit opt-in
+        flag checked separately via `ctx.autonomous_mode_unlocked`.
+        """
         guidance_map = {
-            1: "This is paper (simulated) trading. Focus on learning, not profits. Be experimental.",
-            2: "You have proven consistency. Start with very small real trades (0.25% position size).",
-            3: "Standard position sizing applies. You've shown good risk management.",
-            4: "You have demonstrated skill. Can use full position sizing (up to 2%).",
-            5: "Autonomous trading enabled. You can scale up as capital allows.",
+            1: "Watch mode — paper (simulated) trading. Focus on learning, not profits. Be experimental.",
+            2: "Assisted mode — propose 2–3 ranked options. Start with very small real trades (0.25% position size).",
+            3: "Guided mode — generate trade + risk check. Standard position sizing up to 2% when confidence meets threshold.",
         }
         return guidance_map.get(trust_stage, guidance_map[1])
 

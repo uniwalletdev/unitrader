@@ -83,6 +83,10 @@ class SharedContext:
     recent_trades: list[dict] = field(default_factory=list)
     execution_venue: Optional[ExecutionVenue] = None
     account_balance_usd: float = 0.0  # Primary account balance for chat context
+    # Execution Mode × Trust Ladder integration
+    execution_mode: str = "watch"                    # watch | assisted | guided | autonomous
+    guided_confidence_threshold: int = 70            # 1–100; used by Assisted + Guided
+    autonomous_mode_unlocked: bool = False           # gate for autonomous execution
 
     @classmethod
     def default(cls, user_id: str) -> "SharedContext":
@@ -592,6 +596,13 @@ class SharedMemory:
                 performance=performance,
                 recent_trades=recent_trades,
                 account_balance_usd=primary_balance,
+                execution_mode=(getattr(settings, "execution_mode", None) or "watch"),
+                guided_confidence_threshold=int(
+                    getattr(settings, "guided_confidence_threshold", 70) or 70
+                ),
+                autonomous_mode_unlocked=bool(
+                    getattr(settings, "autonomous_mode_unlocked", False)
+                ),
             )
 
             if trading_account_id:

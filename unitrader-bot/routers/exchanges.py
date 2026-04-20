@@ -97,21 +97,18 @@ async def test_exchange_connection(
             "error": "Failed to decrypt API credentials",
         }
 
-    # Step 3: Make test API call based on exchange
+    # Step 3: Make test API call via the exchange registry
     try:
+        import src.exchanges  # noqa: F401 — populate registry
+        from src.exchanges.registry import get_optional
+
+        spec = get_optional(exchange)
+        if spec is None:
+            raise ValueError(f"Unknown exchange: {exchange}")
         async with httpx.AsyncClient(timeout=10.0) as client:
-            if exchange == "alpaca":
-                account_info = await _test_alpaca(client, api_key, api_secret, api_key_row.is_paper)
-            elif exchange == "binance":
-                account_info = await _test_binance(client, api_key, api_secret)
-            elif exchange == "oanda":
-                account_info = await _test_oanda(client, api_key, api_secret)
-            elif exchange == "coinbase":
-                account_info = await _test_coinbase(client, api_key, api_secret)
-            elif exchange == "kraken":
-                account_info = await _test_kraken(api_key, api_secret)
-            else:
-                raise ValueError(f"Unknown exchange: {exchange}")
+            account_info = await spec.test_connection(
+                client, api_key, api_secret, api_key_row.is_paper
+            )
 
         if not account_info:
             raise ValueError("Failed to extract account information")

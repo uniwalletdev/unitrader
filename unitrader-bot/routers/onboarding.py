@@ -7,6 +7,7 @@ Endpoints:
     GET  /api/onboarding/trust-ladder            — Trust ladder status (frontend)
     GET  /api/onboarding/trust-ladder/status     — Alias
     POST /api/onboarding/trust-ladder/advance    — Advance to next trust ladder stage
+    POST /api/onboarding/unlock-autonomous       — Opt into Autonomous execution mode
     POST /api/onboarding/complete-wizard         — Mark onboarding complete after wizard
     POST /api/onboarding/skip                    — Skip onboarding using sensible defaults
 """
@@ -152,6 +153,122 @@ async def advance_trust_ladder(
         await db.rollback()
         logger.error("advance_trust_ladder error for user %s: %s", current_user.id, exc)
         raise HTTPException(status_code=500, detail="Failed to advance trust ladder")
+
+
+@router.post("/unlock-autonomous")
+async def unlock_autonomous_mode(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Explicitly unlock Autonomous execution mode for the current user.
+
+    This is a separate progression from the Trust Ladder `advance()` path — it
+    does not change `trust_ladder_stage`. It only flips
+    `user_settings.autonomous_mode_unlocked` to True.
+
+    Validation (all must pass):
+      1. Trust Ladder stage == 3 (full trading unlocked).
+      2. At least 10 closed live trades on record (is_paper=False).
+      3. Trading is not paused (no active circuit-breaker).
+      4. Risk disclosure has been accepted.
+
+    On success writes an AuditLog row and invalidates the SharedMemory cache.
+    """
+    result = await db.execute(
+        select(UserSettings).where(UserSettings.user_id == current_user.id)
+    )
+    settings = result.scalar_one_or_none()
+    if not settings:
+        settings = UserSettings(user_id=current_user.id)
+        db.add(settings)
+        await db.flush()
+
+    # Idempotent short-circuit
+    if getattr(settings, "autonomous_mode_unlocked", False):
+        return {
+            "unlocked": True,
+            "unlocked_at": (
+                settings.autonomous_unlocked_at.isoformat()
+                if settings.autonomous_unlocked_at
+                else None
+            ),
+            "message": "Autonomous mode already unlocked",
+        }
+
+    # Derive current Trust Ladder stage
+    stage = 1
+    if getattr(settings, "risk_disclosure_accepted", False):
+        stage = 2
+    if getattr(settings, "onboarding_complete", False):
+        stage = 3
+
+    failures: list[str] = []
+    if stage < 3:
+        failures.append(f"trust_ladder_stage={stage} (need 3)")
+    if not getattr(settings, "risk_disclosure_accepted", False):
+        failures.append("risk_disclosure_not_accepted")
+    if bool(getattr(settings, "trading_paused", False)):
+        failures.append("trading_paused")
+
+    # Live-trade count (paper trades excluded)
+    from sqlalchemy import func as sqlfunc
+
+    live_count_result = await db.execute(
+        select(sqlfunc.count()).select_from(Trade).where(
+            Trade.user_id == current_user.id,
+            Trade.is_paper == False,  # noqa: E712
+        )
+    )
+    live_trade_count = int(live_count_result.scalar() or 0)
+    if live_trade_count < 10:
+        failures.append(f"live_trades={live_trade_count} (need 10)")
+
+    if failures:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error": "autonomous_unlock_criteria_not_met",
+                "failures": failures,
+                "trust_ladder_stage": stage,
+                "live_trade_count": live_trade_count,
+            },
+        )
+
+    now = datetime.now(timezone.utc)
+    settings.autonomous_mode_unlocked = True
+    settings.autonomous_unlocked_at = now
+
+    ip_address = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+    db.add(AuditLog(
+        user_id=current_user.id,
+        event_type="autonomous_mode_unlocked",
+        event_details={
+            "trust_ladder_stage": stage,
+            "live_trade_count": live_trade_count,
+            "disclosure": (
+                "User opted into Autonomous mode. Trades fire without manual "
+                "confirmation. A 60-second client-side undo window is offered "
+                "but network loss voids it."
+            ),
+        },
+        ip_address=ip_address,
+        user_agent=user_agent,
+    ))
+    await db.commit()
+
+    try:
+        from src.agents.shared_memory import SharedMemory
+        SharedMemory.invalidate(current_user.id)
+    except Exception:
+        pass
+
+    logger.info(
+        "Autonomous mode unlocked for user %s (live_trades=%d)",
+        current_user.id, live_trade_count,
+    )
+    return {"unlocked": True, "unlocked_at": now.isoformat()}
 
 
 # ─────────────────────────────────────────────

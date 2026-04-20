@@ -6,6 +6,8 @@ interface CircuitBreakerAlertProps {
   tradingPaused: boolean;
   dailyLossPct: number;
   maxDailyLossPct: number;
+  /** User's personalised bot name */
+  botName?: string;
 }
 
 /**
@@ -38,6 +40,7 @@ export default function CircuitBreakerAlert({
   tradingPaused,
   dailyLossPct,
   maxDailyLossPct,
+  botName = "Unitrader",
 }: CircuitBreakerAlertProps) {
   const [showConfirm, setShowConfirm] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -72,7 +75,7 @@ export default function CircuitBreakerAlert({
             </div>
             <div className="flex-1">
               <p className="text-red-500 font-semibold text-sm sm:text-base">
-                Unitrader has paused trading — your daily loss limit of{" "}
+                {botName} has paused trading — your daily loss limit of{" "}
                 <span className="font-bold">{maxDailyLossPct}%</span> was
                 reached today (
                 <span className="font-bold">{dailyLossPct.toFixed(1)}%</span>

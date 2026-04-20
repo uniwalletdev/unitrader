@@ -21,7 +21,7 @@ import { signalApi } from "@/lib/api";
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type SignalDirection = "buy" | "sell" | "watch";
-export type SignalMode = "browse" | "apex_selects" | "full_auto";
+export type SignalMode = "watch" | "assisted" | "guided" | "autonomous";
 export type InteractionAction = "accepted" | "skipped" | "traded";
 
 export interface Signal {
@@ -66,14 +66,14 @@ export interface SignalStackState {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function useSignalStack(
-  userSettings: { signal_stack_mode?: string },
+  userSettings: { execution_mode?: string },
   opts?: { tradingAccountId?: string | null },
 ) {
   const [state, setState] = useState<SignalStackState>({
     signals: [],
     isLoading: true,
     isRefreshing: false,
-    mode: (userSettings.signal_stack_mode as SignalMode) || "browse",
+    mode: (userSettings.execution_mode as SignalMode) || "watch",
     lastScanAt: null,
     nextScanInMinutes: null,
     assetsScanned: 0,
@@ -186,7 +186,7 @@ export function useSignalStack(
   const setMode = useCallback(async (newMode: SignalMode): Promise<void> => {
     setState((prev) => ({ ...prev, mode: newMode }));
     try {
-      await signalApi.updateSettings({ signal_stack_mode: newMode });
+      await signalApi.updateSettings({ execution_mode: newMode });
     } catch {
       // Non-fatal — local mode is still updated; persists on next settings save
     }

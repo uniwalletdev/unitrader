@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { authApi, api } from "@/lib/api";
-import { Check, Lock } from "lucide-react";
+import { Check, Lock, Loader2 } from "lucide-react";
 
 type TraderClass = "complete_novice" | "curious_saver";
 
 type LadderStatus = {
-  stage: 1 | 2 | 3 | 4;
+  stage: 1 | 2 | 3;
   completed_at?: Record<string, string | null>;
   conditions?: Record<string, string[]>;
+  autonomous_mode_unlocked?: boolean;
 };
 
 function clsx(...parts: Array<string | false | null | undefined>) {
@@ -42,9 +43,14 @@ export default function TrustLadderDetail() {
         unlocksWhen: ["5 paper trades completed", "Risk disclosure accepted"],
       },
       {
-        key: "4",
-        title: "Stage 4 — Autonomy",
-        unlocksWhen: ["Sustained performance", "No recent circuit breaker triggers"],
+        key: "autonomous",
+        title: "Autonomous Mode (opt-in)",
+        unlocksWhen: [
+          "Stage 3 completed",
+          "10 live trades placed",
+          "Risk disclosure accepted",
+          "No active circuit-breaker",
+        ],
       },
     ];
   }, []);
@@ -97,6 +103,26 @@ export default function TrustLadderDetail() {
   if (traderClass === "other") return null;
 
   const stage = status?.stage ?? 1;
+  const autonomousUnlocked = status?.autonomous_mode_unlocked ?? false;
+
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
+
+  const handleUnlockAutonomous = async () => {
+    setUnlocking(true);
+    setUnlockError(null);
+    try {
+      await api.post("/api/onboarding/unlock-autonomous", {});
+      setStatus((prev) => prev ? { ...prev, autonomous_mode_unlocked: true } : prev);
+    } catch (e: any) {
+      const failures: string[] | undefined = e?.response?.data?.detail?.failures;
+      setUnlockError(
+        failures?.join(", ") ?? e?.response?.data?.detail ?? "Unlock failed"
+      );
+    } finally {
+      setUnlocking(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -109,10 +135,67 @@ export default function TrustLadderDetail() {
 
       <div className="space-y-4">
         {stages.map((s, idx) => {
-          const n = idx + 1;
-          const isDone = n < stage;
-          const isActive = n === stage;
-          const completionDate = formatDate(status?.completed_at?.[String(n)] ?? null);
+          const isAutonomousRow = s.key === "autonomous";
+          const n = isAutonomousRow ? 0 : idx + 1;
+          const isDone = !isAutonomousRow && n < stage;
+          const isActive = !isAutonomousRow && n === stage;
+          const completionDate = !isAutonomousRow ? formatDate(status?.completed_at?.[String(n)] ?? null) : null;
+
+          if (isAutonomousRow) {
+            return (
+              <div key={s.key} className="flex gap-3">
+                <div className="flex flex-col items-center">
+                  <div
+                    className={clsx(
+                      "relative flex h-7 w-7 items-center justify-center rounded-full",
+                      autonomousUnlocked
+                        ? "bg-green-500 text-dark-950"
+                        : "border border-dark-700 bg-dark-950 text-dark-400",
+                    )}
+                  >
+                    {autonomousUnlocked ? <Check size={14} /> : <Lock size={14} />}
+                  </div>
+                </div>
+                <div className="flex-1 rounded-xl border border-dark-800 bg-dark-950 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="text-sm font-semibold text-white">{s.title}</div>
+                    {autonomousUnlocked && (
+                      <div className="text-xs font-semibold text-emerald-400">Unlocked</div>
+                    )}
+                  </div>
+                  {autonomousUnlocked ? (
+                    <div className="mt-2 text-xs text-dark-400">
+                      Autonomous mode is active. Switch to Auto mode on the Trade page.
+                    </div>
+                  ) : (
+                    <div className="mt-3 flex flex-col gap-2">
+                      <ul className="space-y-1 text-xs text-dark-400">
+                        {s.unlocksWhen.map((c) => (
+                          <li key={c} className="flex items-start gap-2">
+                            <span className="mt-1 h-1.5 w-1.5 rounded-full bg-dark-600" />
+                            <span>{c}</span>
+                          </li>
+                        ))}
+                      </ul>
+                      {stage >= 3 && (
+                        <button
+                          onClick={handleUnlockAutonomous}
+                          disabled={unlocking}
+                          className="mt-1 w-fit rounded-lg bg-brand-500 px-4 py-2 text-xs font-semibold text-white hover:bg-brand-400 transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                        >
+                          {unlocking && <Loader2 className="w-3 h-3 animate-spin" />}
+                          Unlock Autonomous Mode
+                        </button>
+                      )}
+                      {unlockError && (
+                        <p className="text-[11px] text-red-400">{unlockError}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          }
 
           return (
             <div key={s.key} className="flex gap-3">
@@ -171,9 +254,7 @@ export default function TrustLadderDetail() {
                     </span>
                   </div>
                 ) : (
-                  <div className="mt-3 text-xs text-dark-400">
-                    Unlocked
-                  </div>
+                  <div className="mt-3 text-xs text-dark-400">Unlocked</div>
                 )}
               </div>
             </div>

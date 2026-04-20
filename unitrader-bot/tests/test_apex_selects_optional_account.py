@@ -51,7 +51,7 @@ async def test_apex_selects_invalid_trading_account_id_returns_empty():
     # Provide a settings row so we hit resolve_market_context with a bad ID.
     settings_row = SimpleNamespace(
         preferred_trading_account_id="bad-acct",
-        apex_selects_threshold=75,
+        guided_confidence_threshold=70,
         apex_selects_max_trades=2,
         apex_selects_asset_classes=["stocks", "crypto"],
         watchlist=[],

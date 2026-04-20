@@ -1008,33 +1008,29 @@ def get_exchange_client(
 ) -> BaseExchangeClient:
     """Return the appropriate exchange client for the given exchange name.
 
+    Dispatches via :mod:`src.exchanges.registry`. To add a new exchange,
+    drop a new module in ``src/exchanges/`` — no edits here required.
+
     Args:
-        exchange: One of 'binance', 'alpaca', 'oanda'.
+        exchange: Lower-cased venue id (e.g. ``"binance"``).
         api_key: Decrypted API key.
-        api_secret: Decrypted API secret.
+        api_secret: Decrypted API secret (or account id for OANDA).
         is_paper: If True, route to paper/sandbox endpoints where applicable.
 
     Raises:
         ValueError: If exchange is not supported.
     """
-    exchange = exchange.lower()
-    if exchange == "binance":
-        return BinanceClient(api_key, api_secret, base_url=kwargs.get("base_url"))
-    if exchange == "alpaca":
-        return AlpacaClient(
-            api_key,
-            api_secret,
-            base_url=kwargs.get("base_url"),
-            is_paper=is_paper,
-        )
-    if exchange == "oanda":
-        return OandaClient(api_key, api_secret, account_id=kwargs.get("account_id"))
-    if exchange == "coinbase":
-        return CoinbaseClient(api_key, api_secret)
-    if exchange == "kraken":
-        from src.integrations.kraken_client import KrakenClient
+    # Lazy import triggers adapter-module registration the first time any
+    # caller asks for a client in this process.
+    import src.exchanges  # noqa: F401 — side-effect populates registry
+    from src.exchanges.registry import get_optional
 
-        return KrakenClient(api_key, api_secret)
-    raise ValueError(
-        f"Unsupported exchange: '{exchange}'. Choose binance, alpaca, oanda, coinbase, or kraken."
-    )
+    spec = get_optional(exchange)
+    if spec is None:
+        from src.exchanges.registry import all_ids
+
+        raise ValueError(
+            f"Unsupported exchange: '{exchange}'. "
+            f"Choose {', '.join(sorted(all_ids()))}."
+        )
+    return spec.build_client(api_key, api_secret, is_paper=is_paper, **kwargs)

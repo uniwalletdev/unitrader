@@ -492,8 +492,11 @@ class UserSettings(Base):
     # User preferences
     leaderboard_opt_out: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     push_token: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    signal_stack_mode: Mapped[str] = mapped_column(
-        String(20), default="browse", nullable=False
+    # Execution mode — controls how trades are initiated.
+    # Values: watch | assisted | guided | autonomous
+    # Gated by Trust Ladder stage + autonomous_mode_unlocked flag in Orchestrator.
+    execution_mode: Mapped[str] = mapped_column(
+        String(20), default="watch", nullable=False
     )
     watchlist: Mapped[list | None] = mapped_column(JSON, nullable=True)
     auto_trade_enabled: Mapped[bool] = mapped_column(
@@ -509,13 +512,22 @@ class UserSettings(Base):
     auto_trade_max_per_scan: Mapped[int] = mapped_column(
         Integer, default=1, nullable=False
     )
-    apex_selects_threshold: Mapped[int] = mapped_column(
-        Integer, default=75, nullable=False
+    # Unified confidence threshold used by Assisted (ranking bar) and Guided
+    # (auto-confirm gate) modes. Replaces legacy apex_selects_threshold.
+    guided_confidence_threshold: Mapped[int] = mapped_column(
+        Integer, default=70, nullable=False
     )
     apex_selects_max_trades: Mapped[int] = mapped_column(
         Integer, default=2, nullable=False
     )
     apex_selects_asset_classes: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # Autonomous mode opt-in (explicit unlock, requires Stage 3 + criteria).
+    autonomous_mode_unlocked: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    autonomous_unlocked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     morning_briefing_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False
     )

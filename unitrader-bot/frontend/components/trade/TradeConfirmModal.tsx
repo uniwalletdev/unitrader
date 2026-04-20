@@ -101,6 +101,7 @@ export default function TradeConfirmModal({
   notionalAmount,
   notionalGbp,
   currencySymbol = "$",
+  botName = "Unitrader",
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -114,6 +115,8 @@ export default function TradeConfirmModal({
   notionalGbp?: number;
   /** Prefix for notional / estimated cost rows */
   currencySymbol?: string;
+  /** User's personalised bot name */
+  botName?: string;
 }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -139,7 +142,7 @@ export default function TradeConfirmModal({
 
   const confirmText = useMemo(() => {
     if (traderClass === "complete_novice" || traderClass === "curious_saver") {
-      return isPaper ? "Confirm practice trade" : "Yes, let Unitrader make this trade";
+      return isPaper ? "Confirm practice trade" : `Yes, let ${botName} make this trade`;
     }
     if (traderClass === "self_taught") return isPaper ? "Confirm paper trade" : "Confirm trade";
     if (traderClass === "experienced") return isPaper ? "Submit paper" : "Execute";
@@ -307,7 +310,7 @@ export default function TradeConfirmModal({
               </div>
 
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                <div className="text-xs font-semibold text-dark-200">Unitrader summary</div>
+                <div className="text-xs font-semibold text-dark-200">{botName}'s summary</div>
                 <div className="mt-2 text-sm text-dark-200">
                   {apexSummary || "—"}
                 </div>
@@ -350,7 +353,7 @@ export default function TradeConfirmModal({
               </div>
 
               <div className="rounded-xl border border-dark-800 bg-dark-950 p-4">
-                <div className="text-xs font-semibold text-dark-200">Reasoning</div>
+                <div className="text-xs font-semibold text-dark-200">{botName}&apos;s reasoning</div>
                 <div className="mt-2 text-sm text-dark-200">{apexSummary || "—"}</div>
               </div>
             </div>

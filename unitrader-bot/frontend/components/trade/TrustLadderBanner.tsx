@@ -15,6 +15,8 @@ export interface TrustLadderBannerProps {
   currencySymbol?: string;
   /** ISO code for copy (e.g. "USD") */
   currencyCode?: string;
+  /** User's personalised bot name */
+  botName?: string;
 }
 
 function clsx(...parts: Array<string | false | null | undefined>) {
@@ -22,6 +24,7 @@ function clsx(...parts: Array<string | false | null | undefined>) {
 }
 
 export default function TrustLadderBanner(props: TrustLadderBannerProps) {
+  const botName = props.botName ?? "Unitrader";
   const [advancing, setAdvancing] = useState(false);
 
   const tc = String(props.traderClass ?? "");
@@ -48,8 +51,8 @@ export default function TrustLadderBanner(props: TrustLadderBannerProps) {
   const code = (props.currencyCode ?? "USD").toUpperCase();
 
   const leftText = isStage1
-    ? "Watch Mode - Unitrader is using paper money. Zero real risk to you."
-    : `Micro Mode - trades capped at ${sym}25 (${code}) while Unitrader earns your trust`;
+    ? `Watch Mode - ${botName} is using paper money. Zero real risk to you.`
+    : `Micro Mode - trades capped at ${sym}25 (${code}) while ${botName} earns your trust`;
 
   const progressPct = Math.max(
     0,

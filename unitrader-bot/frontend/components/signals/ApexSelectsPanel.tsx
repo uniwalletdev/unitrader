@@ -10,7 +10,7 @@ import { Signal } from "@/hooks/useSignalStack";
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface UserSettings {
-  apex_selects_threshold?: number;
+  guided_confidence_threshold?: number;
   apex_selects_max_trades?: number;
   apex_selects_asset_classes?: string[];
   max_trade_amount?: number;
@@ -77,7 +77,7 @@ export default function BotSelectsPanel({
   const [done, setDone] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
 
-  const [threshold, setThreshold] = useState(userSettings.apex_selects_threshold ?? 75);
+  const [threshold, setThreshold] = useState(userSettings.guided_confidence_threshold ?? 70);
   const [maxTrades, setMaxTrades] = useState(userSettings.apex_selects_max_trades ?? 3);
   const [assetClasses, setAssetClasses] = useState<string[]>(
     userSettings.apex_selects_asset_classes ?? ["stocks", "crypto"]
