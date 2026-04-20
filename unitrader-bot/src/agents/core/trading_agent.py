@@ -880,10 +880,23 @@ class TradingAgent:
             )
         except Exception as exc:
             logger.error("Trade analysis failed for %s/%s: %s", symbol, exchange, exc)
+            exc_str = str(exc).lower()
+            if "credit" in exc_str or "billing" in exc_str or "balance is too low" in exc_str:
+                user_msg = "Analysis is temporarily unavailable — the AI service is being topped up. Please try again shortly."
+            elif ("rate" in exc_str and "limit" in exc_str) or "429" in exc_str or "overloaded" in exc_str:
+                user_msg = "The AI is handling high demand right now. Please wait a moment and try again."
+            elif "timeout" in exc_str or "timed out" in exc_str or "time out" in exc_str:
+                user_msg = "Analysis timed out — please try again."
+            elif "api key" in exc_str or "authentication" in exc_str or "401" in exc_str or "invalid x-api-key" in exc_str:
+                user_msg = "Analysis is temporarily unavailable. Please try again shortly."
+            elif "connection" in exc_str or "network" in exc_str or "unreachable" in exc_str:
+                user_msg = "Could not reach the AI service — please check your connection and try again."
+            else:
+                user_msg = "Analysis is unavailable right now. Please try again shortly."
             return TradeAnalysis(
                 signal="wait",
                 confidence=0,
-                explanation_expert=f"Analysis error: {str(exc)}",
+                explanation_expert=user_msg,
                 key_factors=[],
                 suggested_stop_loss_pct=0.0,
                 suggested_take_profit_pct=0.0,

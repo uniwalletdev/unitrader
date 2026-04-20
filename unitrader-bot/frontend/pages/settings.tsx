@@ -4,6 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/router";
 import { ArrowLeft, AlertCircle, Loader, Check, Bell } from "lucide-react";
 import { authApi, notificationApi } from "@/lib/api";
+import { sanitizeApiError } from "@/lib/errorUtils";
 import CircuitBreakerAlert from "@/components/trade/CircuitBreakerAlert";
 import { NotificationSettings } from "@/components/settings/NotificationSettings";
 
@@ -74,12 +75,8 @@ export default function SettingsPage() {
         setTelegramUsername(typeof tu === "string" && tu.length > 0 ? tu : null);
         const wn = notifRes.data?.data?.whatsapp_number;
         setWhatsappNumberDisplay(typeof wn === "string" && wn.length > 0 ? wn : null);
-      } catch (err: any) {
-        if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
-          setError("Settings took too long to load. Please refresh the page.");
-        } else {
-          setError(err.response?.data?.detail || "Failed to load settings");
-        }
+      } catch (err: unknown) {
+        setError(sanitizeApiError(err, "Failed to load settings — please refresh the page."));
       } finally {
         setLoading(false);
       }
@@ -107,8 +104,8 @@ export default function SettingsPage() {
           setSettings(prev => prev ? { ...prev, max_daily_loss: dailyLossPct } : null);
           setSuccess("Daily loss limit updated");
           setTimeout(() => setSuccess(null), 3000);
-        } catch (err: any) {
-          setError(err.response?.data?.detail || "Failed to save settings");
+        } catch (err: unknown) {
+          setError(sanitizeApiError(err, "Failed to save settings — please try again."));
         } finally {
           setIsSaving(false);
         }

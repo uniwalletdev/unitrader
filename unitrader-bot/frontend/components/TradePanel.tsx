@@ -6,6 +6,7 @@ import {
   ChevronDown, ChevronUp,
 } from "lucide-react";
 import { api, tradingApi, exchangeApi, authApi } from "@/lib/api";
+import { sanitizeApiError } from "@/lib/errorUtils";
 import CircuitBreakerAlert from "./trade/CircuitBreakerAlert";
 import ExplanationToggle from "./trade/ExplanationToggle";
 import TradeConfirmModal from "./trade/TradeConfirmModal";
@@ -431,12 +432,8 @@ export default function TradePanel({ onNavigate }: { onNavigate?: (tab: string) 
       if (data?.status === "rejected" || data?.status === "error") {
         setOdError(data.reason || "Analysis failed.");
       }
-    } catch (err: any) {
-      const detail = err.response?.data?.detail;
-      setOdError(
-        typeof detail === "string" ? detail
-          : err.response?.data?.message || err.message || "Analysis failed."
-      );
+    } catch (err: unknown) {
+      setOdError(sanitizeApiError(err, "Analysis failed — please try again."));
     } finally {
       setOdAnalyzing(false);
     }

@@ -7,6 +7,7 @@ import { useAuth } from "@clerk/nextjs";
 import { CheckCircle, Loader2 } from "lucide-react";
 import GalaxyLoader from "@/components/layout/GalaxyLoader";
 import { api, authApi, exchangeApi, signalApi, tradingApi } from "@/lib/api";
+import { sanitizeApiError } from "@/lib/errorUtils";
 
 import BotOnboardingChat from "@/components/onboarding/ApexOnboardingChat";
 import WhatIfSimulator from "@/components/onboarding/WhatIfSimulator";
@@ -1040,9 +1041,9 @@ function TradePage() {
       setAnalysisError(null);
       const newState = applyAnalyzeResponseToTradeButton(payload, ex, symbol.trim());
       setTradeButtonState(newState);
-    } catch {
+    } catch (err: unknown) {
       setAnalysis(null);
-      setAnalysisError(null);
+      setAnalysisError(sanitizeApiError(err, "Analysis failed — please try again."));
       setTradeButtonState("data-unavailable");
     } finally {
       setAnalyzing(false);
@@ -1300,9 +1301,11 @@ function TradePage() {
       if (detail === "onboarding_required") {
         // Server guard fired — clear local state and show wizard
         setSettings((prev) => ({ ...prev, onboarding_complete: false }));
-        throw new Error("Please complete onboarding first");
+        setToast("Please complete onboarding before trading.");
+        return;
       }
-      throw e;
+      setToast(sanitizeApiError(e, "Trade failed — please try again."));
+      return;
     }
     const data = res.data?.data ?? res.data;
     if (data?.status === "wait" || String(data?.decision ?? "").toUpperCase() === "WAIT") {
