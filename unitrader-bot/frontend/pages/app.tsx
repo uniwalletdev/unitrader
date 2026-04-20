@@ -966,7 +966,7 @@ export default function AppPage() {
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false);
   const [isMobileView, setIsMobileView] = useState(false);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
-  const [dashboardSignalMode, setDashboardSignalMode] = useState<SignalStackMode>("browse");
+  const [dashboardSignalMode, setDashboardSignalMode] = useState<SignalStackMode>("watch");
 
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { signOut } = useClerk();
