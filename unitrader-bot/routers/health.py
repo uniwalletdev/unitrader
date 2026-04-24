@@ -143,7 +143,7 @@ async def ai_health():
         client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         # Minimal call to verify key validity
         await client.messages.create(
-            model="claude-3-haiku-20240307",
+            model=settings.anthropic_model_fast,
             max_tokens=5,
             messages=[{"role": "user", "content": "ping"}],
         )

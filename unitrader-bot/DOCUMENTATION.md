@@ -786,6 +786,7 @@ These issues were discovered and fixed during development testing:
 | `anthropic.Anthropic proxies` error | `anthropic==0.26.0` uses removed `httpx` `proxies` arg | Upgraded `anthropic` to `>=0.40.0` |
 | `by_alias NoneType PyBool` error | pydantic `2.5.0` incompatible with `anthropic 0.84.0` | Upgraded pydantic to `>=2.7.0` |
 | `claude-3-opus-20240229` → 404 | Model deprecated by Anthropic | Switched all agents to `claude-3-haiku-20240307` |
+| `claude-3-haiku-20240307` → 404 (2026-04-20) | Haiku 3 retired by Anthropic | Centralised on `settings.anthropic_model_fast` (default `claude-haiku-4-5-20251001`); migration `007_haiku_4_5_fallback.sql` updates `token_optimizer_config.fallback_model`. Cost ~4× Haiku 3. |
 | Sync Claude in async endpoints | `asyncio.to_thread` with old sync client | Switched all agents to `AsyncAnthropic` and direct `await` |
 | Port 8000 in use on restart | Old server process not fully terminated | Kill with `netstat -ano | findstr :8000` before restart |
 

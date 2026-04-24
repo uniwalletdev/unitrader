@@ -59,7 +59,7 @@ from src.agents.token_manager import get_token_manager
 logger = logging.getLogger(__name__)
 
 _CLAUDE_MODEL = "claude-sonnet-4-20250514"
-_CLAUDE_MODEL_FAST = "claude-3-haiku-20240307"  # translations / summaries only
+_CLAUDE_MODEL_FAST = settings.anthropic_model_fast  # translations / summaries only; env-overridable
 
 # ─────────────────────────────────────────────
 # Trader-class trade-size limits (in GBP/USD)

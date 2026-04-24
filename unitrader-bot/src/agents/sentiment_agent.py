@@ -514,7 +514,7 @@ Return JSON only:
 
         try:
             response = await self.claude_client.messages.create(
-                model="claude-3-haiku-20240307",
+                model=settings.anthropic_model_fast,
                 max_tokens=300,
                 messages=[{"role": "user", "content": prompt}],
             )

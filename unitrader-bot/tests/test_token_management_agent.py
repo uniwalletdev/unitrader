@@ -87,9 +87,16 @@ class TestCalculateCost:
         assert cost == pytest.approx(3.00 + 15.00, rel=1e-6)
 
     def test_haiku_pricing(self):
-        """Claude Haiku 3: $0.25/$1.25 per 1M tokens."""
+        """Claude Haiku 3: $0.25/$1.25 per 1M tokens (retired 2026-04-20
+        but retained in the ledger so historical token_usage rows still
+        cost-compute correctly)."""
         cost = calculate_cost(1_000_000, 1_000_000, "claude-3-haiku-20240307")
         assert cost == pytest.approx(0.25 + 1.25, rel=1e-6)
+
+    def test_haiku_4_5_pricing(self):
+        """Claude Haiku 4.5: $1.00/$5.00 per 1M tokens (~4× Haiku 3)."""
+        cost = calculate_cost(1_000_000, 1_000_000, "claude-haiku-4-5-20251001")
+        assert cost == pytest.approx(1.00 + 5.00, rel=1e-6)
 
     def test_cached_discount(self):
         """Cached input tokens billed at 10% of uncached rate."""

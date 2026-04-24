@@ -112,7 +112,9 @@ class Settings(BaseSettings):
     # ─────────────────────────────────────────────
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-20250514"
-    anthropic_model_fast: str = "claude-3-haiku-20240307"
+    # Haiku 4.5 replaces retired Haiku 3 (deprecated 2026-04-20).
+    # Pricing note: $1.00/$5.00 per 1M tokens vs 3's $0.25/$1.25 (~4x).
+    anthropic_model_fast: str = "claude-haiku-4-5-20251001"
     anthropic_base_url: str = "https://api.anthropic.com"
 
     # ─────────────────────────────────────────────

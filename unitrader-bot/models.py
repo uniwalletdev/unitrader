@@ -1513,7 +1513,7 @@ class TokenOptimizerConfig(Base):
         String(32), nullable=False, default="sliding_window"
     )
     fallback_model: Mapped[str] = mapped_column(
-        String(64), nullable=False, default="claude-3-haiku-20240307"
+        String(64), nullable=False, default="claude-haiku-4-5-20251001"
     )
     enabled_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

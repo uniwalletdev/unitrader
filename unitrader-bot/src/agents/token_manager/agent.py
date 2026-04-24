@@ -37,10 +37,11 @@ from src.agents.token_manager.rate_limiter import get_rate_limiter
 
 logger = logging.getLogger(__name__)
 
-# Complexity → model mapping.
-_MODEL_SIMPLE = "claude-3-haiku-20240307"
+# Complexity → model mapping. Fast/simple models come from settings so the
+# retired-model swap is a one-line env change; complex remains pinned.
+_MODEL_SIMPLE = settings.anthropic_model_fast
 _MODEL_COMPLEX = "claude-sonnet-4-20250514"
-_MODEL_FALLBACK = "claude-3-haiku-20240307"
+_MODEL_FALLBACK = settings.anthropic_model_fast
 
 # Priority classification for agents (kept in sync with SQL seed).
 _P0_AGENTS = frozenset({"trading", "token_manager"})

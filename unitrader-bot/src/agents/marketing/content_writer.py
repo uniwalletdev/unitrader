@@ -29,7 +29,7 @@ from src.services.learning_hub import (
 
 logger = logging.getLogger(__name__)
 
-_CLAUDE_MODEL = "claude-3-haiku-20240307"
+_CLAUDE_MODEL = settings.anthropic_model_fast
 _MAX_TOKENS = 4096
 
 # ─────────────────────────────────────────────

@@ -48,6 +48,13 @@ MODEL_PRICING: dict[str, dict[str, float]] = {
         "output": 4.00,
         "cached_input": 0.08,
     },
+    # Claude Haiku 4.5 — replaces retired claude-3-haiku-20240307 (2026-04-20).
+    # ~4x more expensive than Haiku 3; monitor token spend after rollout.
+    "claude-haiku-4-5-20251001": {
+        "input": 1.00,
+        "output": 5.00,
+        "cached_input": 0.10,
+    },
 }
 
 # Fallback pricing when model is unknown (conservative — Sonnet-level).
