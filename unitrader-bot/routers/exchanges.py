@@ -29,7 +29,7 @@ router = APIRouter(prefix="/api/exchanges", tags=["Exchanges"])
 
 @router.get("/test-connection")
 async def test_exchange_connection(
-    exchange: str = Query(..., regex="^(alpaca|binance|oanda|coinbase|kraken)$"),
+    exchange: str = Query(..., regex="^(alpaca|binance|oanda|coinbase|kraken|etoro)$"),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):

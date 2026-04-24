@@ -275,6 +275,16 @@ class Settings(BaseSettings):
     feature_ai_analysis_enabled: bool = True
     feature_email_verification: bool = True
     feature_stripe_billing: bool = False  # enable when Stripe is configured
+    feature_etoro_enabled: bool = False  # Phase B1 — flip to true after internal rollout
+    feature_revolut_enabled: bool = False  # Phase B2 — flip to true after internal rollout
+
+    # ─────────────────────────────────────────────
+    # eToro (Phase B1)
+    # ─────────────────────────────────────────────
+    # App-level public API key shared across all users. Required header on
+    # every request to eToro's public API (x-api-key). User-specific auth is
+    # handled via the per-user user_key stored in ExchangeAPIKey.
+    etoro_public_api_key: str = ""
     testing_mode: str = "false"  # Set to "true" to bypass trade limits
     disable_background_loops: bool = Field(
         default=False,

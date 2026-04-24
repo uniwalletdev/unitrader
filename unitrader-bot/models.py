@@ -416,6 +416,12 @@ class ExchangeAPIKey(Base):
     is_paper: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     key_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
 
+    # eToro-only: environment selector. 'demo' ⇔ is_paper=True, 'real' ⇔ is_paper=False.
+    # NULL for every non-eToro row. See deployment/migrations/005_etoro_support.sql.
+    etoro_environment: Mapped[str | None] = mapped_column(
+        String(10), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

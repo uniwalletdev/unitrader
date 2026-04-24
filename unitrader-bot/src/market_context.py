@@ -44,6 +44,8 @@ class Exchange(str, Enum):
 
     KRAKEN = "kraken"
 
+    ETORO = "etoro"
+
 
 
 
@@ -55,6 +57,10 @@ class AssetClass(str, Enum):
     CRYPTO = "crypto"
 
     FOREX = "forex"
+
+    ETFS = "etfs"          # Phase B1 — tagged separately for UI; trading/risk reuses STOCKS path.
+
+    COMMODITIES = "commodities"  # Phase B1 — first-class enum, 0.75x position size multiplier until tuned.
 
 
 
@@ -75,6 +81,8 @@ EXCHANGE_ASSET_CLASSES: dict[Exchange, set[AssetClass]] = {
     Exchange.KRAKEN: {AssetClass.CRYPTO},
 
     Exchange.OANDA: {AssetClass.FOREX},
+
+    Exchange.ETORO: {AssetClass.STOCKS, AssetClass.CRYPTO, AssetClass.ETFS, AssetClass.COMMODITIES},
 
 }
 
@@ -456,6 +464,8 @@ EXCHANGE_PRIMARY_ASSET_CLASS: dict[str, AssetClass] = {
 
     "oanda": AssetClass.FOREX,
 
+    "etoro": AssetClass.STOCKS,
+
 }
 
 
@@ -471,6 +481,8 @@ EXCHANGE_PAPER_MODE: dict[str, PaperModeType] = {
     "kraken": PaperModeType.SYNTHETIC,
 
     "oanda": PaperModeType.SYNTHETIC,
+
+    "etoro": PaperModeType.NATIVE,   # eToro has a genuine Demo environment
 
 }
 
@@ -540,11 +552,13 @@ _EXCHANGE_PRIORITY = {
 
     Exchange.COINBASE: 1,
 
-    Exchange.BINANCE: 2,
+    Exchange.ETORO: 2,       # Prefer eToro over Binance/Kraken/OANDA when user has all
 
-    Exchange.KRAKEN: 3,
+    Exchange.BINANCE: 3,
 
-    Exchange.OANDA: 4,
+    Exchange.KRAKEN: 4,
+
+    Exchange.OANDA: 5,
 
 }
 

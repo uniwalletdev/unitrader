@@ -17,6 +17,7 @@ from . import binance  # noqa: F401
 from . import coinbase  # noqa: F401
 from . import kraken  # noqa: F401
 from . import oanda  # noqa: F401
+from . import etoro  # noqa: F401
 
 from .registry import (  # noqa: F401  (re-exports)
     AssetClass,

@@ -124,13 +124,19 @@ class ClosePositionRequest(BaseModel):
 
 
 class ConnectExchangeRequest(BaseModel):
-    exchange: str = Field(..., pattern="^(alpaca|binance|oanda|coinbase|kraken)$")
+    exchange: str = Field(..., pattern="^(alpaca|binance|oanda|coinbase|kraken|etoro)$")
     api_key: str = Field(..., min_length=1)
     api_secret: str = Field(..., min_length=1)
     is_paper: bool = Field(True, description="Whether these are paper/sandbox keys")
+    # eToro only: 'demo' or 'real'. When provided, is_paper is derived from this.
+    etoro_environment: str | None = Field(
+        default=None,
+        pattern="^(demo|real)$",
+        description="eToro environment (demo|real). Derives is_paper when exchange=='etoro'.",
+    )
 
 
-VALID_EXCHANGES = {"alpaca", "binance", "oanda", "coinbase", "kraken"}
+VALID_EXCHANGES = {"alpaca", "binance", "oanda", "coinbase", "kraken", "etoro"}
 
 
 def _account_label(exchange: str, is_paper: bool) -> str:
@@ -372,6 +378,12 @@ async def connect_exchange(
     # Coinbase has no paper/sandbox trading; force live to prevent bad labels & mode splits.
     if exchange == "coinbase":
         is_paper = False
+    # eToro: the environment field (demo|real) is the source of truth.
+    # is_paper is derived so downstream paper/live logic stays unchanged.
+    etoro_environment: str | None = None
+    if exchange == "etoro":
+        etoro_environment = (body.etoro_environment or ("demo" if is_paper else "real")).lower()
+        is_paper = etoro_environment == "demo"
 
     balance = await _validate_exchange_keys(exchange, body.api_key, body.api_secret, is_paper)
 
@@ -400,7 +412,7 @@ async def connect_exchange(
             old_key.rotated_at = datetime.now(timezone.utc)
 
         now = datetime.now(timezone.utc)
-        new_key = ExchangeAPIKey(
+        new_key_kwargs = dict(
             user_id=current_user.id,
             trading_account_id=account.id,
             exchange=exchange,
@@ -410,6 +422,9 @@ async def connect_exchange(
             is_active=True,
             is_paper=is_paper,
         )
+        if exchange == "etoro" and etoro_environment is not None:
+            new_key_kwargs["etoro_environment"] = etoro_environment
+        new_key = ExchangeAPIKey(**new_key_kwargs)
         db.add(new_key)
         await db.commit()
         await db.refresh(new_key)
@@ -484,7 +499,7 @@ async def list_exchange_keys(
 
 @router.delete("/exchange-keys/{exchange}")
 async def disconnect_exchange(
-    exchange: str = Path(..., pattern="^(alpaca|binance|oanda|coinbase|kraken)$"),
+    exchange: str = Path(..., pattern="^(alpaca|binance|oanda|coinbase|kraken|etoro)$"),
     trading_account_id: str | None = Query(None),
     is_paper: bool | None = Query(None),
     current_user=Depends(get_current_user),

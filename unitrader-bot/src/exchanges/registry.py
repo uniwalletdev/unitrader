@@ -36,6 +36,11 @@ class AssetClass(str, Enum):
     CRYPTO = "crypto"
     FOREX = "forex"
     OPTIONS = "options"
+    ETFS = "etfs"          # Phase B1 — routed as stocks for risk/trading, tagged
+                           # separately only for UI display (e.g. SPY, QQQ, GLD).
+    COMMODITIES = "commodities"  # Phase B1 — first-class, minimal surface area:
+                                 # one explanation template + 0.75x position
+                                 # size multiplier until tuned with real data.
 
 
 class PaperMode(str, Enum):
