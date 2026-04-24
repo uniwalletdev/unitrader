@@ -1108,14 +1108,21 @@ async def execute_trade(
         # returning 501 here is the belt-and-braces that keeps the error
         # surface clean and lets the frontend show a coherent message.
         # Read paths (connect wizard, balance, positions) are unaffected.
+        #
+        # Copy note: the `message` below is shown directly to end-users via
+        # the generic error-toast path. Phrase it as an action the user can
+        # take, not as internal state ("pending"). Keep `code` stable for
+        # machine-readable dispatch in the frontend.
         if body.exchange.lower() == "etoro":
             raise HTTPException(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
                 detail={
                     "code": "etoro_trade_execution_pending",
                     "message": (
-                        "eToro trade execution is not available yet. "
-                        "Connect is live; order placement ships in a follow-up."
+                        "eToro trade execution isn't available yet. Your eToro "
+                        "account is connected and read-only features (balance, "
+                        "positions, prices) work — but to place trades right "
+                        "now, connect Alpaca or Coinbase."
                     ),
                 },
             )

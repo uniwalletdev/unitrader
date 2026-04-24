@@ -17,6 +17,9 @@ const KNOWN_CODES: Record<string, string> = {
   subscription_required: "An active subscription is required to use this feature.",
   trading_paused: "Trading is paused — your daily loss limit has been reached.",
   market_closed: "The market is currently closed. Try again during trading hours.",
+  etoro_trade_execution_pending:
+    "eToro trading isn't available yet — your eToro account is connected for read-only features, " +
+    "but to place trades now, use Alpaca or Coinbase.",
 };
 
 /**

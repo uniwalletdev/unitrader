@@ -1348,9 +1348,15 @@ Provide your detailed technical analysis with the specified JSON format."""
 
                 # ── eToro write-path gate (MVP-B) ──────────────────────────
                 # EtoroClient.place_order raises NotImplementedError in MVP-B.
-                # Early-skip so the autonomous scanner log stays clean and
-                # the user sees a coherent rejection reason rather than a
-                # stack trace. Remove once the write-path follow-up ships.
+                # The `except Exception` around the client call below would
+                # already catch this and return a rejection — so this guard
+                # is NOT the thing standing between NotImplementedError and
+                # a scanner halt (the broad catch does that job). This
+                # guard exists purely for log clarity: it emits an INFO
+                # "skipping" line with the real reason instead of the
+                # broad catch emitting an ERROR "Order placement failed:
+                # eToro order placement not yet implemented..." stack.
+                # Remove once the write-path follow-up ships.
                 if exchange_name == "etoro":
                     logger.info(
                         "Skipping order for user %s: eToro trade execution pending follow-up",
@@ -1816,8 +1822,10 @@ Provide your detailed technical analysis with the specified JSON format."""
 
                 # ── eToro write-path gate (MVP-B) ──────────────────────────
                 # EtoroClient.close_position raises NotImplementedError in
-                # MVP-B. Return a coherent error rather than bubbling the
-                # exception. Remove once the write-path follow-up ships.
+                # MVP-B. As with the run_cycle guard above, the broad
+                # `except Exception` below would already catch this — the
+                # guard is for log clarity, not safety. Remove once the
+                # write-path follow-up ships.
                 if (key_row.exchange or "").lower() == "etoro":
                     logger.info(
                         "Skipping close_position for user %s trade %s: eToro pending follow-up",
