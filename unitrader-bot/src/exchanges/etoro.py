@@ -122,6 +122,39 @@ def _build_spec() -> ExchangeSpec:
         test_connection=test_connection,
         score_universe=None,              # Not yet — Phase B2/3 work
         fetch_market_data=None,           # Not yet — Phase B2/3 work
+        # ── Wizard-driven connect UI ──────────────────────────────────
+        has_environment_toggle=True,
+        environment_options=(
+            ("demo", "Demo — practice money"),
+            ("real", "Real — live trading"),
+        ),
+        environment_help_text={
+            "demo": (
+                "Practice account with virtual money. Zero risk. "
+                "Available at any Trust Ladder stage."
+            ),
+            "real": (
+                "Real money in your live eToro account. Requires Trust "
+                "Ladder Stage 3 — you'll unlock this automatically once "
+                "you've completed onboarding."
+            ),
+        },
+        connect_instructions_url="https://www.etoro.com/settings/trade",
+        connect_instructions_steps=(
+            "Click the link above to open eToro Settings → Trading in a new tab.",
+            "Click 'Create New Key'. Name it 'Unitrader'.",
+            "Choose the environment you selected below and tick 'Write' permission.",
+            "Copy the User Key eToro generates and paste it here.",
+        ),
+        credential_fields=(
+            {
+                "name": "user_key",
+                "label": "eToro User Key",
+                "type": "password",
+                "placeholder": "Paste your User Key here",
+                "required": True,
+            },
+        ),
     )
 
 

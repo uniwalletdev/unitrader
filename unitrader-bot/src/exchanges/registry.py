@@ -125,6 +125,17 @@ class ExchangeSpec:
     # Optional: venue-specific market-data fetcher (ticker/24h/volume).
     fetch_market_data: Optional[FetchMarketDataFn] = field(default=None, repr=False)
 
+    # ── Wizard-driven connect UI (Phase B1 Session 2 Commit 2) ──
+    # All optional. Exchanges that leave these at defaults keep their
+    # existing hardcoded wizard branches in ``ExchangeConnectWizard.tsx``
+    # — zero regression. eToro is the first adopter.
+    has_environment_toggle: bool = False
+    environment_options: tuple[tuple[str, str], ...] = field(default_factory=tuple)
+    environment_help_text: dict[str, str] = field(default_factory=dict)
+    connect_instructions_url: Optional[str] = None
+    connect_instructions_steps: tuple[str, ...] = field(default_factory=tuple)
+    credential_fields: tuple[dict, ...] = field(default_factory=tuple)
+
     def to_public_dict(self) -> dict:
         """Serialisable projection for the public capabilities endpoint."""
         return {

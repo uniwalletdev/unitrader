@@ -2,17 +2,20 @@
 routers/exchanges.py — Exchange API endpoints for Unitrader.
 
 Endpoints:
+    GET /api/exchanges/list             — Wizard-facing registry projection
     GET /api/exchanges/test-connection  — Test connection with stored API keys
 """
 
+import json
 import logging
 import httpx
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings as app_settings
 from database import get_db
 from models import AuditLog, ExchangeAPIKey
 from routers.auth import get_current_user
@@ -21,6 +24,75 @@ from security import decrypt_api_key
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/exchanges", tags=["Exchanges"])
+
+
+# ─────────────────────────────────────────────
+# GET /api/exchanges/list
+# ─────────────────────────────────────────────
+
+@router.get("/list")
+async def list_exchanges(current_user=Depends(get_current_user)) -> Response:
+    """Return every registered ``ExchangeSpec`` as a wizard-facing projection.
+
+    Filtered by feature flags: eToro is hidden when ``FEATURE_ETORO_ENABLED``
+    is ``False`` so the frontend never surfaces it as a connectable option.
+
+    Response shape: ``{"exchanges": [ {...}, ... ]}``.
+
+    Only wizard-relevant fields are serialised — internal priority maps,
+    client classes, and callable fields stay server-side. Cached for 60s
+    because specs change only on deploy.
+    """
+    # Ensure the registry is populated (side-effect import).
+    import src.exchanges  # noqa: F401
+    from src.exchanges.registry import all_specs
+
+    feature_etoro = bool(getattr(app_settings, "feature_etoro_enabled", False))
+
+    items: list[dict] = []
+    for spec in all_specs():
+        if spec.id == "etoro" and not feature_etoro:
+            continue
+        items.append({
+            "id": spec.id,
+            "display_name": spec.display_name,
+            "tagline": spec.tagline,
+            "asset_classes": sorted(a.value for a in spec.asset_classes),
+            "primary_asset_class": spec.primary_asset_class.value,
+            "paper_mode": spec.paper_mode.value,
+            "supports_paper": spec.supports_paper,
+            "supports_fractional": spec.supports_fractional,
+            "symbol_format_hint": spec.symbol_format_hint,
+            "search_placeholder": spec.search_placeholder,
+            "color_tone": spec.color_tone,
+            # Wizard-driven config (Commit 2 populates these on ExchangeSpec).
+            # getattr with defaults keeps this endpoint forward- and
+            # backward-compatible so Commit 1 ships standalone.
+            "has_environment_toggle": bool(
+                getattr(spec, "has_environment_toggle", False)
+            ),
+            "environment_options": list(
+                getattr(spec, "environment_options", []) or []
+            ),
+            "environment_help_text": dict(
+                getattr(spec, "environment_help_text", {}) or {}
+            ),
+            "connect_instructions_url": getattr(
+                spec, "connect_instructions_url", None
+            ),
+            "connect_instructions_steps": list(
+                getattr(spec, "connect_instructions_steps", []) or []
+            ),
+            "credential_fields": list(
+                getattr(spec, "credential_fields", []) or []
+            ),
+        })
+
+    return Response(
+        content=json.dumps({"exchanges": items}),
+        media_type="application/json",
+        headers={"Cache-Control": "public, max-age=60"},
+    )
 
 
 # ─────────────────────────────────────────────
