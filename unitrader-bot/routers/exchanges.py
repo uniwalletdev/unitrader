@@ -67,6 +67,15 @@ async def test_exchange_connection(
     """
     exchange = exchange.lower()
 
+    # Feature-flag gate for eToro. Leaves every other exchange untouched.
+    if exchange == "etoro":
+        from config import settings as _app_settings
+        if not bool(getattr(_app_settings, "feature_etoro_enabled", False)):
+            return {
+                "success": False,
+                "error": "eToro integration is not available yet. Coming soon.",
+            }
+
     # Step 1: Fetch stored API keys
     result = await db.execute(
         select(ExchangeAPIKey).where(

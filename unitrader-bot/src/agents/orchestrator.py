@@ -569,6 +569,37 @@ class MasterOrchestrator:
         except Exception as exc:
             logger.warning("resolve_execution_venue failed for user %s: %s", user_id, exc)
 
+        # Layer 2 safety — defence in depth for eToro Trust Ladder.
+        # Even if a Real ExchangeAPIKey row exists for a stage<3 user (e.g.
+        # historical data, admin backfill, race with the connect guard),
+        # force this trade to Demo. Writes AuditLog override event.
+        if (ctx.exchange or "").lower() == "etoro":
+            try:
+                from sqlalchemy import select
+                from models import ExchangeAPIKey
+                from src.services.etoro_trust_ladder import (
+                    resolve_effective_etoro_environment,
+                )
+                _key_row = (await db.execute(
+                    select(ExchangeAPIKey).where(
+                        ExchangeAPIKey.user_id == user_id,
+                        ExchangeAPIKey.exchange == "etoro",
+                        ExchangeAPIKey.is_active == True,  # noqa: E712
+                    )
+                )).scalars().first()
+                _stored_env = getattr(_key_row, "etoro_environment", None) if _key_row else None
+                _effective_env, _overridden = await resolve_effective_etoro_environment(
+                    user_id=user_id,
+                    stored_environment=_stored_env,
+                    trust_ladder_stage=int(ctx.trust_ladder_stage or 1),
+                    db=db,
+                    symbol=payload.get("symbol"),
+                )
+                if _overridden:
+                    ctx.paper_trading_enabled = True
+            except Exception as exc:
+                logger.warning("etoro trust-ladder override check failed for user %s: %s", user_id, exc)
+
         # Step 2: Get AI analysis with signal, explanation, confidence, market data
         trading_agent = TradingAgent(user_id=user_id)
         agent_analysis = await trading_agent.analyze(symbol=symbol, exchange=ctx.exchange, context=ctx)

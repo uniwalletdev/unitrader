@@ -385,6 +385,20 @@ async def connect_exchange(
         etoro_environment = (body.etoro_environment or ("demo" if is_paper else "real")).lower()
         is_paper = etoro_environment == "demo"
 
+        # Layer 1 safety: block Real eToro at Trust Ladder stage < 3 and
+        # gate everything on FEATURE_ETORO_ENABLED. Raises HTTPException
+        # 403/503 on rejection and writes an audit row.
+        from src.services.etoro_trust_ladder import check_etoro_connect_allowed
+        from src.agents.shared_memory import SharedMemory
+
+        _ctx = await SharedMemory.load(user_id=current_user.id, db=db)
+        await check_etoro_connect_allowed(
+            user_id=current_user.id,
+            environment=etoro_environment,
+            trust_ladder_stage=int(getattr(_ctx, "trust_ladder_stage", 1) or 1),
+            db=db,
+        )
+
     balance = await _validate_exchange_keys(exchange, body.api_key, body.api_secret, is_paper)
 
     try:
