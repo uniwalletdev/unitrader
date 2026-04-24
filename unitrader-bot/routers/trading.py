@@ -1103,6 +1103,23 @@ async def execute_trade(
             detail = reason if reason in {"trial_limit_reached", "subscription_required"} else "subscription_required"
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
+        # ── eToro write-path gate (MVP-B) ────────────────────────────────────
+        # EtoroClient's write methods raise NotImplementedError in MVP-B;
+        # returning 501 here is the belt-and-braces that keeps the error
+        # surface clean and lets the frontend show a coherent message.
+        # Read paths (connect wizard, balance, positions) are unaffected.
+        if body.exchange.lower() == "etoro":
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail={
+                    "code": "etoro_trade_execution_pending",
+                    "message": (
+                        "eToro trade execution is not available yet. "
+                        "Connect is live; order placement ships in a follow-up."
+                    ),
+                },
+            )
+
         # ── Full cycle: analyse + execute ──────────────────────────────────────
         agent = TradingAgent(user_id=current_user.id)
         result = await agent.run_cycle(

@@ -1,9 +1,26 @@
 """
-src/integrations/etoro_client.py — eToro public-API adapter.
+src/integrations/etoro_client.py — eToro public-API adapter (MVP-B).
 
 Subclasses :class:`BaseExchangeClient` so the rest of Unitrader (orchestrator,
 routers, trade monitoring, shared memory) can treat eToro identically to
 Alpaca / Coinbase / Binance / OANDA / Kraken.
+
+SCOPE: MVP-B is read-only. The following five methods hit real eToro
+endpoints verified against the official docs (2026-04-24):
+
+    verify_connection          → GET /watchlists + GET portfolio
+    _resolve_instrument_id     → GET /market-data/search (internalSymbolFull, fields)
+    get_account_balance        → GET /trading/info/[demo/]portfolio → Credit
+    get_current_price          → GET /market-data/instruments/rates
+    get_positions              → parsed from portfolio response
+
+The four write-path methods (``place_order``, ``close_position``,
+``get_open_orders``, ``get_order_status``) intentionally raise
+``NotImplementedError``. Each carries a docstring preserving the verified
+endpoint and PascalCase body shape so the follow-up PR doesn't re-research.
+Defence in depth: the router at /api/trading/execute and TradingAgent's
+run_cycle/close_position paths early-skip when the resolved exchange is
+eToro, so users never hit the NotImplementedError in practice.
 
 Credentials:
     • public_api_key (a.k.a. x-api-key)  — app-level, shared across users.
@@ -15,13 +32,17 @@ Credentials:
       ``api_secret`` in the BaseExchangeClient contract).
     • environment (``demo`` | ``real``)  — stored in
       ``exchange_api_keys.etoro_environment`` and passed in via ``is_paper``
-      (``is_paper=True`` ⇔ demo).
+      (``is_paper=True`` ⇔ demo). NOTE: the real environment OMITS the
+      env segment from trading paths, unlike demo which includes /demo/.
 
 Every HTTP call passes through the module-level eToro rate limiter with the
 correct ``is_write`` flag. Nothing is logged except request-ids and status
 codes — never keys, signatures, balances, or order payloads.
 
-Docs: https://www.developers.etoro.com/
+Docs:
+    https://api-portal.etoro.com/getting-started/authentication
+    https://api-portal.etoro.com/guides/market-orders
+    https://builders.etoro.com/blog/developers-guide-to-instrument-discovery
 """
 
 from __future__ import annotations
@@ -203,56 +224,174 @@ class EtoroClient(BaseExchangeClient):
 
     # ── Helpers ─────────────────────────────────────────────────────────────
 
-    def _trading_path(self, suffix: str) -> str:
-        return f"/trading/{self._environment}/{suffix.lstrip('/')}"
+    def _info_path(self, suffix: str) -> str:
+        """Path for /trading/info/* — demo keeps env in URL, real omits.
+
+        eToro's public API uses asymmetric environment routing:
+            demo → /trading/info/demo/portfolio
+            real → /trading/info/portfolio   (no env segment)
+        Only /pnl has a symmetric /demo/pnl ↔ /real/pnl variant.
+        """
+        env_segment = "demo/" if self._environment == "demo" else ""
+        return f"/trading/info/{env_segment}{suffix.lstrip('/')}"
+
+    async def _portfolio(self) -> dict:
+        """Fetch the user's portfolio (Credit, Positions, Orders, PnL, ...).
+
+        Single-trip source of truth — cheaper than three separate calls for
+        balance / positions / orders. Response shape is PascalCase per
+        eToro's docs, but we fall back to camelCase just in case.
+        """
+        data = await self._request("GET", self._info_path("portfolio"), is_write=False)
+        return data if isinstance(data, dict) else {}
 
     async def _resolve_instrument_id(self, symbol: str) -> int:
-        """Lookup (and cache) eToro's numeric instrumentId for a symbol."""
+        """Lookup (and cache) eToro's numeric instrumentId for a symbol.
+
+        Uses GET /market-data/search with the server-side exact-match
+        filter ``internalSymbolFull``. The ``fields`` query param is
+        REQUIRED by eToro; omitting it returns a 400.
+        """
         normalised = symbol.upper().strip()
         if normalised in self._instrument_id_cache:
             return self._instrument_id_cache[normalised]
         data = await self._request(
-            "GET", "/market-data/search", params={"query": normalised}, is_write=False,
+            "GET",
+            "/market-data/search",
+            params={
+                "internalSymbolFull": normalised,
+                "fields": "instrumentId,internalSymbolFull,displayname",
+                "pageSize": 5,
+            },
+            is_write=False,
         )
-        items: list[dict] = data.get("instruments", data.get("items", [])) if isinstance(data, dict) else []
+        # Response shape: {"instruments": [...]} or {"items": [...]} or a bare list.
+        if isinstance(data, list):
+            items: list[dict] = data
+        elif isinstance(data, dict):
+            items = data.get("instruments") or data.get("items") or []
+        else:
+            items = []
         for row in items:
-            ticker = str(row.get("symbolFull", row.get("symbol", ""))).upper()
+            ticker = str(
+                row.get("internalSymbolFull")
+                or row.get("symbolFull")
+                or row.get("symbol")
+                or ""
+            ).upper()
             if ticker == normalised:
-                instrument_id = int(row.get("instrumentId") or row.get("id") or 0)
+                instrument_id = int(
+                    row.get("instrumentId") or row.get("InstrumentID") or row.get("id") or 0
+                )
                 if instrument_id:
                     self._instrument_id_cache[normalised] = instrument_id
                     return instrument_id
         raise EtoroApiError(404, f"instrument not found: {symbol}")
 
-    # ── BaseExchangeClient interface ────────────────────────────────────────
+    # ── BaseExchangeClient interface (READ PATHS — implemented) ────────────
 
     async def get_account_balance(self) -> float:
-        """Return total equity (available cash + open position value) in
-        the account currency. Matches the Alpaca/Coinbase semantics used
-        elsewhere in the app."""
-        data = await self._request(
-            "GET", f"/user-info/portfolio/{self._environment}", is_write=False,
-        )
-        if not isinstance(data, dict):
-            return 0.0
+        """Return account cash/credit in the account currency.
+
+        Matches the Alpaca/Coinbase semantics used elsewhere in the app.
+        Reads ``Credit`` from the portfolio endpoint — the PascalCase field
+        per eToro's docs, with camelCase fallback.
+        """
+        portfolio = await self._portfolio()
         try:
-            return float(data.get("equity") or data.get("totalEquity") or data.get("available_cash") or 0.0)
+            return float(
+                portfolio.get("Credit")
+                or portfolio.get("credit")
+                or portfolio.get("equity")
+                or portfolio.get("totalEquity")
+                or 0.0
+            )
         except (TypeError, ValueError):
             return 0.0
 
     async def get_current_price(self, symbol: str) -> float:
+        """Return the latest rate for a symbol via the batch rates endpoint.
+
+        Uses ``GET /market-data/instruments/rates?instrumentIds=<id>``
+        (single-id batch call) — eToro does not expose a singular
+        ``/instruments/{id}/rate`` endpoint.
+        """
         instrument_id = await self._resolve_instrument_id(symbol)
         data = await self._request(
-            "GET", f"/market-data/instruments/{instrument_id}/rate", is_write=False,
+            "GET",
+            "/market-data/instruments/rates",
+            params={"instrumentIds": str(instrument_id)},
+            is_write=False,
         )
-        if isinstance(data, dict):
-            for key in ("rate", "price", "last", "ask"):
-                if key in data:
+        rates: list[dict] = []
+        if isinstance(data, list):
+            rates = data
+        elif isinstance(data, dict):
+            rates = data.get("rates") or data.get("Rates") or []
+        if rates:
+            row = rates[0]
+            for key in ("last", "ask", "bid", "rate", "price", "Last", "Ask", "Bid"):
+                if key in row:
                     try:
-                        return float(data[key])
+                        return float(row[key])
                     except (TypeError, ValueError):
                         pass
         return 0.0
+
+    async def get_positions(self) -> list[dict]:
+        """Open positions — parsed from the portfolio response.
+
+        eToro has no dedicated positions endpoint; positions are a field
+        within the portfolio response. Returns PascalCase or camelCase
+        records depending on what the server sends.
+        """
+        portfolio = await self._portfolio()
+        positions = portfolio.get("Positions") or portfolio.get("positions") or []
+        return positions if isinstance(positions, list) else []
+
+    async def verify_connection(self) -> dict:
+        """Cheap round-trip used by the connect wizard and `/test-connection`.
+
+        Returns ``{account_id, username, currency, environment,
+        available_cash}``. Raises :class:`EtoroAuthError` on 401/403.
+
+        Implementation:
+          1. ``GET /watchlists`` — eToro's canonical auth smoke test
+             (see https://api-portal.etoro.com/getting-started/authentication).
+             This returns 200 iff both x-api-key and x-user-key are valid.
+          2. ``GET /trading/info/[demo/]portfolio`` — populates the UI card
+             with Credit. ``username`` is not returned by either endpoint
+             in this shape; the UI already tolerates an empty string.
+        """
+        # Step 1: auth smoke test.
+        await self._request("GET", "/watchlists", is_write=False)
+        # Step 2: portfolio for the wizard's account-info card.
+        portfolio = await self._portfolio()
+        try:
+            available_cash = float(
+                portfolio.get("Credit")
+                or portfolio.get("credit")
+                or portfolio.get("availableCash")
+                or portfolio.get("available_cash")
+                or 0.0
+            )
+        except (TypeError, ValueError):
+            available_cash = 0.0
+        account_id = str(
+            portfolio.get("CID")
+            or portfolio.get("cid")
+            or portfolio.get("accountId")
+            or ""
+        )
+        return {
+            "account_id": account_id,
+            "username": "",  # Not exposed by the portfolio response.
+            "currency": "USD",  # eToro accounts are USD-denominated.
+            "environment": self._environment,
+            "available_cash": available_cash,
+        }
+
+    # ── BaseExchangeClient interface (WRITE PATHS — stubbed for MVP-B) ─────
 
     async def place_order(
         self,
@@ -261,132 +400,124 @@ class EtoroClient(BaseExchangeClient):
         quantity: float,
         price: float | None = None,
     ) -> str:
-        """Place a market (or limit, if price given) order.
+        """⚠️  NOT IMPLEMENTED in MVP-B — deferred to follow-up PR.
 
-        NOTE: ``quantity`` is interpreted as **notional amount in the account
-        currency** for eToro — this matches how the rest of Unitrader passes
-        trade size (dollar-based sizing via ``validate_trade_amount``).
+        When re-enabling, target endpoints (verified against eToro docs
+        2026-04-24: https://api-portal.etoro.com/guides/market-orders):
+
+            Market, by-amount (notional USD — matches Unitrader convention):
+              Demo: POST /trading/execution/demo/market-open-orders/by-amount
+              Real: POST /trading/execution/market-open-orders/by-amount
+              Body (PascalCase, all REQUIRED):
+                {
+                  "InstrumentID": <int>,
+                  "IsBuy":        <bool>,      # NOT "direction":"BUY"/"SELL"
+                  "Leverage":     1,           # REQUIRED for cash trades
+                  "Amount":       <float>,
+                }
+              Optional body fields: StopLossRate, TakeProfitRate,
+                IsTslEnabled, IsNoStopLoss, IsNoTakeProfit
+              Response: {"OrderId": <int>, ...}
+
+            Limit:
+              Demo: POST /trading/execution/demo/limit-orders
+              Real: POST /trading/execution/limit-orders
+              Body (PascalCase): same as above + "Rate": <float> (limit price)
+
+            By-units variant (/by-units) exists but is out of MVP scope —
+            Unitrader sizes in notional USD everywhere.
+
+        Critical note: eToro SL/TP can ONLY be set at place-order time via
+        the StopLossRate/TakeProfitRate body fields above. Post-hoc
+        modification is NOT supported by the public API. The follow-up
+        PR must expose these as `place_order` kwargs so users don't trade
+        without downside protection — shipping without them is a
+        user-harm shape.
+
+        Defence in depth preventing this method from ever being called in
+        production: routers/trading.py:/execute returns 501 for
+        exchange=='etoro', and TradingAgent.run_cycle early-skips
+        before reaching the client.
         """
-        instrument_id = await self._resolve_instrument_id(symbol)
-        body: dict[str, Any] = {
-            "instrumentId": instrument_id,
-            "direction": side.upper(),  # BUY | SELL
-            "amount": float(quantity),
-            "orderType": "LIMIT" if price else "MARKET",
-        }
-        if price:
-            body["limitPrice"] = float(price)
-        data = await self._request(
-            "POST", self._trading_path("orders"), json=body, is_write=True,
+        raise NotImplementedError(
+            "eToro order placement not yet implemented — see follow-up issue. "
+            "Read-only (verify, balance, positions, price) is live."
         )
-        if isinstance(data, dict):
-            return str(data.get("orderId") or data.get("id") or "")
-        return ""
+
+    async def close_position(self, symbol: str) -> bool:
+        """⚠️  NOT IMPLEMENTED in MVP-B — deferred to follow-up PR.
+
+        When re-enabling, target endpoint (verified 2026-04-24):
+
+            Demo: POST /trading/execution/demo/market-close-orders/positions/{positionId}
+            Real: POST /trading/execution/market-close-orders/positions/{positionId}
+            Body (JSON):
+              {
+                "InstrumentId":   <int>,
+                "UnitsToDeduct":  null,          # null = full close
+                                                 # number = partial
+              }
+
+        ⚠️  POST, NOT DELETE. The original Unitrader implementation used
+        DELETE which is wrong and is the main reason this is stubbed until
+        a careful rewrite — getting close wrong leaves users with positions
+        they cannot exit.
+
+        positionId must be resolved first via get_positions() — eToro does
+        not accept close-by-symbol.
+        """
+        raise NotImplementedError(
+            "eToro close_position not yet implemented — see follow-up issue."
+        )
+
+    async def get_open_orders(self, symbol: str) -> list[dict]:
+        """⚠️  NOT IMPLEMENTED in MVP-B — deferred to follow-up PR.
+
+        Source: parse from the portfolio response (eToro has no dedicated
+        orders list endpoint):
+
+            GET /trading/info/[demo/]portfolio → response.Orders[]
+
+        CRITICAL design constraint for the follow-up: naive frontend
+        polling of this method will burn eToro's per-user rate limit
+        since every call re-fetches the whole portfolio. The follow-up
+        MUST cache the portfolio response for 30 seconds inside
+        EtoroClient and serve both get_open_orders and get_order_status
+        from the cache (pattern mirrors the Alpaca historical cache).
+        """
+        raise NotImplementedError(
+            "eToro get_open_orders not yet implemented — see follow-up issue."
+        )
+
+    async def get_order_status(self, symbol: str, order_id: str) -> dict:
+        """⚠️  NOT IMPLEMENTED in MVP-B — deferred to follow-up PR.
+
+        Source: parse from the portfolio response. No single-order GET
+        endpoint exists on eToro's public API — iterate
+        response.Orders[] and match by orderId.
+
+        Same 30-second portfolio-cache requirement as get_open_orders.
+        """
+        raise NotImplementedError(
+            "eToro get_order_status not yet implemented — see follow-up issue."
+        )
+
+    # ── No-op guards (correct semantics — keep) ────────────────────────────
 
     async def set_stop_loss(self, symbol: str, order_id: str, stop_price: float) -> bool:
-        # eToro attaches SL/TP to the position at place-order time; setting it
-        # after the fact is not directly supported on the public API yet. We
-        # return False so callers can fall through to their fallback paths.
-        logger.info("eToro set_stop_loss is a no-op (not yet supported on public API)")
+        # eToro attaches SL/TP to the position at place-order time via the
+        # StopLossRate body field. Post-hoc modification is NOT supported
+        # by the public API. Returning False so callers fall through to
+        # their fallback paths is the correct behaviour — do NOT "fix"
+        # this to call a separate SL endpoint, because one does not exist.
+        logger.info("eToro set_stop_loss is a no-op (not supported on public API)")
         return False
 
     async def set_take_profit(self, symbol: str, order_id: str, target_price: float) -> bool:
-        logger.info("eToro set_take_profit is a no-op (not yet supported on public API)")
+        logger.info("eToro set_take_profit is a no-op (not supported on public API)")
         return False
 
-    async def get_open_orders(self, symbol: str) -> list[dict]:
-        data = await self._request(
-            "GET", self._trading_path("orders"), is_write=False,
-        )
-        if not isinstance(data, list):
-            data = data.get("orders", []) if isinstance(data, dict) else []
-        out: list[dict] = []
-        for row in data:
-            row_symbol = str(row.get("symbol") or row.get("instrumentName") or "").upper()
-            if not symbol or row_symbol == symbol.upper():
-                out.append(row)
-        return out
-
-    async def close_position(self, symbol: str) -> bool:
-        positions = await self.get_positions()
-        pos = next(
-            (p for p in positions if str(p.get("symbol", "")).upper() == symbol.upper()),
-            None,
-        )
-        if not pos:
-            return False
-        position_id = pos.get("positionId") or pos.get("id")
-        if not position_id:
-            return False
-        try:
-            await self._request(
-                "DELETE",
-                self._trading_path(f"positions/{position_id}"),
-                is_write=True,
-            )
-            return True
-        except EtoroError as exc:
-            logger.warning("eToro close_position failed: %s", exc)
-            return False
-
-    async def get_order_status(self, symbol: str, order_id: str) -> dict:
-        data = await self._request(
-            "GET", self._trading_path(f"orders/{order_id}"), is_write=False,
-        )
-        if not isinstance(data, dict):
-            return {}
-        return {
-            "order_id": str(data.get("orderId") or data.get("id") or order_id),
-            "status": str(data.get("status") or "").lower(),
-            "filled_qty": float(data.get("filledAmount") or 0),
-            "price": float(data.get("executionPrice") or data.get("limitPrice") or 0),
-            "side": str(data.get("direction") or "").upper(),
-        }
-
-    # ── Extensions (not on the base interface) ──────────────────────────────
-
-    async def get_positions(self) -> list[dict]:
-        data = await self._request(
-            "GET",
-            f"/user-info/portfolio/{self._environment}/positions",
-            is_write=False,
-        )
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            return data.get("positions", [])
-        return []
-
-    async def verify_connection(self) -> dict:
-        """Cheap round-trip used by the connect wizard and `/test-connection`.
-
-        Returns ``{account_id, username, currency, environment,
-        available_cash}``. Raises :class:`EtoroAuthError` on 401/403.
-        """
-        identity = await self._request("GET", "/identity", is_write=False)
-        portfolio = await self._request(
-            "GET", f"/user-info/portfolio/{self._environment}", is_write=False,
-        )
-        account_id = ""
-        username = ""
-        currency = "USD"
-        if isinstance(identity, dict):
-            account_id = str(identity.get("accountId") or identity.get("cid") or "")
-            username = str(identity.get("username") or identity.get("name") or "")
-            currency = str(identity.get("currency") or "USD")
-        available_cash = 0.0
-        if isinstance(portfolio, dict):
-            try:
-                available_cash = float(portfolio.get("available_cash") or portfolio.get("availableCash") or 0.0)
-            except (TypeError, ValueError):
-                available_cash = 0.0
-        return {
-            "account_id": account_id,
-            "username": username,
-            "currency": currency,
-            "environment": self._environment,
-            "available_cash": available_cash,
-        }
+    # ── Housekeeping ──────────────────────────────────────────────────────
 
     async def aclose(self) -> None:
         await self._http.aclose()

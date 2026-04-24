@@ -1346,6 +1346,21 @@ Provide your detailed technical analysis with the specified JSON format."""
                 if not params.get("tradeable"):
                     return {"status": "rejected", "reason": params.get("reason", "Not tradeable")}
 
+                # ── eToro write-path gate (MVP-B) ──────────────────────────
+                # EtoroClient.place_order raises NotImplementedError in MVP-B.
+                # Early-skip so the autonomous scanner log stays clean and
+                # the user sees a coherent rejection reason rather than a
+                # stack trace. Remove once the write-path follow-up ships.
+                if exchange_name == "etoro":
+                    logger.info(
+                        "Skipping order for user %s: eToro trade execution pending follow-up",
+                        self.user_id,
+                    )
+                    return {
+                        "status": "rejected",
+                        "reason": "eToro trade execution pending — read-only for now",
+                    }
+
                 start_time = datetime.now(timezone.utc)
                 try:
                     order_id = await client.place_order(
@@ -1798,6 +1813,20 @@ Provide your detailed technical analysis with the specified JSON format."""
                 )
                 client = get_exchange_client(key_row.exchange, raw_key, raw_secret, is_paper=is_paper)
                 raw_key = raw_secret = None  # wipe immediately
+
+                # ── eToro write-path gate (MVP-B) ──────────────────────────
+                # EtoroClient.close_position raises NotImplementedError in
+                # MVP-B. Return a coherent error rather than bubbling the
+                # exception. Remove once the write-path follow-up ships.
+                if (key_row.exchange or "").lower() == "etoro":
+                    logger.info(
+                        "Skipping close_position for user %s trade %s: eToro pending follow-up",
+                        self.user_id, trade_id,
+                    )
+                    return {
+                        "status": "error",
+                        "reason": "eToro position close pending — read-only for now",
+                    }
 
                 try:
                     current_price = await client.get_current_price(trade.symbol)
