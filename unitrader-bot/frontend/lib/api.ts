@@ -215,6 +215,32 @@ export const tradingApi = {
 
 // ── Exchange Keys ────────────────────────────────────────────────────────────
 
+export interface ExchangeSpecPublic {
+  id: string;
+  display_name: string;
+  tagline: string;
+  asset_classes: string[];
+  primary_asset_class: string;
+  paper_mode: "native" | "synthetic" | "none";
+  supports_paper: boolean;
+  supports_fractional: boolean;
+  symbol_format_hint: string;
+  search_placeholder: string;
+  color_tone: string;
+  has_environment_toggle: boolean;
+  environment_options: [string, string][];
+  environment_help_text: Record<string, string>;
+  connect_instructions_url: string | null;
+  connect_instructions_steps: string[];
+  credential_fields: Array<{
+    name: string;
+    label: string;
+    type: "text" | "password";
+    placeholder?: string;
+    required?: boolean;
+  }>;
+}
+
 export interface ConnectedExchange {
   trading_account_id?: string | null;
   exchange: string;
@@ -267,12 +293,22 @@ export const exchangeApi = {
       error?: string;
     }>(`/api/exchanges/test-connection`, { params: { exchange } }),
 
-  connect: (exchange: string, apiKey: string, secretKey: string, isPaper: boolean = true) =>
+  listExchanges: () =>
+    api.get<{ exchanges: ExchangeSpecPublic[] }>("/api/exchanges/list"),
+
+  connect: (
+    exchange: string,
+    apiKey: string,
+    secretKey: string,
+    isPaper: boolean = true,
+    opts?: { etoroEnvironment?: "demo" | "real" },
+  ) =>
     api.post<{ status: string; data: ConnectExchangeResponse }>("/api/trading/exchange-keys", {
       exchange,
       api_key: apiKey,
       api_secret: secretKey,
       is_paper: isPaper,
+      ...(opts?.etoroEnvironment ? { etoro_environment: opts.etoroEnvironment } : {}),
     }),
 
   disconnect: (exchange: string, opts?: { trading_account_id?: string; is_paper?: boolean }) =>
