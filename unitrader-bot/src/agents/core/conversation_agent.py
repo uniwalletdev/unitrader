@@ -737,6 +737,116 @@ _ONBOARDING_SYSTEM_PROMPT = (
 )
 
 
+# Copy templates keyed by trader_class. Claude uses these as guidance for tone
+# and pitch — it authors the actual message in the user's voice, referencing
+# the companion by the user's chosen ``ai_name``.
+_ETORO_OFFER_TEMPLATES: dict[str, str] = {
+    "complete_novice": (
+        "Suggest starting with eToro Demo together — practice money, zero "
+        "risk. Frame it as building the rhythm before touching anything real. "
+        "Mention real trading unlocks automatically at Trust Ladder Stage 3."
+    ),
+    "curious_saver": (
+        "Suggest eToro Demo as a gentle first step. Emphasise safety and "
+        "learning. Real mode unlocks at Stage 3 once onboarding completes."
+    ),
+    "self_taught": (
+        "Suggest eToro Demo to verify the setup feels right, with Real mode "
+        "unlocking at Stage 3. Acknowledge they have some experience already."
+    ),
+    "experienced": (
+        "Offer eToro Real — stocks, crypto, ETFs and commodities in one "
+        "account, about 2 minutes to connect. Respect their experience; "
+        "don't over-explain."
+    ),
+    "semi_institutional": (
+        "Offer eToro Real for multi-asset coverage. Keep it brief and "
+        "professional — they know what they're doing."
+    ),
+    "crypto_native": (
+        "Offer eToro Real as a simple way to add stocks/ETFs alongside the "
+        "crypto they already trade. Keep it crisp."
+    ),
+}
+
+
+async def _user_has_any_active_exchange(user_id: str, db: AsyncSession) -> bool:
+    """True when the user already has any active ExchangeAPIKey row.
+    eToro should not be offered to users who've already chosen an exchange."""
+    from models import ExchangeAPIKey  # local import to avoid cycles
+    row = (await db.execute(
+        select(ExchangeAPIKey.id).where(
+            ExchangeAPIKey.user_id == user_id,
+            ExchangeAPIKey.is_active == True,  # noqa: E712
+        ).limit(1)
+    )).first()
+    return row is not None
+
+
+async def _build_onboarding_system_prompt(user_id: str, db: AsyncSession | None) -> str:
+    """Return the onboarding system prompt, conditionally appending an
+    eToro offer guidance block.
+
+    Offer block is appended only when ALL of:
+      * ``settings.feature_etoro_enabled`` is True
+      * The user has no active ``ExchangeAPIKey`` rows
+      * The user's ``trader_class`` has been detected (``class_detected_at``
+        is not None)
+      * ``onboarding_complete`` is False
+
+    When any condition fails, the bare ``_ONBOARDING_SYSTEM_PROMPT`` is
+    returned — no mention of eToro leaks to Claude.
+
+    Never hardcodes "Apex": the template references "the user's chosen AI
+    name" and Claude is told to use ``ai_name`` from the rest of the
+    conversation context.
+    """
+    base = _ONBOARDING_SYSTEM_PROMPT
+    if db is None:
+        return base
+    if not bool(getattr(settings, "feature_etoro_enabled", False)):
+        return base
+
+    # Fetch user-settings + active-exchange status in two cheap queries.
+    us_row = (await db.execute(
+        select(UserSettings).where(UserSettings.user_id == user_id)
+    )).scalar_one_or_none()
+    if us_row is None:
+        return base
+    if bool(getattr(us_row, "onboarding_complete", False)):
+        return base
+    if getattr(us_row, "class_detected_at", None) is None:
+        return base
+    trader_class = (getattr(us_row, "trader_class", None) or "").strip()
+    if not trader_class:
+        return base
+
+    if await _user_has_any_active_exchange(user_id, db):
+        return base
+
+    template = _ETORO_OFFER_TEMPLATES.get(
+        trader_class, _ETORO_OFFER_TEMPLATES["complete_novice"]
+    )
+    offer_block = (
+        "\n\n"
+        "## eToro offer (only mention when the moment feels natural)\n"
+        f"This user's trader_class is `{trader_class}`. When the conversation "
+        "reaches a natural pause and the exchange question hasn't been "
+        "settled, make this offer in your own voice using the user's chosen "
+        "AI name (never 'Apex' or 'Unitrader' verbatim):\n"
+        f"  → {template}\n"
+        "If the user says yes, call the `offer_etoro_accepted` tool with the "
+        "appropriate environment. For novice/curious_saver/self_taught use "
+        "`environment='demo'`. For experienced/semi_institutional/"
+        "crypto_native use `environment='real'`. The Trust Ladder backend "
+        "will automatically force demo for anyone not yet at Stage 3 — you "
+        "do NOT need to pre-check.\n"
+        "If the user declines, acknowledge and move on. Do not re-offer this "
+        "session. Continue the normal onboarding flow."
+    )
+    return base + offer_block
+
+
 # ─────────────────────────────────────────────
 # Performance context injection
 # ─────────────────────────────────────────────
@@ -1545,21 +1655,48 @@ class ConversationAgent:
                         },
                         "exchange": {
                             "type": "string",
-                            "enum": ["alpaca", "coinbase", "oanda"],
+                            "enum": ["alpaca", "coinbase", "oanda", "etoro"],
                             "description": "Preferred exchange"
                         }
                     },
                     "required": ["goal", "risk_level", "budget", "exchange"]
                 }
+            },
+            {
+                "name": "offer_etoro_accepted",
+                "description": (
+                    "Called when the user accepts the eToro offer. Emits a "
+                    "structured action telling the frontend to open the "
+                    "exchange-connect wizard with eToro preselected. Only "
+                    "call this when the system prompt explicitly invited "
+                    "you to offer eToro."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "environment": {
+                            "type": "string",
+                            "enum": ["demo", "real"],
+                            "description": "Initial environment to preselect in the wizard."
+                        }
+                    },
+                    "required": ["environment"]
+                }
             }
         ]
+
+        # Build the system prompt dynamically so the eToro offer block only
+        # appears when feature flags + user state permit it.
+        dynamic_system_prompt = await _build_onboarding_system_prompt(
+            self.user_id, db
+        )
 
         # Call Claude with tools
         try:
             claude_response = await self._claude.messages.create(
                 model=_CLAUDE_MODEL,
                 max_tokens=_MAX_TOKENS,
-                system=_ONBOARDING_SYSTEM_PROMPT,
+                system=dynamic_system_prompt,
                 tools=tools,
                 messages=messages,
             )
@@ -1603,6 +1740,7 @@ class ConversationAgent:
 
         # Handle tool calls
         profile_data = None
+        structured_action: dict | None = None
         for tool_call in tool_calls:
             if tool_call.name == "extract_profile_field":
                 field = tool_call.input.get("field")
@@ -1621,11 +1759,26 @@ class ConversationAgent:
                 # Pass all onboarding messages for trader class detection
                 await self._complete_onboarding_internal(profile_data, messages, db)
 
-        return {
+            elif tool_call.name == "offer_etoro_accepted":
+                # User accepted the eToro offer — emit a structured action
+                # the frontend uses to auto-open the connect wizard.
+                env = (tool_call.input.get("environment") or "demo").lower()
+                if env not in ("demo", "real"):
+                    env = "demo"
+                structured_action = {
+                    "action": "open_exchange_wizard",
+                    "exchange": "etoro",
+                    "preset_environment": env,
+                }
+
+        response: dict = {
             "message": assistant_message,
             "completed": profile_data is not None,
             "profile": profile_data,
         }
+        if structured_action is not None:
+            response["action"] = structured_action
+        return response
 
     async def _save_extracted_field(
         self,

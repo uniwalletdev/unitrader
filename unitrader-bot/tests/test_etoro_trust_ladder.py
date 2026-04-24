@@ -39,15 +39,14 @@ from src.services.etoro_trust_ladder import (
 
 # ─── Fixtures ────────────────────────────────────────────────────────────────
 
-@pytest_asyncio.fixture(scope="module", autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def setup_tables():
+    # Function-scoped to match pytest.ini's asyncio_default_fixture_loop_scope.
     import models  # noqa: F401 — register the models on Base
     from database import engine
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
 
 
 @pytest_asyncio.fixture
