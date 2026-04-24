@@ -84,6 +84,17 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
   // form used for the other exchanges.
   const [wizardExchangeId, setWizardExchangeId] = useState<string | null>(null);
 
+  // Inline confirm-in-place for destructive Disconnect clicks. Keyed by
+  // targetId so clicking one account's Disconnect doesn't arm confirms
+  // on sibling rows. A 5s auto-dismiss prevents a stale armed state
+  // from persisting if the user walks away.
+  const [disconnectArmed, setDisconnectArmed] = useState<string | null>(null);
+  useEffect(() => {
+    if (!disconnectArmed) return;
+    const t = window.setTimeout(() => setDisconnectArmed(null), 5000);
+    return () => window.clearTimeout(t);
+  }, [disconnectArmed]);
+
   const handleCoinbaseSmartPaste = (raw: string) => {
     setCbPasteRaw(raw);
     const status = parseCoinbasePaste(raw);
@@ -184,8 +195,8 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
         : connection.is_paper
           ? "paper"
           : "live";
-    if (!confirm(`Disconnect ${connection.account_label || `${connection.exchange} ${displayMode}`}? You can reconnect later.`)) return;
     const targetId = connection.trading_account_id || `${connection.exchange}-${displayMode}`;
+    setDisconnectArmed(null);
     setDisconnecting(targetId);
     setMessage(null);
     try {
@@ -274,8 +285,8 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
         // eye needs to tell at a glance which exchanges still need
         // setup.
         const actionClass = active
-          ? "flex items-center gap-1.5 rounded-lg border border-brand-500/30 px-3 py-1.5 text-xs text-brand-400 transition hover:bg-brand-500/10"
-          : "flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand-400";
+          ? "flex items-center gap-1.5 rounded-lg border border-brand-500/30 px-3 py-1.5 text-xs text-brand-400 transition hover:bg-brand-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950"
+          : "flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950";
 
         return (
           <div
@@ -384,14 +395,44 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                             {connection.last_used && ` · Last used ${new Date(connection.last_used).toLocaleDateString()}`}
                           </div>
                         </div>
-                        <button
-                          onClick={() => handleDisconnect(connection)}
-                          disabled={disconnecting === targetId}
-                          className="flex items-center gap-1 rounded-lg border border-red-500/30 px-2.5 py-1 text-[10px] text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
-                        >
-                          {disconnecting === targetId ? <Loader2 size={11} className="animate-spin" /> : <Unlink size={11} />}
-                          Disconnect
-                        </button>
+                        {/* Inline confirm-in-place. First click arms
+                            the button (swaps to a red-filled "Confirm"
+                            + grey "Cancel" pair). Second click calls
+                            handleDisconnect. A 5s auto-dismiss clears
+                            the armed state if the user walks away. */}
+                        {disconnectArmed === targetId ? (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button
+                              onClick={() => handleDisconnect(connection)}
+                              disabled={disconnecting === targetId}
+                              className="flex items-center gap-1 rounded-lg bg-red-500/90 px-2.5 py-1 text-[10px] font-semibold text-white transition hover:bg-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950 disabled:opacity-50"
+                            >
+                              {disconnecting === targetId ? (
+                                <Loader2 size={11} className="animate-spin" />
+                              ) : (
+                                <Unlink size={11} />
+                              )}
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => setDisconnectArmed(null)}
+                              disabled={disconnecting === targetId}
+                              className="rounded-lg border border-dark-700 px-2 py-1 text-[10px] text-dark-300 transition hover:bg-dark-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dark-500/60 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setDisconnectArmed(targetId)}
+                            disabled={disconnecting === targetId}
+                            className="flex shrink-0 items-center gap-1 rounded-lg border border-red-500/30 px-2.5 py-1 text-[10px] text-red-400 transition hover:bg-red-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950 disabled:opacity-50"
+                            aria-label={`Disconnect ${connection.account_label || spec.display_name}`}
+                          >
+                            <Unlink size={11} />
+                            Disconnect
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -593,7 +634,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                   <button
                     onClick={() => handleConnect(spec.id)}
                     disabled={submitting}
-                    className="btn-primary flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
+                    className="btn-primary flex items-center gap-2 px-4 py-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/60 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950 disabled:opacity-50"
                   >
                     {submitting ? (
                       <Loader2 size={13} className="animate-spin" />
