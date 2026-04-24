@@ -469,6 +469,45 @@ class TestConnectExchangeRequest:
                 exchange="alpaca", api_key="", api_secret="secret", is_paper=True
             )
 
+    # ── eToro: empty api_secret is legal at the schema layer ──────────
+    # Production regression: POST /api/trading/exchange-keys was 422ing
+    # on every eToro connect because api_secret was declared with
+    # min_length=1. eToro authenticates with a single user key and the
+    # wizard legitimately sends "" for the secret field. These three
+    # cases lock in the new field_validator contract.
+
+    def test_etoro_allows_empty_secret(self):
+        from routers.trading import ConnectExchangeRequest
+        req = ConnectExchangeRequest(
+            exchange="etoro",
+            api_key="user-key-abc",
+            api_secret="",
+            is_paper=True,
+            etoro_environment="demo",
+        )
+        assert req.exchange == "etoro"
+        assert req.api_secret == ""
+        assert req.etoro_environment == "demo"
+
+    def test_etoro_real_environment_allowed_by_schema(self):
+        from routers.trading import ConnectExchangeRequest
+        req = ConnectExchangeRequest(
+            exchange="etoro",
+            api_key="user-key-abc",
+            api_secret="",
+            is_paper=False,
+            etoro_environment="real",
+        )
+        assert req.etoro_environment == "real"
+        assert req.is_paper is False
+
+    def test_non_etoro_still_requires_secret(self):
+        from routers.trading import ConnectExchangeRequest
+        with pytest.raises(Exception):
+            ConnectExchangeRequest(
+                exchange="alpaca", api_key="PK12345", api_secret="", is_paper=True
+            )
+
 
 class TestTradeToDictReasoning:
     """_trade_to_dict exposes a truncated reasoning snippet for API consumers."""

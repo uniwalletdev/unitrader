@@ -27,7 +27,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -126,7 +126,12 @@ class ClosePositionRequest(BaseModel):
 class ConnectExchangeRequest(BaseModel):
     exchange: str = Field(..., pattern="^(alpaca|binance|oanda|coinbase|kraken|etoro)$")
     api_key: str = Field(..., min_length=1)
-    api_secret: str = Field(..., min_length=1)
+    # eToro authenticates with a single user key; every other exchange
+    # still requires a non-empty secret. We enforce that via a
+    # field_validator (NOT a model_validator) so the 422 `loc` stays
+    # ["body", "api_secret"] — preserves existing Sentry grouping and
+    # the `fields=['body.api_secret']` log line our ops playbook matches on.
+    api_secret: str = Field(default="")
     is_paper: bool = Field(True, description="Whether these are paper/sandbox keys")
     # eToro only: 'demo' or 'real'. When provided, is_paper is derived from this.
     etoro_environment: str | None = Field(
@@ -134,6 +139,16 @@ class ConnectExchangeRequest(BaseModel):
         pattern="^(demo|real)$",
         description="eToro environment (demo|real). Derives is_paper when exchange=='etoro'.",
     )
+
+    @field_validator("api_secret")
+    @classmethod
+    def _require_secret_for_non_etoro(cls, v: str, info: ValidationInfo) -> str:
+        # Pydantic v2 runs field validators in declaration order, and
+        # `exchange` is declared above `api_secret`, so info.data[
+        # "exchange"] is populated by the time this runs.
+        if info.data.get("exchange") != "etoro" and not v:
+            raise ValueError("api_secret must not be empty for this exchange")
+        return v
 
 
 VALID_EXCHANGES = {"alpaca", "binance", "oanda", "coinbase", "kraken", "etoro"}
