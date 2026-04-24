@@ -18,7 +18,10 @@ export type TelemetryEventName =
   | "exchange_wizard_submit_attempted"
   | "exchange_wizard_connected"
   | "exchange_wizard_failed"
-  | "exchange_wizard_abandoned";
+  | "exchange_wizard_abandoned"
+  | "etoro_offer_card_shown"
+  | "etoro_offer_card_accepted"
+  | "etoro_offer_card_dismissed";
 
 interface EnrichmentContext {
   userId?: string | null;

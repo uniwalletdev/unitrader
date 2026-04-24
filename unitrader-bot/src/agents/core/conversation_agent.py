@@ -770,6 +770,64 @@ _ETORO_OFFER_TEMPLATES: dict[str, str] = {
 }
 
 
+# Card-facing copy per trader_class. Used by routers/etoro_offer.py for the
+# dismissible /trade banner. Kept here so both the Claude chat offer and the
+# card offer share one product-voice source. Never hardcodes "Apex" — the
+# ``{ai_name}`` placeholder is substituted by the caller.
+_ETORO_OFFER_CARD_COPY: dict[str, dict[str, str]] = {
+    "complete_novice": {
+        "environment": "demo",
+        "headline": "Start risk-free with eToro Demo",
+        "body":
+            "{ai_name} suggests eToro Demo first — practice money, zero risk. "
+            "Build the rhythm before touching anything real. Real trading "
+            "unlocks at Trust Ladder Stage 3.",
+        "cta": "Connect eToro Demo",
+    },
+    "curious_saver": {
+        "environment": "demo",
+        "headline": "A safer first step with eToro",
+        "body":
+            "{ai_name} recommends eToro Demo — a gentle way to learn without "
+            "risking real money. Real mode unlocks at Stage 3 once onboarding "
+            "is done.",
+        "cta": "Connect eToro Demo",
+    },
+    "self_taught": {
+        "environment": "demo",
+        "headline": "Try eToro Demo before going live",
+        "body":
+            "{ai_name} suggests eToro Demo to verify everything feels right. "
+            "Real mode unlocks at Stage 3 — no extra steps.",
+        "cta": "Connect eToro Demo",
+    },
+    "experienced": {
+        "environment": "real",
+        "headline": "Connect eToro — stocks, crypto, ETFs, commodities",
+        "body":
+            "{ai_name} can route through eToro Real in about 2 minutes. One "
+            "account, multi-asset. No fluff.",
+        "cta": "Connect eToro",
+    },
+    "semi_institutional": {
+        "environment": "real",
+        "headline": "Add eToro Real for multi-asset coverage",
+        "body":
+            "{ai_name} suggests eToro Real as a pragmatic multi-asset venue. "
+            "Quick to connect; no training wheels.",
+        "cta": "Connect eToro",
+    },
+    "crypto_native": {
+        "environment": "real",
+        "headline": "Add stocks & ETFs via eToro",
+        "body":
+            "{ai_name} can use eToro Real to layer stocks and ETFs alongside "
+            "your crypto. Quick to connect.",
+        "cta": "Connect eToro",
+    },
+}
+
+
 async def _user_has_any_active_exchange(user_id: str, db: AsyncSession) -> bool:
     """True when the user already has any active ExchangeAPIKey row.
     eToro should not be offered to users who've already chosen an exchange."""

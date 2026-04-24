@@ -53,6 +53,7 @@ from routers import onboarding as onboarding_router
 from routers import notifications as notifications_router
 from routers import ws as ws_router
 from routers import exchanges as exchanges_router
+from routers import etoro_offer as etoro_offer_router
 from routers import goals as goals_router
 from routers import signals as signals_router
 from routers import admin as admin_router
@@ -1675,6 +1676,7 @@ app.include_router(trading_router.router)
 app.include_router(trading_router.performance_router)
 app.include_router(trading_router.trades_router)
 app.include_router(exchanges_router.router)
+app.include_router(etoro_offer_router.router)
 app.include_router(chat_router.router)
 app.include_router(content_router.router)
 app.include_router(billing_router.router)

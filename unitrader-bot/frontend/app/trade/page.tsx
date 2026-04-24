@@ -13,6 +13,7 @@ import BotOnboardingChat from "@/components/onboarding/ApexOnboardingChat";
 import WhatIfSimulator from "@/components/onboarding/WhatIfSimulator";
 import MarketStatusBar, { MarketStatus } from "@/components/trade/MarketStatusBar";
 import TrustLadderBanner from "@/components/trade/TrustLadderBanner";
+import EtoroOfferCard from "@/components/etoro/EtoroOfferCard";
 import BrandPicker, { displayBrandLine } from "@/components/trade/BrandPicker";
 import PriceChart from "@/components/trade/PriceChart";
 import type { TradeMarker } from "@/components/trade/PriceChart";
@@ -1386,6 +1387,11 @@ function TradePage() {
       <div className="mb-4">
         <CircuitBreakerAlert tradingPaused={tradingPaused} dailyLossPct={0} maxDailyLossPct={maxDailyLoss} botName={resolvedBotName} />
       </div>
+
+      {/* eToro offer card — one-time dismissible banner for users with no
+          connected exchange. Renders a no-op when the server-side gates
+          don't all pass (feature flag, onboarding complete, etc.). */}
+      <EtoroOfferCard />
 
       {/* Market status */}
       {!dbg("no_market") && (

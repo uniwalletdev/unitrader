@@ -562,6 +562,13 @@ class UserSettings(Base):
     # Feedback / trust
     trust_score: Mapped[int] = mapped_column(Integer, default=100, nullable=False)  # 0–100
 
+    # eToro offer card — set to now() the first time the user either
+    # accepts or dismisses the one-time banner on /trade. NULL means the
+    # card has not yet been interacted with. See migration 006.
+    etoro_offer_dismissed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

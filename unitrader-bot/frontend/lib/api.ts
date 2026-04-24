@@ -325,6 +325,23 @@ export const chatApi = {
   bootstrap: () => api.get("/api/chat/bootstrap"),
 };
 
+// ── eToro offer card ─────────────────────────────────────────────────────────
+export type EtoroOfferCard =
+  | { show: false }
+  | {
+      show: true;
+      trader_class: string;
+      environment: "demo" | "real";
+      headline: string;
+      body: string;
+      cta: string;
+    };
+
+export const etoroOfferApi = {
+  get: () => api.get<EtoroOfferCard>("/api/etoro/offer-card"),
+  dismiss: () => api.post<{ ok: boolean; updated: number }>("/api/etoro/offer-card/dismiss", {}),
+};
+
 // ── Billing ──────────────────────────────────────────────────────────────────
 export const billingApi = {
   plans: () => api.get("/api/billing/plans"),
