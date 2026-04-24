@@ -14,6 +14,24 @@ Supabase migrations 005 and 006 are applied in prod.
 
 TBD.
 
+## Phase B1.5 — Registry-drive the remaining UI surfaces
+
+`ExchangeConnections.tsx` was migrated to `GET /api/exchanges/list` in
+Commit 6. The following still ship hardcoded exchange lists and should be
+migrated next time we touch them:
+
+- `frontend/pages/connect-exchange.tsx` — its own `const EXCHANGES = [...]`
+  array. Standalone page still works; the `lib/exchangeApiKeyGuides.ts`
+  module stays on disk solely to keep this page compiling.
+- `frontend/app/trade/page.tsx` — prose sentence listing
+  "Alpaca, Coinbase, Binance, Kraken, and OANDA" in the empty-state card.
+  Will fall out of date when new exchanges register.
+- `frontend/components/AccountDashboard.tsx` — a `type Exchange` string
+  literal union used for display; does not include `etoro`.
+
+None are blocking. Delete `lib/exchangeApiKeyGuides.ts` only after the
+first bullet above is fixed.
+
 ## Phase B3 — Unify web Apex with Telegram/WhatsApp Apex
 
 Replace `frontend/components/onboarding/ApexOnboardingChat.tsx` (the

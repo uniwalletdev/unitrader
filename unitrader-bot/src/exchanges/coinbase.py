@@ -102,6 +102,31 @@ def _build_spec() -> ExchangeSpec:
         test_connection=test_connection,
         score_universe=score_universe,
         fetch_market_data=fetch_market_data,
+        # ── Wizard-driven connect UI (Commit 6: registry-driven frontend) ──
+        connect_instructions_url="https://portal.cdp.coinbase.com/",
+        connect_instructions_steps=(
+            "Open the Coinbase Developer Platform (link above) and sign in.",
+            "Create a new API key with Trade permissions. Copy the API Key Name.",
+            "Download or copy the full PEM private key block (-----BEGIN … END-----).",
+            "Paste the key name and the PEM block into Unitrader. Coinbase also accepts the full JSON blob via smart-paste.",
+        ),
+        credential_fields=(
+            {
+                "name": "api_key",
+                "label": "API Key Name",
+                "type": "text",
+                "placeholder": "organizations/.../apiKeys/...",
+                "required": True,
+            },
+            {
+                "name": "api_secret",
+                "label": "Private Key (PEM)",
+                "type": "password",
+                "placeholder": "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----",
+                "multiline": True,
+                "required": True,
+            },
+        ),
     )
 
 

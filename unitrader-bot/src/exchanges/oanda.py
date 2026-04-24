@@ -93,6 +93,30 @@ def _build_spec() -> ExchangeSpec:
         # No pre-scorer for forex today; AI picks scores the universe directly.
         score_universe=None,
         fetch_market_data=fetch_market_data,
+        # ── Wizard-driven connect UI (Commit 6: registry-driven frontend) ──
+        connect_instructions_url="https://www.oanda.com/account/",
+        connect_instructions_steps=(
+            "Log in to OANDA (fxTrade) and open Manage API Access → Generate.",
+            "Copy your Personal Access Token.",
+            "Note your Account ID (v20 format, e.g. 001-004-1234567-001).",
+            "Paste both into Unitrader. Practice accounts use the fxTrade-practice environment automatically.",
+        ),
+        credential_fields=(
+            {
+                "name": "api_key",
+                "label": "API Token",
+                "type": "password",
+                "placeholder": "Your OANDA API token",
+                "required": True,
+            },
+            {
+                "name": "api_secret",
+                "label": "Account ID",
+                "type": "text",
+                "placeholder": "001-004-1234567-001",
+                "required": True,
+            },
+        ),
     )
 
 

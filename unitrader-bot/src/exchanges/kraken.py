@@ -94,6 +94,29 @@ def _build_spec() -> ExchangeSpec:
         test_connection=test_connection,
         score_universe=score_universe,
         fetch_market_data=fetch_market_data,
+        # ── Wizard-driven connect UI (Commit 6: registry-driven frontend) ──
+        connect_instructions_url="https://www.kraken.com/u/security/api",
+        connect_instructions_steps=(
+            "Log in to Kraken → Settings → API (or Create API key in the security area).",
+            "Create a key with Query Funds + Trade permissions. Do not enable withdrawal.",
+            "Copy the API Key and the Private Key (base64-encoded) — paste both here.",
+        ),
+        credential_fields=(
+            {
+                "name": "api_key",
+                "label": "API Key",
+                "type": "password",
+                "placeholder": "Your Kraken API key",
+                "required": True,
+            },
+            {
+                "name": "api_secret",
+                "label": "Private Key (base64)",
+                "type": "password",
+                "placeholder": "Base64 private key from Kraken",
+                "required": True,
+            },
+        ),
     )
 
 

@@ -3,9 +3,8 @@ import {
   Link2, Unlink, ChevronDown, ChevronUp, Eye, EyeOff,
   CheckCircle, AlertCircle, Loader2, ExternalLink, Clipboard,
 } from "lucide-react";
-import { authApi, exchangeApi } from "@/lib/api";
-import ExchangeApiKeyGuide from "@/components/exchange/ExchangeApiKeyGuide";
-import { getExchangeApiKeyGuide } from "@/lib/exchangeApiKeyGuides";
+import { authApi, exchangeApi, type ExchangeSpecPublic } from "@/lib/api";
+import ExchangeConnectWizard from "@/components/settings/ExchangeConnectWizard";
 
 interface ConnectedExchange {
   trading_account_id?: string | null;
@@ -16,80 +15,11 @@ interface ConnectedExchange {
   last_used: string | null;
 }
 
-type ExchangeField = {
-  key: "api_key" | "api_secret";
-  label: string;
-  placeholder: string;
-  multiline?: boolean;
-};
-
-type ExchangeDef = {
-  id: string;
-  name: string;
-  description: string;
-  docsUrl: string;
-  fields: ExchangeField[];
-  comingSoon?: boolean;
-};
-
-const EXCHANGES: ExchangeDef[] = [
-  {
-    id: "alpaca",
-    name: "Alpaca",
-    description: "US stocks & crypto — paper & live trading",
-    docsUrl: "https://app.alpaca.markets/paper/dashboard/overview",
-    fields: [
-      { key: "api_key", label: "API Key ID", placeholder: "PK..." },
-      { key: "api_secret", label: "Secret Key", placeholder: "Your Alpaca secret key" },
-    ],
-  },
-  {
-    id: "coinbase",
-    name: "Coinbase",
-    description: "Crypto exchange — Advanced Trade (CDP keys)",
-    docsUrl: "https://portal.cdp.coinbase.com/",
-    fields: [
-      { key: "api_key", label: "API Key Name", placeholder: "organizations/.../apiKeys/..." },
-      {
-        key: "api_secret",
-        label: "Private Key (PEM)",
-        placeholder: "-----BEGIN EC PRIVATE KEY-----\n...\n-----END EC PRIVATE KEY-----",
-        multiline: true,
-      },
-    ],
-  },
-  {
-    id: "binance",
-    name: "Binance",
-    description: "Global crypto exchange — spot trading",
-    docsUrl: "https://www.binance.com/en/my/settings/api-management",
-    fields: [
-      { key: "api_key", label: "API Key", placeholder: "Your Binance API key" },
-      { key: "api_secret", label: "Secret Key", placeholder: "Your Binance secret key" },
-    ],
-  },
-  {
-    id: "kraken",
-    name: "Kraken",
-    description: "Crypto exchange — spot trading (API key + base64 private key)",
-    docsUrl: "https://docs.kraken.com/rest/#section/Authentication/API-Keys",
-    fields: [
-      { key: "api_key", label: "API Key", placeholder: "Your Kraken API key" },
-      { key: "api_secret", label: "Private Key", placeholder: "Base64 private key from Kraken" },
-    ],
-  },
-  {
-    id: "oanda",
-    name: "OANDA",
-    description: "Forex & CFDs — practice & live accounts",
-    docsUrl: "https://www.oanda.com/account/",
-    comingSoon: true,
-    fields: [
-      { key: "api_key", label: "API Token", placeholder: "Your OANDA API token" },
-      { key: "api_secret", label: "Account ID", placeholder: "Your OANDA account ID" },
-    ],
-  },
-];
+// The hardcoded `EXCHANGES` array and `ExchangeDef` / `ExchangeField` types
+// that used to live here were removed in Commit 6. This component now fetches
+// the list of exchanges (plus their credential fields + connect instructions)
+// from `GET /api/exchanges/list`, so the backend registry — including the
+// `FEATURE_ETORO_ENABLED` filter — is the single source of truth.
 
 // ─── Coinbase smart-paste helpers ─────────────────────────────────────────────
 
@@ -138,6 +68,17 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
   const [cbPasteRaw, setCbPasteRaw] = useState("");
   const [cbPasteStatus, setCbPasteStatus] = useState<CoinbasePasteStatus>({ kind: "idle" });
 
+  // Registry-driven list of available exchanges (GET /api/exchanges/list).
+  const [specs, setSpecs] = useState<ExchangeSpecPublic[]>([]);
+  const [specsLoading, setSpecsLoading] = useState(true);
+  const [specsError, setSpecsError] = useState<string | null>(null);
+
+  // eToro (and any future exchange with has_environment_toggle) uses the
+  // full ExchangeConnectWizard modal because the env selector + single-key
+  // credential shape doesn't map cleanly onto the inline api_key + api_secret
+  // form used for the other exchanges.
+  const [wizardExchangeId, setWizardExchangeId] = useState<string | null>(null);
+
   const handleCoinbaseSmartPaste = (raw: string) => {
     setCbPasteRaw(raw);
     const status = parseCoinbasePaste(raw);
@@ -167,7 +108,24 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
     }
   };
 
-  useEffect(() => { loadConnected(); }, []);
+  const loadSpecs = async () => {
+    setSpecsError(null);
+    setSpecsLoading(true);
+    try {
+      const res = await exchangeApi.listExchanges();
+      setSpecs(res.data.exchanges ?? []);
+    } catch {
+      setSpecsError("Couldn't load the list of exchanges. Please try again.");
+      setSpecs([]);
+    } finally {
+      setSpecsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadConnected();
+    loadSpecs();
+  }, []);
 
   const connectionsForExchange = (exchangeId: string) =>
     connected.filter((c) => c.exchange === exchangeId);
@@ -268,17 +226,47 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
         </div>
       )}
 
-      {EXCHANGES.map((exchange) => {
-        const active = isConnected(exchange.id);
-        const connInfo = connectionsForExchange(exchange.id);
-        const expanded = expandedId === exchange.id;
-        const disabled = exchange.comingSoon && !active;
+      {specsLoading && (
+        <div className="flex items-center justify-center py-6 text-xs text-dark-500">
+          <Loader2 size={14} className="mr-2 animate-spin" />
+          Loading exchanges…
+        </div>
+      )}
+
+      {!specsLoading && specsError && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-3 text-xs text-red-300">
+          <div className="mb-2 flex items-center gap-2">
+            <AlertCircle size={13} />
+            <span>{specsError}</span>
+          </div>
+          <button
+            type="button"
+            onClick={loadSpecs}
+            className="rounded-md border border-red-500/30 px-2.5 py-1 text-[11px] text-red-200 hover:bg-red-500/10"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {!specsLoading && !specsError && specs.length === 0 && (
+        <div className="rounded-lg border border-dark-800 bg-dark-900/40 px-3 py-4 text-center text-xs text-dark-500">
+          No exchanges are available yet.
+        </div>
+      )}
+
+      {specs.map((spec) => {
+        const active = isConnected(spec.id);
+        const connInfo = connectionsForExchange(spec.id);
+        const expanded = expandedId === spec.id;
+        const usesWizard = spec.has_environment_toggle === true;
+        const docsUrl = spec.connect_instructions_url ?? "";
 
         return (
           <div
-            key={exchange.id}
+            key={spec.id}
             className={`rounded-xl border bg-dark-950 transition ${
-              active ? "border-brand-500/30" : disabled ? "border-dark-800 opacity-60" : "border-dark-800"
+              active ? "border-brand-500/30" : "border-dark-800"
             }`}
           >
             {/* Header */}
@@ -287,40 +275,38 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                 <div className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold ${
                   active ? "bg-brand-500/20 text-brand-400" : "bg-dark-800 text-dark-500"
                 }`}>
-                  {exchange.name.charAt(0)}
+                  {spec.display_name.charAt(0)}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className={`text-sm font-medium ${disabled ? "text-dark-400" : "text-white"}`}>{exchange.name}</span>
+                    <span className="text-sm font-medium text-white">{spec.display_name}</span>
                     {active && (
                       <span className="flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-[10px] font-medium text-brand-400">
                         <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
                         {connInfo.length} connected
                       </span>
                     )}
-                    {disabled && (
-                      <span className="rounded-full border border-dark-700 bg-dark-900 px-2 py-0.5 text-[10px] font-medium text-dark-500">
-                        Coming Soon
-                      </span>
-                    )}
                   </div>
-                  <p className="text-xs text-dark-500">{exchange.description}</p>
+                  <p className="text-xs text-dark-500">{spec.tagline}</p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                {disabled ? null : (
-                  <button
-                    onClick={() => {
-                      setExpandedId(expanded ? null : exchange.id);
+                <button
+                  onClick={() => {
+                    if (usesWizard) {
+                      setWizardExchangeId(spec.id);
                       setMessage(null);
-                    }}
-                    className="flex items-center gap-1.5 rounded-lg border border-brand-500/30 px-3 py-1.5 text-xs text-brand-400 transition hover:bg-brand-500/10"
-                  >
-                    <Link2 size={12} />
-                    {active ? "Manage" : "Connect"}
-                    {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                  </button>
-                )}
+                    } else {
+                      setExpandedId(expanded ? null : spec.id);
+                      setMessage(null);
+                    }
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-brand-500/30 px-3 py-1.5 text-xs text-brand-400 transition hover:bg-brand-500/10"
+                >
+                  <Link2 size={12} />
+                  {active ? "Manage" : "Connect"}
+                  {!usesWizard && (expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+                </button>
               </div>
             </div>
 
@@ -340,7 +326,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                       <div key={targetId} className="flex items-center justify-between gap-3 rounded-lg border border-dark-800 bg-dark-900/40 px-2.5 py-2">
                         <div>
                           <div className="text-dark-300">
-                            {connection.account_label || `${exchange.name} ${displayMode}`}
+                            {connection.account_label || `${spec.display_name} ${displayMode}`}
                           </div>
                           <div>
                             Connected {connection.connected_at ? new Date(connection.connected_at).toLocaleDateString() : ""}
@@ -362,15 +348,15 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
               </div>
             )}
 
-            {/* Expansion form */}
-            {expanded && !disabled && (
+            {/* Expansion form — inline flow for exchanges without env toggle */}
+            {expanded && !usesWizard && (
               <div className="border-t border-dark-800 p-3 sm:p-4">
                 <div className="mb-4 flex items-center justify-between rounded-lg border border-dark-800 bg-dark-900/40 px-3 py-2">
                   <div>
                     <div className="text-xs font-medium text-white">Connection mode</div>
                     <div className="text-[10px] text-dark-500">Keep paper and live accounts separate per exchange.</div>
                   </div>
-                  {exchange.id === "coinbase" ? (
+                  {spec.id === "coinbase" ? (
                     <span className="rounded-lg border border-dark-800 bg-dark-950 px-2.5 py-1 text-[11px] text-dark-400">
                       Live
                     </span>
@@ -378,15 +364,15 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                     <button
                       type="button"
                       onClick={() =>
-                        setConnectModes((prev) => ({ ...prev, [exchange.id]: !(prev[exchange.id] ?? true) }))
+                        setConnectModes((prev) => ({ ...prev, [spec.id]: !(prev[spec.id] ?? true) }))
                       }
                       className="rounded-lg border border-dark-700 px-2.5 py-1 text-[11px] text-dark-200"
                     >
-                      {(connectModes[exchange.id] ?? true) ? "Paper" : "Live"}
+                      {(connectModes[spec.id] ?? true) ? "Paper" : "Live"}
                     </button>
                   )}
                 </div>
-                {exchange.id === "coinbase" ? (
+                {spec.id === "coinbase" ? (
                   <>
                     {/* Smart paste box */}
                     <div className="mb-4">
@@ -397,7 +383,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                       <p className="mb-2 text-[10px] text-dark-500">
                         Paste the full JSON from{" "}
                         <a
-                          href={exchange.docsUrl}
+                          href={docsUrl}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-brand-400 hover:underline"
@@ -443,10 +429,10 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
 
                     {/* Individual fields */}
                     <div className="space-y-3">
-                      {exchange.fields.map((field) => {
-                        const fieldId = `${exchange.id}_${field.key}`;
+                      {spec.credential_fields.map((field) => {
+                        const fieldId = `${spec.id}_${field.name}`;
                         return (
-                          <div key={field.key}>
+                          <div key={field.name}>
                             <label className="mb-1 block text-xs text-dark-400">{field.label}</label>
                             {field.multiline ? (
                               <textarea
@@ -455,7 +441,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                                 onChange={(e) =>
                                   setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
                                 }
-                                placeholder={field.placeholder}
+                                placeholder={field.placeholder ?? ""}
                                 className="input w-full font-mono text-xs resize-none"
                                 autoComplete="off"
                               />
@@ -466,7 +452,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                                 onChange={(e) =>
                                   setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
                                 }
-                                placeholder={field.placeholder}
+                                placeholder={field.placeholder ?? ""}
                                 className="input w-full font-mono text-xs"
                                 autoComplete="off"
                               />
@@ -475,36 +461,40 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                         );
                       })}
                     </div>
-
-                    {/* Collapsible how-to guide */}
-                    <details className="mt-3">
-                      <summary className="flex min-h-11 cursor-pointer list-none items-center text-xs text-dark-600 hover:text-dark-400 sm:min-h-0 sm:text-[10px] [&::-webkit-details-marker]:hidden">
-                        How to get your Coinbase CDP keys
-                      </summary>
-                      <ol className="mt-2 list-decimal space-y-1 pl-4 text-[10px] text-dark-500">
-                        <li>Go to portal.cdp.coinbase.com → Projects → your project → API Keys</li>
-                        <li>Click Create API Key (name it "Unitrader"), enable trade permissions</li>
-                        <li>On the confirmation screen click the copy icon next to the JSON</li>
-                        <li>Paste the copied JSON into the box above — done</li>
-                      </ol>
-                    </details>
                   </>
                 ) : (
                   <>
-                    {(() => {
-                      const g = getExchangeApiKeyGuide(exchange.id);
-                      return g ? (
-                        <div className="mb-3">
-                          <ExchangeApiKeyGuide guide={g} />
+                    {/* Registry-driven "how to get your keys" guide */}
+                    {spec.connect_instructions_steps.length > 0 && (
+                      <div className="mb-3 rounded-lg border border-dark-800 bg-dark-900/40 p-3">
+                        <div className="mb-2 flex items-center justify-between gap-2">
+                          <div className="text-[11px] font-semibold text-dark-300">
+                            How to get your {spec.display_name} API keys
+                          </div>
+                          {docsUrl && (
+                            <a
+                              href={docsUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1 text-[10px] text-brand-400 hover:underline"
+                            >
+                              Open portal <ExternalLink size={9} />
+                            </a>
+                          )}
                         </div>
-                      ) : null;
-                    })()}
+                        <ol className="list-decimal space-y-1 pl-4 text-[11px] text-dark-400">
+                          {spec.connect_instructions_steps.map((step, i) => (
+                            <li key={i}>{step}</li>
+                          ))}
+                        </ol>
+                      </div>
+                    )}
                     <div className="space-y-3">
-                      {exchange.fields.map((field) => {
-                        const fieldId = `${exchange.id}_${field.key}`;
-                        const isSecret = field.key === "api_secret";
+                      {spec.credential_fields.map((field) => {
+                        const fieldId = `${spec.id}_${field.name}`;
+                        const isSecret = field.name === "api_secret" || field.type === "password";
                         return (
-                          <div key={field.key}>
+                          <div key={field.name}>
                             <label className="mb-1 block text-xs text-dark-400">{field.label}</label>
                             <div className="relative">
                               {field.multiline ? (
@@ -514,7 +504,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                                   onChange={(e) =>
                                     setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
                                   }
-                                  placeholder={field.placeholder}
+                                  placeholder={field.placeholder ?? ""}
                                   className="input w-full font-mono text-xs resize-none"
                                   autoComplete="off"
                                 />
@@ -525,7 +515,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                                   onChange={(e) =>
                                     setFormValues((v) => ({ ...v, [fieldId]: e.target.value }))
                                   }
-                                  placeholder={field.placeholder}
+                                  placeholder={field.placeholder ?? ""}
                                   className="input w-full pr-9 font-mono text-xs"
                                   autoComplete="off"
                                 />
@@ -550,7 +540,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                 )}
                 <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
                   <button
-                    onClick={() => handleConnect(exchange.id)}
+                    onClick={() => handleConnect(spec.id)}
                     disabled={submitting}
                     className="btn-primary flex items-center gap-2 px-4 py-2 text-xs disabled:opacity-50"
                   >
@@ -581,6 +571,21 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
           </div>
         );
       })}
+
+      {/* Environment-toggle exchanges (e.g. eToro) open the full wizard modal
+          because their credential shape (single user key + demo/real toggle)
+          doesn't map onto the inline api_key+api_secret form. */}
+      {wizardExchangeId && (
+        <ExchangeConnectWizard
+          exchange={wizardExchangeId}
+          onSuccess={async () => {
+            setWizardExchangeId(null);
+            await loadConnected();
+            onConnected?.();
+          }}
+          onClose={() => setWizardExchangeId(null)}
+        />
+      )}
     </div>
   );
 }

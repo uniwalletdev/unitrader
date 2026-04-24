@@ -120,6 +120,29 @@ def _build_spec() -> ExchangeSpec:
         test_connection=test_connection,
         score_universe=score_universe,
         fetch_market_data=fetch_market_data,
+        # ── Wizard-driven connect UI (Commit 6: registry-driven frontend) ──
+        connect_instructions_url="https://app.alpaca.markets/paper/dashboard/overview",
+        connect_instructions_steps=(
+            "Log in at Alpaca (paper or live — generate keys on the environment you use).",
+            "Open your dashboard → API Keys (or Paper Trading → API Keys for paper).",
+            "Create a new key pair and copy the API Key ID and Secret Key immediately (the secret is shown once).",
+        ),
+        credential_fields=(
+            {
+                "name": "api_key",
+                "label": "API Key ID",
+                "type": "password",
+                "placeholder": "PK...",
+                "required": True,
+            },
+            {
+                "name": "api_secret",
+                "label": "Secret Key",
+                "type": "password",
+                "placeholder": "Your Alpaca secret key",
+                "required": True,
+            },
+        ),
     )
 
 

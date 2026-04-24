@@ -104,6 +104,30 @@ def _build_spec() -> ExchangeSpec:
         test_connection=test_connection,
         score_universe=score_universe,
         fetch_market_data=fetch_market_data,
+        # ── Wizard-driven connect UI (Commit 6: registry-driven frontend) ──
+        connect_instructions_url="https://www.binance.com/en/my/settings/api-management",
+        connect_instructions_steps=(
+            "Log in to Binance and open your profile → API Management (or Binance app equivalent).",
+            "Create a new API key and complete any security steps (2FA, email).",
+            "Enable Spot trading. Do NOT enable Withdraw.",
+            "Copy the API Key and Secret Key into Unitrader.",
+        ),
+        credential_fields=(
+            {
+                "name": "api_key",
+                "label": "API Key",
+                "type": "password",
+                "placeholder": "Your Binance API key",
+                "required": True,
+            },
+            {
+                "name": "api_secret",
+                "label": "Secret Key",
+                "type": "password",
+                "placeholder": "Your Binance secret key",
+                "required": True,
+            },
+        ),
     )
 
 

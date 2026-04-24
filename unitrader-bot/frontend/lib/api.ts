@@ -238,6 +238,7 @@ export interface ExchangeSpecPublic {
     type: "text" | "password";
     placeholder?: string;
     required?: boolean;
+    multiline?: boolean;
   }>;
 }
 
