@@ -37,9 +37,14 @@ function CompactBar({ confidence, aiName }: { confidence: number; aiName: string
 }
 
 export default function AIConfidenceGauge({ confidence, aiName, marketCondition, compact }: Props) {
+  // Hooks MUST be declared before any conditional return (Rules of Hooks).
+  // Before this refactor the `if (compact) return <CompactBar/>` guard sat
+  // above the useMemo below, which meant the hook count changed when the
+  // `compact` prop toggled — a latent React #310 trigger.
+  const zone = useMemo(() => getZone(confidence), [confidence]);
+
   if (compact) return <CompactBar confidence={confidence} aiName={aiName} />;
 
-  const zone = useMemo(() => getZone(confidence), [confidence]);
   const clamped = Math.max(0, Math.min(100, confidence));
 
   // SVG arc: 180° semi-circle, radius 80, stroke-dasharray trick

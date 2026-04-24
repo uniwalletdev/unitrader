@@ -25,6 +25,14 @@ function formatDate(iso: string | null | undefined) {
 export default function TrustLadderDetail() {
   const [traderClass, setTraderClass] = useState<TraderClass | "other" | null>(null);
   const [status, setStatus] = useState<LadderStatus | null>(null);
+  // NOTE: these two useState calls USED to live below the early `return null`
+  // guards further down, which violated the Rules of Hooks — when traderClass
+  // flipped from null → "complete_novice" between renders the hook count
+  // grew from 6 to 8 and React threw #310. Keep all hooks unconditional at
+  // the top of the component; the early returns below are still fine because
+  // they are after every hook call.
+  const [unlocking, setUnlocking] = useState(false);
+  const [unlockError, setUnlockError] = useState<string | null>(null);
   const stages = useMemo(() => {
     return [
       {
@@ -104,9 +112,6 @@ export default function TrustLadderDetail() {
 
   const stage = status?.stage ?? 1;
   const autonomousUnlocked = status?.autonomous_mode_unlocked ?? false;
-
-  const [unlocking, setUnlocking] = useState(false);
-  const [unlockError, setUnlockError] = useState<string | null>(null);
 
   const handleUnlockAutonomous = async () => {
     setUnlocking(true);
