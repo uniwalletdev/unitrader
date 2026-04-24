@@ -5,6 +5,11 @@ import {
 } from "lucide-react";
 import { authApi, exchangeApi, type ExchangeSpecPublic } from "@/lib/api";
 import ExchangeConnectWizard from "@/components/settings/ExchangeConnectWizard";
+import {
+  getExchangeVisual,
+  assetClassColors,
+  connectionBarClass,
+} from "@/lib/exchangeVisuals";
 
 interface ConnectedExchange {
   trading_account_id?: string | null;
@@ -261,33 +266,65 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
         const expanded = expandedId === spec.id;
         const usesWizard = spec.has_environment_toggle === true;
         const docsUrl = spec.connect_instructions_url ?? "";
+        const visual = getExchangeVisual(spec.id);
+        const dotColors = assetClassColors(spec.asset_classes ?? []);
+        const barClass = connectionBarClass(connInfo);
+
+        // Connect button (filled brand) vs Manage button (ghost) — the
+        // eye needs to tell at a glance which exchanges still need
+        // setup.
+        const actionClass = active
+          ? "flex items-center gap-1.5 rounded-lg border border-brand-500/30 px-3 py-1.5 text-xs text-brand-400 transition hover:bg-brand-500/10"
+          : "flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-brand-400";
 
         return (
           <div
             key={spec.id}
-            className={`rounded-xl border bg-dark-950 transition ${
+            className={`relative overflow-hidden rounded-xl border bg-dark-950 transition ${
               active ? "border-brand-500/30" : "border-dark-800"
             }`}
           >
+            {/* Connection-state left bar — promoted from a tiny pill to
+                the card's strongest visual signal. Paper = amber, live =
+                green, mixed = gradient. */}
+            {barClass && (
+              <span
+                aria-hidden="true"
+                className={`absolute left-0 top-0 h-full w-[3px] ${barClass}`}
+              />
+            )}
+
             {/* Header */}
             <div className="flex items-center justify-between px-4 py-3">
               <div className="flex items-center gap-3">
-                <div className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold ${
-                  active ? "bg-brand-500/20 text-brand-400" : "bg-dark-800 text-dark-500"
-                }`}>
+                <div
+                  className={`flex h-9 w-9 items-center justify-center rounded-lg text-sm font-bold ${visual.tileBg} ${visual.tileFg}`}
+                >
                   {spec.display_name.charAt(0)}
                 </div>
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-white">{spec.display_name}</span>
-                    {active && (
-                      <span className="flex items-center gap-1 rounded-full bg-brand-500/10 px-2 py-0.5 text-[10px] font-medium text-brand-400">
-                        <span className="h-1.5 w-1.5 rounded-full bg-brand-400" />
-                        {connInfo.length} connected
+                    {active && connInfo.length > 1 && (
+                      <span className="text-[10px] text-dark-500">
+                        · {connInfo.length} accounts
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-dark-500">{spec.tagline}</p>
+                  <div className="mt-0.5 flex items-center gap-1.5">
+                    {dotColors.length > 0 && (
+                      <span className="flex items-center gap-0.5" aria-hidden="true">
+                        {dotColors.map((c, i) => (
+                          <span
+                            key={i}
+                            className="h-1.5 w-1.5 rounded-full"
+                            style={{ backgroundColor: c }}
+                          />
+                        ))}
+                      </span>
+                    )}
+                    <p className="text-xs text-dark-500">{spec.tagline}</p>
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-2">
@@ -301,7 +338,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                       setMessage(null);
                     }
                   }}
-                  className="flex items-center gap-1.5 rounded-lg border border-brand-500/30 px-3 py-1.5 text-xs text-brand-400 transition hover:bg-brand-500/10"
+                  className={actionClass}
                 >
                   <Link2 size={12} />
                   {active ? "Manage" : "Connect"}
@@ -322,13 +359,27 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
                           ? "paper"
                           : "live";
                     const targetId = connection.trading_account_id || `${connection.exchange}-${displayMode}`;
+                    const isLive = displayMode === "live";
                     return (
                       <div key={targetId} className="flex items-center justify-between gap-3 rounded-lg border border-dark-800 bg-dark-900/40 px-2.5 py-2">
-                        <div>
-                          <div className="text-dark-300">
-                            {connection.account_label || `${spec.display_name} ${displayMode}`}
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            {/* PAPER / LIVE chip — promotes the mode from
+                                body text to a proper scannable chip. */}
+                            <span
+                              className={`rounded px-1.5 py-[1px] text-[9px] font-semibold tracking-wider ${
+                                isLive
+                                  ? "bg-brand-500/15 text-brand-400"
+                                  : "bg-amber-400/15 text-amber-300"
+                              }`}
+                            >
+                              {isLive ? "LIVE" : "PAPER"}
+                            </span>
+                            <span className="truncate text-dark-300">
+                              {connection.account_label || spec.display_name}
+                            </span>
                           </div>
-                          <div>
+                          <div className="mt-0.5">
                             Connected {connection.connected_at ? new Date(connection.connected_at).toLocaleDateString() : ""}
                             {connection.last_used && ` · Last used ${new Date(connection.last_used).toLocaleDateString()}`}
                           </div>
