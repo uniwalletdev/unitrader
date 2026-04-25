@@ -134,6 +134,7 @@ def _build_spec() -> ExchangeSpec:
         # users want a paper experience on this venue.
         paper_mode=PaperMode.NONE,
         supports_paper=False,
+        coming_soon=False,
         supports_fractional=True,
         order_types=frozenset({OrderType.MARKET, OrderType.LIMIT}),
         time_in_force=frozenset({TimeInForce.GTC}),
