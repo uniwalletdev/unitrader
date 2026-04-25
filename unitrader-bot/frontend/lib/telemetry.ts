@@ -16,6 +16,8 @@ export type TelemetryEventName =
   | "exchange_wizard_step_advanced"
   | "exchange_wizard_env_selected"
   | "exchange_wizard_submit_attempted"
+  | "exchange_wizard_revolutx_keypair_generated"
+  | "exchange_wizard_revolutx_keypair_failed"
   | "exchange_wizard_connected"
   | "exchange_wizard_failed"
   | "exchange_wizard_abandoned"

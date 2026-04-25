@@ -33,6 +33,7 @@ const EXCHANGE_VISUAL: Record<string, ExchangeVisual> = {
   kraken:   { tileBg: "bg-[#5841d8]/20", tileFg: "text-[#a78bfa]" },
   oanda:    { tileBg: "bg-[#e31837]/15", tileFg: "text-[#f87171]" },
   etoro:    { tileBg: "bg-[#13c636]/15", tileFg: "text-[#13c636]" },
+  revolutx: { tileBg: "bg-[#7c3aed]/15", tileFg: "text-[#a78bfa]" },
 };
 
 export function getExchangeVisual(id: string): ExchangeVisual {

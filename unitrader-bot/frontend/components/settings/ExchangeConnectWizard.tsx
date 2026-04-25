@@ -135,6 +135,17 @@ export default function ExchangeConnectWizard({
   openedFromApex,
 }: Props) {
   const config = EXCHANGE_CONFIG[exchange];
+  const safeConfig = config ?? {
+    name: exchange,
+    icon: "🔌",
+    docsUrl: "",
+    instructions: [{ step: 1, text: "This exchange isn't configured in the UI yet." }],
+    apiKeyLabel: "API Key",
+    apiKeyPlaceholder: "Paste your API key",
+    secretLabel: "API Secret",
+    secretPlaceholder: "Paste your API secret",
+  };
+
   const [step, setStep] = useState<Step>(1);
   const [apiKey, setApiKey] = useState("");
   const [apiSecret, setApiSecret] = useState("");
@@ -341,9 +352,9 @@ export default function ExchangeConnectWizard({
           <div className="w-full max-w-md rounded-2xl border border-dark-600 bg-dark-900 shadow-2xl overflow-hidden">
             <div className="flex items-center justify-between border-b border-dark-700 bg-dark-950 px-6 py-4">
               <div className="flex items-center gap-2">
-                <span className="text-2xl">{config.icon}</span>
+                <span className="text-2xl">{safeConfig.icon}</span>
                 <div>
-                  <h2 className="text-base font-bold text-white">Connect {config.name}</h2>
+                  <h2 className="text-base font-bold text-white">Connect {safeConfig.name}</h2>
                   <p className="text-xs text-dark-500 mt-0.5">Step 1 of 3 · Generate your secure key</p>
                 </div>
               </div>
@@ -370,7 +381,7 @@ export default function ExchangeConnectWizard({
                 <div>
                   <h3 className="text-sm font-semibold text-white mb-3">How this works:</h3>
                   <ol className="space-y-2">
-                    {config.instructions.map((instr) => (
+                    {safeConfig.instructions.map((instr) => (
                       <li key={instr.step} className="flex gap-3 text-sm text-dark-300">
                         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-fuchsia-500/20 text-xs font-semibold text-fuchsia-300 flex-shrink-0">
                           {instr.step}
@@ -451,7 +462,7 @@ export default function ExchangeConnectWizard({
               {hasKey && (
                 <>
                   <a
-                    href={config.docsUrl}
+                    href={safeConfig.docsUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="w-full flex items-center justify-center gap-2 rounded-lg bg-fuchsia-500/10 border border-fuchsia-500/30 px-4 py-2.5 text-xs font-medium text-fuchsia-300 hover:bg-fuchsia-500/20 transition"
@@ -479,9 +490,9 @@ export default function ExchangeConnectWizard({
           {/* Header */}
           <div className="flex items-center justify-between border-b border-dark-700 bg-dark-950 px-6 py-4">
             <div className="flex items-center gap-2">
-              <span className="text-2xl">{config.icon}</span>
+              <span className="text-2xl">{safeConfig.icon}</span>
               <div>
-                <h2 className="text-base font-bold text-white">Connect {config.name}</h2>
+                <h2 className="text-base font-bold text-white">Connect {safeConfig.name}</h2>
                 <p className="text-xs text-dark-500 mt-0.5">Step 1 of 3</p>
               </div>
             </div>
@@ -497,9 +508,9 @@ export default function ExchangeConnectWizard({
           {/* Content */}
           <div className="p-6 space-y-6">
             <div>
-              <h3 className="text-sm font-semibold text-white mb-3">Go to your {config.name} account:</h3>
+              <h3 className="text-sm font-semibold text-white mb-3">Go to your {safeConfig.name} account:</h3>
               <ol className="space-y-2">
-                {config.instructions.map((instr) => (
+                {safeConfig.instructions.map((instr) => (
                   <li key={instr.step} className="flex gap-3 text-sm text-dark-300">
                     <span className="flex h-6 w-6 items-center justify-center rounded-full bg-brand-500/20 text-xs font-semibold text-brand-400 flex-shrink-0">
                       {instr.step}
@@ -513,12 +524,12 @@ export default function ExchangeConnectWizard({
             {/* Action buttons */}
             <div className="space-y-3 border-t border-dark-700 pt-4">
               <a
-                href={config.docsUrl}
+                href={safeConfig.docsUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="w-full flex items-center justify-center gap-2 rounded-lg bg-brand-500/10 border border-brand-500/30 px-4 py-3 text-sm font-medium text-brand-400 hover:bg-brand-500/20 transition"
               >
-                Open {config.name} <ExternalLink size={16} />
+                Open {safeConfig.name} <ExternalLink size={16} />
               </a>
 
               <button
@@ -574,7 +585,7 @@ export default function ExchangeConnectWizard({
             {/* API Key field */}
             <div>
               <label className="block text-xs font-medium text-dark-300 mb-1.5">
-                {config.apiKeyLabel}
+                {safeConfig.apiKeyLabel}
               </label>
               <input
                 type="text"
@@ -583,7 +594,7 @@ export default function ExchangeConnectWizard({
                   setApiKey(e.target.value);
                   setError(null);
                 }}
-                placeholder={config.apiKeyPlaceholder}
+                placeholder={safeConfig.apiKeyPlaceholder}
                 className="input w-full text-sm font-mono"
                 autoComplete="off"
               />
@@ -593,7 +604,7 @@ export default function ExchangeConnectWizard({
             {!hidesSecretField && (
               <div>
                 <label className="block text-xs font-medium text-dark-300 mb-1.5">
-                  {config.secretLabel}
+                  {safeConfig.secretLabel}
                 </label>
                 <div className="relative">
                   <input
@@ -603,7 +614,7 @@ export default function ExchangeConnectWizard({
                       setApiSecret(e.target.value);
                       setError(null);
                     }}
-                    placeholder={config.secretPlaceholder}
+                    placeholder={safeConfig.secretPlaceholder}
                     className="input w-full pr-10 text-sm font-mono"
                     autoComplete="off"
                   />
@@ -786,7 +797,7 @@ export default function ExchangeConnectWizard({
             {/* Success message */}
             <div className="text-center space-y-2">
               <h3 className="text-lg font-bold text-white">
-                Unitrader connected to {config.name} successfully
+                Unitrader connected to {safeConfig.name} successfully
               </h3>
               <p className="text-sm text-dark-400">
                 Unitrader is ready to start trading for you
