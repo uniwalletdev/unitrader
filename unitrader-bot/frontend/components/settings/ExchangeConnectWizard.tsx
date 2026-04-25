@@ -90,11 +90,11 @@ const EXCHANGE_CONFIG = {
   revolutx: {
     name: "Revolut X",
     icon: "💜",
-    docsUrl: "https://revx.revolut.com/profile/api-keys",
+    docsUrl: "https://developer.revolut.com/docs/x-api/revolut-x-crypto-exchange-rest-api",
     instructions: [
       { step: 1, text: "Click 'Generate my secure key' below — Unitrader creates the keypair for you (no OpenSSL needed)" },
-      { step: 2, text: "Open Revolut X → Profile → API Keys → Add API Key, paste the public key we show you" },
-      { step: 3, text: "Tick the trading scopes you want Unitrader to use, then create the API key" },
+      { step: 2, text: "Log in to Revolut X web app, go to Profile > API Keys, and click 'Add API Key'" },
+      { step: 3, text: "Paste the Public Key from Step 1, select trading scopes, and create the API key" },
       { step: 4, text: "Copy the API key Revolut X gives you and paste it back here" },
     ],
     apiKeyLabel: "Revolut X API Key",
