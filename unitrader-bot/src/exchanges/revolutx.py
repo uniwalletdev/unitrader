@@ -156,12 +156,12 @@ def _build_spec() -> ExchangeSpec:
         has_environment_toggle=True,
         environment_options=(),
         environment_help_text={},
-        connect_instructions_url="https://revx.revolut.com/profile/api-keys",
+        connect_instructions_url="https://exchangerevolut.com",
         connect_instructions_steps=(
             "Click 'Generate my secure key' below — Unitrader creates an "
             "Ed25519 keypair and shows you the public key.",
             "Open Revolut X → Profile → API Keys → 'Add API Key' and paste "
-            "the public key. Tick the trading scopes you want Unitrader to use.",
+            "the public key. Tick 'Spot view', 'Spot trade', and 'Allow usage via Revolut X MCP and CLI'.",
             "Copy the API Key Revolut X gives you, paste it back here, and "
             "we'll verify the connection with a signed call to /balances.",
         ),
