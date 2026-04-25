@@ -155,6 +155,16 @@ def _build_spec() -> ExchangeSpec:
                 "required": True,
             },
         ),
+        # Coming-soon: eToro is shown in the UI but not connectable yet.
+        # Write paths are stubbed (NotImplementedError) and we want users to
+        # see it as "Coming Soon" rather than a broken connect flow. The
+        # $10K daily cap on eToro's API also makes a phased rollout safer.
+        coming_soon=True,
+        coming_soon_reason=(
+            "eToro integration is in final review. We're keeping it visible "
+            "so you know it's coming — connection will be enabled once "
+            "production-readiness sign-off is complete."
+        ),
     )
 
 

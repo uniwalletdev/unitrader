@@ -136,6 +136,15 @@ class ExchangeSpec:
     connect_instructions_steps: tuple[str, ...] = field(default_factory=tuple)
     credential_fields: tuple[dict, ...] = field(default_factory=tuple)
 
+    # ── Lifecycle state ────────────────────────────────────────────
+    # When True, the exchange is rendered in the UI but not connectable
+    # (a "Coming Soon" badge replaces the Connect button). Used for
+    # exchanges whose integration has been stubbed but is not yet
+    # production-ready. Backend also rejects credential storage and
+    # /test-connection calls for coming-soon exchanges.
+    coming_soon: bool = False
+    coming_soon_reason: Optional[str] = None
+
     def to_public_dict(self) -> dict:
         """Serialisable projection for the public capabilities endpoint."""
         return {

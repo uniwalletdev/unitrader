@@ -46,6 +46,8 @@ class Exchange(str, Enum):
 
     ETORO = "etoro"
 
+    REVOLUTX = "revolutx"
+
 
 
 
@@ -83,6 +85,8 @@ EXCHANGE_ASSET_CLASSES: dict[Exchange, set[AssetClass]] = {
     Exchange.OANDA: {AssetClass.FOREX},
 
     Exchange.ETORO: {AssetClass.STOCKS, AssetClass.CRYPTO, AssetClass.ETFS, AssetClass.COMMODITIES},
+
+    Exchange.REVOLUTX: {AssetClass.CRYPTO},
 
 }
 
@@ -290,6 +294,16 @@ def normalize_symbol(symbol: str, exchange: Exchange) -> str:
 
 
 
+    if exchange == Exchange.REVOLUTX:
+
+        if asset_class != AssetClass.CRYPTO:
+
+            raise ExchangeAssetClassError(exchange, symbol, asset_class)
+
+        return f"{base}-USD"
+
+
+
     return s
 
 
@@ -466,6 +480,8 @@ EXCHANGE_PRIMARY_ASSET_CLASS: dict[str, AssetClass] = {
 
     "etoro": AssetClass.STOCKS,
 
+    "revolutx": AssetClass.CRYPTO,
+
 }
 
 
@@ -483,6 +499,10 @@ EXCHANGE_PAPER_MODE: dict[str, PaperModeType] = {
     "oanda": PaperModeType.SYNTHETIC,
 
     "etoro": PaperModeType.NATIVE,   # eToro has a genuine Demo environment
+
+    # Revolut X has no sandbox; map to SYNTHETIC so paper paths still work
+    # via local simulation. Live trades are gated by an explicit confirm.
+    "revolutx": PaperModeType.SYNTHETIC,
 
 }
 
@@ -559,6 +579,8 @@ _EXCHANGE_PRIORITY = {
     Exchange.KRAKEN: 4,
 
     Exchange.OANDA: 5,
+
+    Exchange.REVOLUTX: 6,
 
 }
 

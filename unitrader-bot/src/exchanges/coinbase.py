@@ -35,26 +35,34 @@ def normalise_symbol(symbol: str) -> str:
 async def test_connection(
     client: httpx.AsyncClient, api_key: str, api_secret: str, is_paper: bool
 ) -> dict:
-    # Note: production Coinbase test goes through the more elaborate JWT/HMAC
-    # path inside the CoinbaseClient; this endpoint-level test is deliberately
-    # simple and matches the pre-registry behaviour. If it returns 401 the user
-    # should try re-issuing the key pair with the right scopes.
-    resp = await client.get(
-        "https://api.coinbase.com/api/v3/brokerage/accounts",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    accounts = data.get("accounts", [])
-    if accounts:
-        acc = accounts[0]
-        bal = acc.get("available_balance", {})
-        return {
-            "account_id": acc.get("uuid"),
-            "buying_power": float(bal.get("value", 0)),
-            "currency": bal.get("currency", "USD"),
-        }
-    return {"account_id": "unknown", "buying_power": 0.0, "currency": "USD"}
+    """Test Coinbase connection using proper auth (JWT for CDP keys, HMAC for legacy keys).
+    
+    This routes through CoinbaseClient._headers() which auto-detects the auth method
+    and applies the correct signing. CDP keys (PEM format) use JWT Bearer tokens,
+    while legacy keys use CB-ACCESS-* HMAC headers.
+    """
+    from src.integrations.exchange_client import CoinbaseClient
+    
+    cb = CoinbaseClient(api_key, api_secret)
+    try:
+        resp = await client.get(
+            "https://api.coinbase.com/api/v3/brokerage/accounts",
+            headers=cb._headers("GET", "/api/v3/brokerage/accounts"),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        accounts = data.get("accounts", [])
+        if accounts:
+            acc = accounts[0]
+            bal = acc.get("available_balance", {})
+            return {
+                "account_id": acc.get("uuid"),
+                "buying_power": float(bal.get("value", 0)),
+                "currency": bal.get("currency", "USD"),
+            }
+        return {"account_id": "unknown", "buying_power": 0.0, "currency": "USD"}
+    finally:
+        await cb.aclose()
 
 
 async def fetch_market_data(symbol: str) -> dict:

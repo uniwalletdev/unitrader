@@ -240,6 +240,10 @@ export interface ExchangeSpecPublic {
     required?: boolean;
     multiline?: boolean;
   }>;
+  // Coming-soon lifecycle: when true, frontend renders a "Coming Soon" badge
+  // and disables the Connect flow. Backend also rejects credential storage.
+  coming_soon?: boolean;
+  coming_soon_reason?: string | null;
 }
 
 export interface ConnectedExchange {
@@ -317,6 +321,17 @@ export const exchangeApi = {
       `/api/trading/exchange-keys/${exchange}`,
       { params: opts }
     ),
+
+  // Revolut X-only: generate a server-side Ed25519 keypair and return the
+  // public key PEM (the private key never leaves the backend). Step 1 of
+  // the 3-step Revolut X connect wizard.
+  revolutxGenerateKeypair: () =>
+    api.post<{
+      public_key_pem: string;
+      fingerprint: string;
+      instructions_url: string;
+      next_step: string;
+    }>("/api/exchanges/revolutx/generate-keypair", {}),
 };
 
 // ── Chat ─────────────────────────────────────────────────────────────────────

@@ -141,15 +141,36 @@ class KrakenClient(BaseExchangeClient):
         return False
 
     async def get_open_orders(self, symbol: str) -> list[dict]:
-        result = await self._private_request("OpenOrders", {"pair": symbol})
+        # Kraken's OpenOrders endpoint returns all open orders regardless of
+        # a `pair` filter, so we fetch all then filter client-side.
+        result = await self._private_request("OpenOrders", {})
         open_map = result.get("open") or {}
         out: list[dict] = []
+
+        def _canon_pair(p: str) -> str:
+            s = (p or "").upper().strip()
+            if not s:
+                return ""
+            # Drop separators.
+            for sep in ("/", "-", "_"):
+                s = s.replace(sep, "")
+            # Common asset aliases.
+            s = s.replace("XBT", "BTC").replace("XDG", "DOGE")
+            # Strip Kraken prefixes (X/Z) from asset codes only when present.
+            if s.startswith(("X", "Z")) and len(s) > 4:
+                s = s[1:]
+            return s
+
+        want = _canon_pair(symbol)
         for txid, info in open_map.items():
             descr = info.get("descr") or {}
+            pair = descr.get("pair", symbol)
+            if want and _canon_pair(str(pair)) != want:
+                continue
             out.append(
                 {
                     "order_id": txid,
-                    "pair": descr.get("pair", symbol),
+                    "pair": pair,
                     "side": descr.get("type", ""),
                     "vol": info.get("vol", "0"),
                 }

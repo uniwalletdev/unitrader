@@ -2,12 +2,14 @@
 routers/exchanges.py — Exchange API endpoints for Unitrader.
 
 Endpoints:
-    GET /api/exchanges/list             — Wizard-facing registry projection
-    GET /api/exchanges/test-connection  — Test connection with stored API keys
+    GET  /api/exchanges/list                          — Wizard-facing registry projection
+    GET  /api/exchanges/test-connection               — Test connection with stored API keys
+    POST /api/exchanges/revolutx/generate-keypair     — Generate + store a pending Ed25519 keypair
 """
 
 import json
 import logging
+import hashlib
 import httpx
 from datetime import datetime, timezone
 
@@ -19,7 +21,7 @@ from config import settings as app_settings
 from database import get_db
 from models import AuditLog, ExchangeAPIKey
 from routers.auth import get_current_user
-from security import decrypt_api_key
+from security import decrypt_api_key, encrypt_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +36,10 @@ router = APIRouter(prefix="/api/exchanges", tags=["Exchanges"])
 async def list_exchanges(current_user=Depends(get_current_user)) -> Response:
     """Return every registered ``ExchangeSpec`` as a wizard-facing projection.
 
-    Filtered by feature flags: eToro is hidden when ``FEATURE_ETORO_ENABLED``
-    is ``False`` so the frontend never surfaces it as a connectable option.
+    Coming-soon exchanges (``spec.coming_soon == True``) are returned with
+    a ``coming_soon`` flag + ``coming_soon_reason`` so the frontend can
+    render a "Coming Soon" badge instead of a Connect button. They are
+    NOT hidden — users can see what's on the roadmap.
 
     Response shape: ``{"exchanges": [ {...}, ... ]}``.
 
@@ -47,12 +51,8 @@ async def list_exchanges(current_user=Depends(get_current_user)) -> Response:
     import src.exchanges  # noqa: F401
     from src.exchanges.registry import all_specs
 
-    feature_etoro = bool(getattr(app_settings, "feature_etoro_enabled", False))
-
     items: list[dict] = []
     for spec in all_specs():
-        if spec.id == "etoro" and not feature_etoro:
-            continue
         items.append({
             "id": spec.id,
             "display_name": spec.display_name,
@@ -86,6 +86,10 @@ async def list_exchanges(current_user=Depends(get_current_user)) -> Response:
             "credential_fields": list(
                 getattr(spec, "credential_fields", []) or []
             ),
+            # Coming-soon lifecycle: when True the frontend shows a badge
+            # and disables the Connect flow. Backend also rejects writes.
+            "coming_soon": bool(getattr(spec, "coming_soon", False)),
+            "coming_soon_reason": getattr(spec, "coming_soon_reason", None),
         })
 
     return Response(
@@ -101,7 +105,7 @@ async def list_exchanges(current_user=Depends(get_current_user)) -> Response:
 
 @router.get("/test-connection")
 async def test_exchange_connection(
-    exchange: str = Query(..., regex="^(alpaca|binance|oanda|coinbase|kraken|etoro)$"),
+    exchange: str = Query(..., regex="^(alpaca|binance|oanda|coinbase|kraken|etoro|revolutx)$"),
     current_user=Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -139,14 +143,21 @@ async def test_exchange_connection(
     """
     exchange = exchange.lower()
 
-    # Feature-flag gate for eToro. Leaves every other exchange untouched.
-    if exchange == "etoro":
-        from config import settings as _app_settings
-        if not bool(getattr(_app_settings, "feature_etoro_enabled", False)):
-            return {
-                "success": False,
-                "error": "eToro integration is not available yet. Coming soon.",
-            }
+    # Coming-soon gate — generic, registry-driven. Any exchange flagged
+    # coming_soon=True is rejected here so users can't smoke-test
+    # credentials against an integration that isn't production-ready.
+    import src.exchanges  # noqa: F401 — populate registry
+    from src.exchanges.registry import get_optional as _get_spec_optional
+
+    _spec_pre = _get_spec_optional(exchange)
+    if _spec_pre is not None and getattr(_spec_pre, "coming_soon", False):
+        return {
+            "success": False,
+            "error": (
+                getattr(_spec_pre, "coming_soon_reason", None)
+                or f"{_spec_pre.display_name} integration is not available yet. Coming soon."
+            ),
+        }
 
     # Step 1: Fetch stored API keys
     result = await db.execute(
@@ -217,190 +228,6 @@ async def test_exchange_connection(
 
 
 # ─────────────────────────────────────────────
-# Helper: Test Alpaca connection
-# ─────────────────────────────────────────────
-
-async def _test_alpaca(client: httpx.AsyncClient, api_key: str, api_secret: str, is_paper: bool) -> dict:
-    """Test Alpaca API connection.
-
-    Returns:
-        {
-            "account_id": "PA123456789",
-            "buying_power": 100000.00,
-            "currency": "USD"
-        }
-    """
-    base_url = "https://paper-api.alpaca.markets" if is_paper else "https://api.alpaca.markets"
-    headers = {
-        "APCA-API-KEY-ID": api_key,
-        "APCA-API-SECRET-KEY": api_secret,
-    }
-
-    response = await client.get(f"{base_url}/v2/account", headers=headers)
-    response.raise_for_status()
-    data = response.json()
-
-    return {
-        "account_id": data.get("account_number"),
-        "buying_power": float(data.get("buying_power", 0)),
-        "currency": "USD",
-    }
-
-
-# ─────────────────────────────────────────────
-# Helper: Test Binance connection
-# ─────────────────────────────────────────────
-
-async def _test_binance(client: httpx.AsyncClient, api_key: str, api_secret: str) -> dict:
-    """Test Binance API connection.
-
-    Returns:
-        {
-            "account_id": "123456789",
-            "buying_power": 100000.00,
-            "currency": "USDT"
-        }
-    """
-    import hmac
-    import hashlib
-    import time
-
-    # Binance requires HMAC-SHA256 signed requests
-    timestamp = int(time.time() * 1000)
-    query_string = f"timestamp={timestamp}"
-    signature = hmac.new(
-        api_secret.encode(),
-        query_string.encode(),
-        hashlib.sha256,
-    ).hexdigest()
-
-    headers = {"X-MBX-APIKEY": api_key}
-    params = {"timestamp": timestamp, "signature": signature}
-
-    response = await client.get(
-        "https://api.binance.com/api/v3/account",
-        headers=headers,
-        params=params,
-    )
-    response.raise_for_status()
-    data = response.json()
-
-    # Extract USDT balance
-    balances = data.get("balances", [])
-    usdt_balance = next(
-        (float(b["free"]) for b in balances if b["asset"] == "USDT"),
-        0.0,
-    )
-
-    return {
-        "account_id": str(data.get("accountId")),
-        "buying_power": usdt_balance,
-        "currency": "USDT",
-    }
-
-
-# ─────────────────────────────────────────────
-# Helper: Test OANDA connection
-# ─────────────────────────────────────────────
-
-async def _test_oanda(client: httpx.AsyncClient, api_token: str, account_id: str) -> dict:
-    """Test OANDA API connection.
-
-    api_token is the API token
-    account_id is the OANDA account ID
-
-    Returns:
-        {
-            "account_id": "101-001-1234567-001",
-            "buying_power": 100000.00,
-            "currency": "GBP"
-        }
-    """
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json",
-    }
-
-    response = await client.get(
-        f"https://api-fxtrade.oanda.com/v3/accounts/{account_id}",
-        headers=headers,
-    )
-    response.raise_for_status()
-    data = response.json()
-
-    account = data.get("account", {})
-    return {
-        "account_id": account.get("id"),
-        "buying_power": float(account.get("unrealizedPL", 0)) + float(account.get("balance", 0)),
-        "currency": account.get("currency", "GBP"),
-    }
-
-
-# ─────────────────────────────────────────────
-# Helper: Test Coinbase connection
-# ─────────────────────────────────────────────
-
-async def _test_coinbase(client: httpx.AsyncClient, api_key: str, api_secret: str) -> dict:
-    """Test Coinbase API connection.
-
-    Returns:
-        {
-            "account_id": "account-uuid",
-            "buying_power": 100000.00,
-            "currency": "USD"
-        }
-    """
-    # Coinbase API requires Authorization header
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
-    response = await client.get(
-        "https://api.coinbase.com/api/v3/brokerage/accounts",
-        headers=headers,
-    )
-    response.raise_for_status()
-    data = response.json()
-
-    # Get first account (USD equivalent)
-    accounts = data.get("accounts", [])
-    if accounts:
-        account = accounts[0]
-        return {
-            "account_id": account.get("uuid"),
-            "buying_power": float(account.get("available_balance", {}).get("value", 0)),
-            "currency": account.get("available_balance", {}).get("currency", "USD"),
-        }
-
-    return {
-        "account_id": "unknown",
-        "buying_power": 0.0,
-        "currency": "USD",
-    }
-
-
-# ─────────────────────────────────────────────
-# Helper: Test Kraken connection
-# ─────────────────────────────────────────────
-
-async def _test_kraken(api_key: str, api_secret: str) -> dict:
-    """Kraken private Balance — returns ZUSD as buying_power."""
-    from src.integrations.kraken_client import KrakenClient
-
-    k = KrakenClient(api_key, api_secret)
-    try:
-        buying_power = await k.get_account_balance()
-        return {
-            "account_id": "kraken",
-            "buying_power": buying_power,
-            "currency": "USD",
-        }
-    finally:
-        await k.aclose()
-
-
-# ─────────────────────────────────────────────
 # Helper: Log API test to audit log
 # ─────────────────────────────────────────────
 
@@ -424,3 +251,143 @@ async def log_api_test(user_id: str, exchange: str, success: bool, details: str,
     except Exception as e:
         logger.warning(f"Failed to log API test event: {e}")
         await db.rollback()
+
+
+# ─────────────────────────────────────────────
+# POST /api/exchanges/revolutx/generate-keypair
+# ─────────────────────────────────────────────
+
+# Sentinel placeholder we encrypt into ``encrypted_api_key`` on the pending
+# row. The real Revolut X-issued API key replaces it on the active row when
+# the user submits it via the connect endpoint.
+_REVOLUTX_PENDING_API_KEY_SENTINEL = "__revolutx_pending__"
+
+
+@router.post("/revolutx/generate-keypair")
+async def revolutx_generate_keypair(
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate an Ed25519 keypair on the server, return the public key PEM.
+
+    Step 1 of the Revolut X 3-step connect flow:
+      - Generates a fresh Ed25519 keypair.
+      - Stores the **private** key PEM encrypted on a *pending* row
+        (``is_active=False``, ``key_version=0``) so the user can come
+        back later or refresh the page without losing it.
+      - Returns the **public** key PEM (plus a short fingerprint) for
+        the user to register inside Revolut X → Profile → API Keys.
+
+    Any pre-existing pending Revolut X row for this user is overwritten
+    so the wizard never accumulates stale keypairs.
+
+    Response:
+        {
+            "public_key_pem": "-----BEGIN PUBLIC KEY-----\\n...",
+            "fingerprint": "ab:cd:...",
+            "expires_at": null,
+            "instructions_url": "https://revx.revolut.com/profile/api-keys"
+        }
+    """
+    # Generate the keypair using the same cryptography library that
+    # powers Coinbase JWT signing. Ed25519 keys are 32 bytes private +
+    # 32 bytes public; PEM serialisation gives us a portable string the
+    # frontend can render in a copy-button.
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    private_key = Ed25519PrivateKey.generate()
+    public_key = private_key.public_key()
+
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
+    public_pem = public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")
+
+    # Short SHA-256 fingerprint (first 8 bytes hex, colon-separated) so
+    # users can sanity-check the public key matches what they pasted into
+    # Revolut X. Mirrors how SSH renders fingerprints.
+    digest = hashlib.sha256(public_pem.encode("utf-8")).hexdigest()
+    fingerprint = ":".join(digest[i : i + 2] for i in range(0, 16, 2))
+
+    # Encrypt the private key PEM with Fernet (the same field-level
+    # encryption used for every other broker secret). The placeholder
+    # api_key gets encrypted too so column constraints stay intact.
+    enc_key, enc_secret = encrypt_api_key(
+        _REVOLUTX_PENDING_API_KEY_SENTINEL, private_pem
+    )
+
+    # Drop any prior pending row for this user — there can only be one
+    # outstanding keypair waiting for an API key.
+    existing = await db.execute(
+        select(ExchangeAPIKey).where(
+            ExchangeAPIKey.user_id == current_user.id,
+            ExchangeAPIKey.exchange == "revolutx",
+            ExchangeAPIKey.is_active == False,  # noqa: E712
+            ExchangeAPIKey.key_version == 0,
+        )
+    )
+    for row in existing.scalars().all():
+        await db.delete(row)
+
+    pending = ExchangeAPIKey(
+        user_id=current_user.id,
+        exchange="revolutx",
+        encrypted_api_key=enc_key,
+        encrypted_api_secret=enc_secret,
+        # key_hash is not meaningful for the placeholder; hash the
+        # fingerprint so the column has something deterministic.
+        key_hash=hashlib.sha256(fingerprint.encode()).hexdigest(),
+        is_active=False,
+        # Revolut X is live-only — pending rows are always live.
+        is_paper=False,
+        key_version=0,
+    )
+    db.add(pending)
+
+    try:
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.error(
+            "Failed to store Revolut X pending keypair for user %s: %s",
+            current_user.id, exc,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not generate Revolut X key. Please try again.",
+        )
+
+    # Audit-log the generation event (never include the private key).
+    try:
+        db.add(
+            AuditLog(
+                user_id=current_user.id,
+                event_type="revolutx_keypair_generated",
+                event_details={
+                    "exchange": "revolutx",
+                    "fingerprint": fingerprint,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        )
+        await db.commit()
+    except Exception as exc:
+        logger.warning("Failed to write revolutx_keypair_generated audit row: %s", exc)
+        await db.rollback()
+
+    return {
+        "public_key_pem": public_pem,
+        "fingerprint": fingerprint,
+        "instructions_url": "https://revx.revolut.com/profile/api-keys",
+        "next_step": (
+            "Open Revolut X → Profile → API Keys → Add API Key, paste the "
+            "public key above, then come back and paste the API key Revolut "
+            "X gives you."
+        ),
+    }

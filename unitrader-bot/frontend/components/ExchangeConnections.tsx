@@ -238,6 +238,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
     const visual = getExchangeVisual(spec.id);
     const dotColors = assetClassColors(spec.asset_classes ?? []);
     const barClass = connectionBarClass(connInfo);
+    const comingSoon = spec.coming_soon === true;
 
     const actionClass = active
       ? "flex items-center gap-1.5 rounded-lg border border-brand-500/30 px-3 py-1.5 text-xs text-brand-400 transition hover:bg-brand-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400/50 focus-visible:ring-offset-2 focus-visible:ring-offset-dark-950"
@@ -247,7 +248,7 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
       <div
         key={spec.id}
         className={`relative overflow-hidden rounded-xl border bg-dark-950 transition ${
-          active ? "border-brand-500/30" : "border-dark-800"
+          comingSoon ? "border-dark-800 opacity-80" : active ? "border-brand-500/30" : "border-dark-800"
         }`}
       >
         {barClass && (
@@ -291,22 +292,32 @@ export default function ExchangeConnections({ onConnected }: { onConnected?: () 
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                if (usesWizard) {
-                  setWizardExchangeId(spec.id);
-                  setMessage(null);
-                } else {
-                  setExpandedId(expanded ? null : spec.id);
-                  setMessage(null);
-                }
-              }}
-              className={actionClass}
-            >
-              <Link2 size={12} />
-              {active ? "Manage" : "Connect"}
-              {!usesWizard && (expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
-            </button>
+            {comingSoon ? (
+              <span
+                className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-300"
+                title={spec.coming_soon_reason ?? undefined}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" aria-hidden="true" />
+                Coming Soon
+              </span>
+            ) : (
+              <button
+                onClick={() => {
+                  if (usesWizard) {
+                    setWizardExchangeId(spec.id);
+                    setMessage(null);
+                  } else {
+                    setExpandedId(expanded ? null : spec.id);
+                    setMessage(null);
+                  }
+                }}
+                className={actionClass}
+              >
+                <Link2 size={12} />
+                {active ? "Manage" : "Connect"}
+                {!usesWizard && (expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
+              </button>
+            )}
           </div>
         </div>
 

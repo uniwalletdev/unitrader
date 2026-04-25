@@ -51,8 +51,12 @@ async def test_connection(
     data = resp.json()
     balances = data.get("balances", [])
     usdt = next((float(b["free"]) for b in balances if b["asset"] == "USDT"), 0.0)
+    # Binance's GET /api/v3/account returns the account identifier in the
+    # `uid` field (verified against developers.binance.com docs). The legacy
+    # `accountId` field never existed in this response, so reading it always
+    # returned "None" — corrected to `uid`.
     return {
-        "account_id": str(data.get("accountId")),
+        "account_id": str(data.get("uid")) if data.get("uid") is not None else None,
         "buying_power": usdt,
         "currency": "USDT",
     }

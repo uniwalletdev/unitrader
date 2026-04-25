@@ -87,6 +87,24 @@ const EXCHANGE_CONFIG = {
     secretLabel: "",
     secretPlaceholder: "",
   },
+  revolutx: {
+    name: "Revolut X",
+    icon: "💜",
+    docsUrl: "https://revx.revolut.com/profile/api-keys",
+    instructions: [
+      { step: 1, text: "Click 'Generate my secure key' below — Unitrader creates the keypair for you (no OpenSSL needed)" },
+      { step: 2, text: "Open Revolut X → Profile → API Keys → Add API Key, paste the public key we show you" },
+      { step: 3, text: "Tick the trading scopes you want Unitrader to use, then create the API key" },
+      { step: 4, text: "Copy the API key Revolut X gives you and paste it back here" },
+    ],
+    apiKeyLabel: "Revolut X API Key",
+    apiKeyPlaceholder: "Paste the API key from Revolut X",
+    // Revolut X uses an API key + a server-managed Ed25519 private key,
+    // so the secret field is hidden in the wizard and the backend pulls
+    // the private key from the pending keypair row.
+    secretLabel: "",
+    secretPlaceholder: "",
+  },
 } as Record<string, {
   name: string;
   icon: string;
@@ -128,10 +146,24 @@ export default function ExchangeConnectWizard({
 
   // eToro-only: environment toggle (demo | real). Other exchanges ignore this.
   const isEtoro = exchange === "etoro";
-  const hidesSecretField = isEtoro;
+  // Revolut X uses a 3-step flow with server-side Ed25519 keypair generation.
+  // The api_secret is stored on the backend at generate-keypair time, so
+  // the wizard never collects or shows it. We also force live mode (Revolut X
+  // has no sandbox).
+  const isRevolutX = exchange === "revolutx";
+  const hidesSecretField = isEtoro || isRevolutX;
   const [etoroEnvironment, setEtoroEnvironment] = useState<"demo" | "real">(
     presetEnvironment ?? "demo",
   );
+
+  // Revolut X-specific state: public key PEM + fingerprint returned by the
+  // generate-keypair endpoint, plus the user's "I understand this is live
+  // trading" confirmation gate before we surface the connect button as ready.
+  const [revolutxPublicKey, setRevolutxPublicKey] = useState<string | null>(null);
+  const [revolutxFingerprint, setRevolutxFingerprint] = useState<string | null>(null);
+  const [revolutxKeyCopied, setRevolutxKeyCopied] = useState(false);
+  const [revolutxGenerating, setRevolutxGenerating] = useState(false);
+  const [revolutxLiveAck, setRevolutxLiveAck] = useState(false);
 
   // Fire "opened" telemetry exactly once on mount.
   const openedFiredRef = useRef(false);
@@ -168,6 +200,47 @@ export default function ExchangeConnectWizard({
     setStep(next);
   };
 
+  // Revolut X-only: Step 1 generates a server-side Ed25519 keypair, stores
+  // the private key encrypted, and returns the public key PEM. The user then
+  // pastes that PEM into Revolut X → API Keys to authorise this Unitrader
+  // session.
+  const handleGenerateRevolutxKeypair = async () => {
+    setRevolutxGenerating(true);
+    setError(null);
+    try {
+      const res = await exchangeApi.revolutxGenerateKeypair();
+      setRevolutxPublicKey(res.data.public_key_pem);
+      setRevolutxFingerprint(res.data.fingerprint);
+      setRevolutxKeyCopied(false);
+      trackEvent("exchange_wizard_revolutx_keypair_generated", {
+        fingerprint: res.data.fingerprint,
+      });
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail;
+      const shown = typeof detail === "string"
+        ? detail
+        : "Couldn't generate a Revolut X key right now. Please try again.";
+      setError(shown);
+      trackEvent("exchange_wizard_revolutx_keypair_failed", {
+        error_code: err?.response?.status ? `http_${err.response.status}` : "network",
+      });
+    } finally {
+      setRevolutxGenerating(false);
+    }
+  };
+
+  const handleCopyPublicKey = async () => {
+    if (!revolutxPublicKey) return;
+    try {
+      await navigator.clipboard.writeText(revolutxPublicKey);
+      setRevolutxKeyCopied(true);
+      window.setTimeout(() => setRevolutxKeyCopied(false), 2500);
+    } catch {
+      // Clipboard API blocked — leave the textarea selectable so the user
+      // can copy manually. No error toast since the PEM is visible.
+    }
+  };
+
   const handleSaveAndTest = async () => {
     // eToro only requires a user key; other exchanges need both fields.
     const keyOk = !!apiKey.trim();
@@ -190,14 +263,21 @@ export default function ExchangeConnectWizard({
     setError(null);
 
     try {
-      // Step 1: Save the API keys. For eToro the environment is source of truth
-      // and the backend derives is_paper from it; we pass a best-effort is_paper
-      // for consistency with the existing request shape.
+      // Step 1: Save the API keys. For eToro the environment is source of
+      // truth and the backend derives is_paper from it; for Revolut X the
+      // backend stores an Ed25519 private key from the keypair-generation
+      // step and forces live mode (no sandbox exists). For everything
+      // else, we pass the wizard's paper/live toggle as-is.
+      const computedIsPaper = isEtoro
+        ? etoroEnvironment === "demo"
+        : isRevolutX
+          ? false
+          : isPaper;
       await exchangeApi.connect(
         exchange,
         apiKey,
         hidesSecretField ? "" : apiSecret,
-        isEtoro ? etoroEnvironment === "demo" : isPaper,
+        computedIsPaper,
         isEtoro ? { etoroEnvironment } : undefined,
       );
 
@@ -253,6 +333,146 @@ export default function ExchangeConnectWizard({
 
   // ── STEP 1: INSTRUCTIONS ──────────────────────────────────────────────────
   if (step === 1) {
+    // ── Revolut X: keypair generation panel ────────────────────────────────
+    if (isRevolutX) {
+      const hasKey = !!revolutxPublicKey;
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-950/90 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-dark-600 bg-dark-900 shadow-2xl overflow-hidden">
+            <div className="flex items-center justify-between border-b border-dark-700 bg-dark-950 px-6 py-4">
+              <div className="flex items-center gap-2">
+                <span className="text-2xl">{config.icon}</span>
+                <div>
+                  <h2 className="text-base font-bold text-white">Connect {config.name}</h2>
+                  <p className="text-xs text-dark-500 mt-0.5">Step 1 of 3 · Generate your secure key</p>
+                </div>
+              </div>
+              <button
+                onClick={onClose}
+                className="text-dark-500 hover:text-dark-300 transition"
+                aria-label="Close"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="rounded-lg border border-fuchsia-500/30 bg-fuchsia-500/5 px-3 py-2">
+                <p className="text-[11px] text-fuchsia-200 leading-relaxed">
+                  Revolut X requires an Ed25519 keypair to sign every API call.
+                  We generate it for you — your private key never leaves Unitrader,
+                  and you only need to copy the <strong>public</strong> key into
+                  Revolut X.
+                </p>
+              </div>
+
+              {!hasKey && (
+                <div>
+                  <h3 className="text-sm font-semibold text-white mb-3">How this works:</h3>
+                  <ol className="space-y-2">
+                    {config.instructions.map((instr) => (
+                      <li key={instr.step} className="flex gap-3 text-sm text-dark-300">
+                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-fuchsia-500/20 text-xs font-semibold text-fuchsia-300 flex-shrink-0">
+                          {instr.step}
+                        </span>
+                        <span>{instr.text}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+              )}
+
+              {error && (
+                <div className="flex items-start gap-3 rounded-lg bg-red-500/10 border border-red-500/30 px-3 py-2">
+                  <AlertCircle size={14} className="text-red-400 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs text-red-400">{error}</p>
+                </div>
+              )}
+
+              {hasKey && (
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-dark-300 mb-1.5">
+                      Your public key — paste this into Revolut X
+                    </label>
+                    <textarea
+                      readOnly
+                      value={revolutxPublicKey ?? ""}
+                      rows={6}
+                      className="input w-full font-mono text-[10px] resize-none"
+                      onFocus={(e) => e.currentTarget.select()}
+                    />
+                    {revolutxFingerprint && (
+                      <p className="mt-1.5 text-[10px] text-dark-500">
+                        Fingerprint: <span className="font-mono text-dark-300">{revolutxFingerprint}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={handleCopyPublicKey}
+                    type="button"
+                    className="w-full flex items-center justify-center gap-2 rounded-lg border border-dark-700 bg-dark-800 px-4 py-2.5 text-xs font-medium text-white hover:bg-dark-700 transition"
+                  >
+                    <Copy size={14} />
+                    {revolutxKeyCopied ? "Copied!" : "Copy public key"}
+                  </button>
+
+                  <div className="rounded-lg border border-dark-700 bg-dark-800/50 px-3 py-2.5 space-y-1.5">
+                    <p className="text-[11px] font-semibold text-white">Next, in Revolut X:</p>
+                    <ol className="list-decimal pl-4 space-y-1 text-[11px] text-dark-300">
+                      <li>Open Revolut X → Profile → API Keys</li>
+                      <li>Click <strong>Add API Key</strong> and paste the public key above</li>
+                      <li>Tick the trading scopes you want Unitrader to use</li>
+                      <li>Copy the API key Revolut X gives you</li>
+                    </ol>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-2 border-t border-dark-700 bg-dark-950 px-6 py-4">
+              {!hasKey && (
+                <button
+                  onClick={handleGenerateRevolutxKeypair}
+                  disabled={revolutxGenerating}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-fuchsia-500 px-4 py-3 text-sm font-medium text-white hover:bg-fuchsia-600 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                >
+                  {revolutxGenerating ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" /> Generating…
+                    </>
+                  ) : (
+                    "Generate my secure key"
+                  )}
+                </button>
+              )}
+
+              {hasKey && (
+                <>
+                  <a
+                    href={config.docsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full flex items-center justify-center gap-2 rounded-lg bg-fuchsia-500/10 border border-fuchsia-500/30 px-4 py-2.5 text-xs font-medium text-fuchsia-300 hover:bg-fuchsia-500/20 transition"
+                  >
+                    Open Revolut X → API Keys <ExternalLink size={14} />
+                  </a>
+                  <button
+                    onClick={() => advanceStep(2)}
+                    className="w-full flex items-center justify-center gap-2 rounded-lg bg-brand-500 px-4 py-3 text-sm font-medium text-white hover:bg-brand-600 transition"
+                  >
+                    I&apos;ve added the key — paste my API key{" "}
+                    <span className="text-lg">→</span>
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-950/90 backdrop-blur-sm p-4">
         <div className="w-full max-w-md rounded-2xl border border-dark-600 bg-dark-900 shadow-2xl overflow-hidden">
@@ -316,9 +536,13 @@ export default function ExchangeConnectWizard({
 
   // ── STEP 2: ENTER CREDENTIALS ─────────────────────────────────────────────
   if (step === 2) {
-    const bothFilled = hidesSecretField
+    const requiredFilled = hidesSecretField
       ? !!apiKey.trim()
       : !!(apiKey.trim() && apiSecret.trim());
+    // Revolut X is live-only — make the user explicitly acknowledge that
+    // before we light up the connect button. Mirrors how stock-broker apps
+    // gate "real money" with a checkbox to defuse mistaken connects.
+    const bothFilled = isRevolutX ? requiredFilled && revolutxLiveAck : requiredFilled;
 
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-dark-950/90 backdrop-blur-sm p-4">
@@ -441,8 +665,10 @@ export default function ExchangeConnectWizard({
               Your API credentials are encrypted and stored securely. We only use them to execute trades on your behalf and will never share them with third parties.
             </p>
 
-            {/* Paper / Live toggle — eToro uses its own environment radio instead */}
-            {!isEtoro && (
+            {/* Paper / Live toggle — eToro and Revolut X opt out
+                (eToro uses its own environment radio; Revolut X is
+                live-only with a separate acknowledgement gate below). */}
+            {!isEtoro && !isRevolutX && (
               <div className="flex items-center justify-between rounded-lg border border-dark-700 bg-dark-800/50 px-4 py-3">
                 <div>
                   <p className="text-xs font-medium text-white">{isPaper ? "Paper Trading" : "Live Trading"}</p>
@@ -464,6 +690,32 @@ export default function ExchangeConnectWizard({
                   />
                 </button>
               </div>
+            )}
+
+            {/* Revolut X live-only acknowledgement. The exchange has no
+                sandbox so any successful connect places real-money trades.
+                Surface this clearly and require a typed confirm-style tick
+                before the connect button activates. */}
+            {isRevolutX && (
+              <label className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={revolutxLiveAck}
+                  onChange={(e) => setRevolutxLiveAck(e.target.checked)}
+                  className="mt-0.5"
+                  aria-label="Acknowledge Revolut X is live trading"
+                />
+                <div>
+                  <p className="text-xs font-medium text-amber-200">
+                    I understand Revolut X is live trading
+                  </p>
+                  <p className="text-[10px] text-amber-200/70 mt-0.5">
+                    Revolut X has no paper / sandbox mode. Once connected, Unitrader
+                    will use your real funds when it places trades. You can disable
+                    auto-trade or disconnect at any time.
+                  </p>
+                </div>
+              </label>
             )}
           </div>
 

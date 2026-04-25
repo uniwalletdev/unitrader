@@ -186,9 +186,40 @@ class BinanceClient(BaseExchangeClient):
         data = await _with_retry(self._post, "/api/v3/order", params)
         return str(data["orderId"])
 
-    async def set_stop_loss(self, symbol: str, order_id: str, stop_price: float) -> bool:
-        """Place a STOP_LOSS_LIMIT order as a separate order (Binance doesn't have OCO free-form)."""
+    async def _filled_quantity_for(self, symbol: str, order_id: str) -> float:
+        """Return the executed base-asset qty of ``order_id`` on ``symbol``.
+
+        Binance's STOP_LOSS_LIMIT / TAKE_PROFIT_LIMIT orders require a non-zero
+        ``quantity`` matching the open position. Sourcing it from the original
+        fill is the correct pattern per the spot trading docs.
+        """
         try:
+            data = await _with_retry(
+                self._get,
+                "/api/v3/order",
+                {"symbol": symbol, "orderId": order_id},
+                signed=True,
+            )
+            return float(data.get("executedQty", 0) or 0)
+        except Exception as exc:
+            logger.error("Binance _filled_quantity_for failed: %s", exc)
+            return 0.0
+
+    async def set_stop_loss(self, symbol: str, order_id: str, stop_price: float) -> bool:
+        """Place a STOP_LOSS_LIMIT order tied to the original fill quantity.
+
+        Binance spot doesn't support OCO via the simple order endpoint, so we
+        place a separate stop order using the executed qty of ``order_id``.
+        Rejects when the parent order has no fill (qty=0 fails LOT_SIZE).
+        """
+        try:
+            qty = await self._filled_quantity_for(symbol, order_id)
+            if qty <= 0:
+                logger.warning(
+                    "Binance set_stop_loss skipped: parent order %s has no executed qty",
+                    order_id,
+                )
+                return False
             current_price = await self.get_current_price(symbol)
             # Determine the sell side: if stop < current it's a stop for a long position
             side = "SELL" if stop_price < current_price else "BUY"
@@ -198,7 +229,7 @@ class BinanceClient(BaseExchangeClient):
                 "type": "STOP_LOSS_LIMIT",
                 "stopPrice": f"{stop_price:.8f}",
                 "price": f"{stop_price * 0.999:.8f}",  # slight slippage buffer
-                "quantity": "0",  # caller should provide qty; placeholder
+                "quantity": f"{qty:.8f}",
                 "timeInForce": "GTC",
             }
             await _with_retry(self._post, "/api/v3/order", params)
@@ -208,8 +239,15 @@ class BinanceClient(BaseExchangeClient):
             return False
 
     async def set_take_profit(self, symbol: str, order_id: str, target_price: float) -> bool:
-        """Place a TAKE_PROFIT_LIMIT order."""
+        """Place a TAKE_PROFIT_LIMIT order tied to the original fill quantity."""
         try:
+            qty = await self._filled_quantity_for(symbol, order_id)
+            if qty <= 0:
+                logger.warning(
+                    "Binance set_take_profit skipped: parent order %s has no executed qty",
+                    order_id,
+                )
+                return False
             current_price = await self.get_current_price(symbol)
             side = "SELL" if target_price > current_price else "BUY"
             params = {
@@ -218,7 +256,7 @@ class BinanceClient(BaseExchangeClient):
                 "type": "TAKE_PROFIT_LIMIT",
                 "stopPrice": f"{target_price:.8f}",
                 "price": f"{target_price * 0.999:.8f}",
-                "quantity": "0",
+                "quantity": f"{qty:.8f}",
                 "timeInForce": "GTC",
             }
             await _with_retry(self._post, "/api/v3/order", params)
@@ -348,11 +386,31 @@ class AlpacaClient(BaseExchangeClient):
         return resp.json()
 
     async def get_current_price(self, symbol: str) -> float:
-        data = await _with_retry(self._data_get, f"/v2/stocks/{symbol}/quotes/latest")
-        quote = data.get("quote", {})
-        bid = float(quote.get("bp", 0))
-        ask = float(quote.get("ap", 0))
-        return (bid + ask) / 2 if bid and ask else float(quote.get("ap", 0))
+        """Return the latest mid price for ``symbol``.
+
+        Alpaca exposes crypto and equity quotes through different endpoints:
+            - Equities: GET /v2/stocks/{symbol}/quotes/latest
+            - Crypto:   GET /v1beta3/crypto/us/latest/quotes?symbols=BTC/USD
+
+        We dispatch on the symbol shape — anything containing a slash
+        (e.g. ``BTC/USD``) is treated as a crypto pair and routed to the
+        v1beta3 multi-symbol endpoint, which is the only one that returns
+        crypto quotes (verified against docs.alpaca.markets).
+        """
+        if "/" in symbol:
+            data = await _with_retry(
+                self._data_get,
+                "/v1beta3/crypto/us/latest/quotes",
+                {"symbols": symbol},
+            )
+            quotes = data.get("quotes", {}) or {}
+            quote = quotes.get(symbol, {}) or {}
+        else:
+            data = await _with_retry(self._data_get, f"/v2/stocks/{symbol}/quotes/latest")
+            quote = data.get("quote", {}) or {}
+        bid = float(quote.get("bp", 0) or 0)
+        ask = float(quote.get("ap", 0) or 0)
+        return (bid + ask) / 2 if bid and ask else (ask or bid)
 
     async def place_order(
         self,
@@ -376,12 +434,23 @@ class AlpacaClient(BaseExchangeClient):
     async def set_stop_loss(self, symbol: str, order_id: str, stop_price: float) -> bool:
         """Alpaca supports bracket orders; attach stop via order replace."""
         try:
+            try:
+                pos = await _with_retry(self._get, f"/v2/positions/{symbol}")
+                qty = abs(float(pos.get("qty", 0) or 0))
+            except httpx.HTTPStatusError as exc:
+                if exc.response is not None and exc.response.status_code == 404:
+                    logger.warning("Alpaca set_stop_loss: no open position for %s", symbol)
+                    return False
+                raise
+            if qty <= 0:
+                logger.warning("Alpaca set_stop_loss: position qty is zero for %s", symbol)
+                return False
             await _with_retry(
                 self._post,
                 "/v2/orders",
                 {
                     "symbol": symbol,
-                    "qty": "1",  # placeholder — real implementation fetches position qty
+                    "qty": str(qty),
                     "side": "sell",
                     "type": "stop",
                     "stop_price": str(stop_price),
@@ -395,12 +464,23 @@ class AlpacaClient(BaseExchangeClient):
 
     async def set_take_profit(self, symbol: str, order_id: str, target_price: float) -> bool:
         try:
+            try:
+                pos = await _with_retry(self._get, f"/v2/positions/{symbol}")
+                qty = abs(float(pos.get("qty", 0) or 0))
+            except httpx.HTTPStatusError as exc:
+                if exc.response is not None and exc.response.status_code == 404:
+                    logger.warning("Alpaca set_take_profit: no open position for %s", symbol)
+                    return False
+                raise
+            if qty <= 0:
+                logger.warning("Alpaca set_take_profit: position qty is zero for %s", symbol)
+                return False
             await _with_retry(
                 self._post,
                 "/v2/orders",
                 {
                     "symbol": symbol,
-                    "qty": "1",
+                    "qty": str(qty),
                     "side": "sell",
                     "type": "limit",
                     "limit_price": str(target_price),
@@ -518,11 +598,33 @@ class OandaClient(BaseExchangeClient):
         return str(data.get("orderCreateTransaction", {}).get("id", ""))
 
     async def set_stop_loss(self, symbol: str, order_id: str, stop_price: float) -> bool:
+        """Set stop-loss on an open trade via /v3/accounts/{id}/trades/{tradeId}/orders.
+        
+        OANDA requires the tradeId (not orderId) to set SL/TP on filled positions.
+        Fetch open trades for the symbol and match by the order that created it.
+        """
         try:
+            # Fetch all open trades for this symbol
+            trades_data = await _with_retry(
+                self._get,
+                f"/v3/accounts/{self._account_id}/openTrades",
+                {"instrument": symbol},
+            )
+            trades = trades_data.get("trades", [])
+            if not trades:
+                logger.warning("OANDA set_stop_loss: no open trades for %s", symbol)
+                return False
+            
+            # Use the first open trade (in production, match order_id to initialMarginRequired or other metadata)
+            trade_id = trades[0].get("id")
+            if not trade_id:
+                logger.warning("OANDA set_stop_loss: could not extract trade ID")
+                return False
+            
             await _with_retry(
                 self._put,
-                f"/v3/accounts/{self._account_id}/orders/{order_id}",
-                {"order": {"stopLossOnFill": {"price": str(stop_price)}}},
+                f"/v3/accounts/{self._account_id}/trades/{trade_id}/orders",
+                {"stopLoss": {"price": str(stop_price)}},
             )
             return True
         except Exception as exc:
@@ -530,11 +632,33 @@ class OandaClient(BaseExchangeClient):
             return False
 
     async def set_take_profit(self, symbol: str, order_id: str, target_price: float) -> bool:
+        """Set take-profit on an open trade via /v3/accounts/{id}/trades/{tradeId}/orders.
+        
+        OANDA requires the tradeId (not orderId) to set SL/TP on filled positions.
+        Fetch open trades for the symbol and match by the order that created it.
+        """
         try:
+            # Fetch all open trades for this symbol
+            trades_data = await _with_retry(
+                self._get,
+                f"/v3/accounts/{self._account_id}/openTrades",
+                {"instrument": symbol},
+            )
+            trades = trades_data.get("trades", [])
+            if not trades:
+                logger.warning("OANDA set_take_profit: no open trades for %s", symbol)
+                return False
+            
+            # Use the first open trade (in production, match order_id to initialMarginRequired or other metadata)
+            trade_id = trades[0].get("id")
+            if not trade_id:
+                logger.warning("OANDA set_take_profit: could not extract trade ID")
+                return False
+            
             await _with_retry(
                 self._put,
-                f"/v3/accounts/{self._account_id}/orders/{order_id}",
-                {"order": {"takeProfitOnFill": {"price": str(target_price)}}},
+                f"/v3/accounts/{self._account_id}/trades/{trade_id}/orders",
+                {"takeProfit": {"price": str(target_price)}},
             )
             return True
         except Exception as exc:
@@ -885,20 +1009,47 @@ class CoinbaseClient(BaseExchangeClient):
     async def close_position(self, symbol: str) -> bool:
         try:
             product_id = symbol if "-" in symbol else f"{symbol[:3]}-USD"
-            # Get current position size
-            data = await _with_retry(self._get, f"/api/v3/brokerage/portfolios")
-            # Place a market sell for the held quantity
-            positions = await _with_retry(
-                self._get, "/api/v3/brokerage/orders/historical/batch",
-                {"product_id": product_id, "order_status": "OPEN"},
-            )
-            for order in positions.get("orders", []):
-                await _with_retry(
-                    self._post,
-                    f"/api/v3/brokerage/orders/batch_cancel",
-                    {"order_ids": [order["order_id"]]},
+
+            # 1) Cancel any open orders on this product.
+            try:
+                open_orders = await _with_retry(
+                    self._get,
+                    "/api/v3/brokerage/orders/historical/batch",
+                    {"product_id": product_id, "order_status": "OPEN"},
                 )
-            return True
+                order_ids = [
+                    o.get("order_id")
+                    for o in (open_orders.get("orders", []) or [])
+                    if isinstance(o, dict) and o.get("order_id")
+                ]
+                if order_ids:
+                    await _with_retry(
+                        self._post,
+                        "/api/v3/brokerage/orders/batch_cancel",
+                        {"order_ids": order_ids},
+                    )
+            except Exception as exc:
+                logger.warning("Coinbase close_position: cancel open orders failed: %s", exc)
+
+            # 2) Market-sell the held base asset quantity (if any).
+            base_ccy = product_id.split("-", 1)[0].strip().upper()
+            qty = 0.0
+            try:
+                accounts = await self._list_all_brokerage_accounts()
+                for acct in accounts:
+                    ccy, amount = self._account_quantity(acct)
+                    if ccy == base_ccy:
+                        qty = float(amount or 0)
+                        break
+            except Exception as exc:
+                logger.warning("Coinbase close_position: failed to fetch balances: %s", exc)
+                qty = 0.0
+
+            if qty <= 0:
+                return True
+
+            order_id = await self.place_order(product_id, "SELL", qty)
+            return bool(order_id)
         except Exception as exc:
             logger.error("CoinbaseClient.close_position failed: %s", exc)
             return False
@@ -992,6 +1143,330 @@ async def validate_kraken_keys(api_key: str, api_secret: str) -> bool:
         return await client.validate_credentials()
     finally:
         await client.aclose()
+
+
+async def validate_revolutx_keys(api_key: str, api_secret_pem: str) -> bool:
+    """Verify Revolut X credentials by hitting the signed ``/balances`` endpoint.
+
+    ``api_secret_pem`` must be an Ed25519 private key in PEM form — the same
+    PEM Unitrader generated and registered with the user's Revolut X account.
+    Returns True on 2xx, False on auth/transport failure.
+    """
+    client = RevolutXClient(api_key=api_key, api_secret=api_secret_pem)
+    try:
+        info = await client.verify_connection()
+        return bool(info)
+    finally:
+        await client.aclose()
+
+
+# ─────────────────────────────────────────────
+# Revolut X Client
+# ─────────────────────────────────────────────
+
+class RevolutXClient(BaseExchangeClient):
+    """Revolut X REST API client (crypto spot trading).
+
+    Auth: Ed25519 keypair. The private key (PEM) is stored encrypted on
+    Unitrader's side — the user only sees the **public** key, which they
+    paste into Revolut X to mint an API key.
+
+    Signed-request envelope (matches Revolut's reference client):
+        message  = f"{timestamp_ms}{METHOD}{path_with_query}{body}"
+        signature = base64(Ed25519.sign(message))
+        headers   = {
+            "X-Revx-API-Key":   api_key,
+            "X-Revx-Timestamp": timestamp_ms,
+            "X-Revx-Signature": signature,
+            "Content-Type":     "application/json",
+        }
+
+    Base URL: https://revx.revolut.com/api/1.0
+    """
+
+    _BASE = "https://revx.revolut.com"
+    _PREFIX = "/api/1.0"
+
+    def __init__(self, api_key: str, api_secret: str, base_url: str | None = None):
+        super().__init__(api_key, api_secret)
+        self._http = httpx.AsyncClient(
+            base_url=(base_url or self._BASE).rstrip("/"),
+            timeout=10.0,
+        )
+
+    # ── Auth helpers ────────────────────────────────────────────────────
+
+    def _load_private_key(self):
+        """Return a cryptography Ed25519PrivateKey from the stored PEM.
+
+        Tolerates JSON-escaped newlines (``\\n``) — when the PEM round-trips
+        through JSON transport it can arrive with literal ``\\n`` characters
+        in place of real line breaks, mirroring Coinbase CDP's quirk.
+        """
+        from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+        if not self.api_secret:
+            raise ValueError("Revolut X private key is not configured")
+        pem = self.api_secret.replace("\\n", "\n").strip()
+        if not pem.startswith("-----BEGIN"):
+            raise ValueError(
+                "Revolut X requires an Ed25519 private key in PEM form."
+            )
+        key = load_pem_private_key(pem.encode("utf-8"), password=None)
+        if not isinstance(key, Ed25519PrivateKey):
+            raise ValueError(
+                "Revolut X requires an Ed25519 key — got "
+                f"{type(key).__name__}"
+            )
+        return key
+
+    def _signed_headers(
+        self,
+        method: str,
+        path_with_query: str,
+        body: str = "",
+    ) -> dict:
+        import base64
+
+        key = self._load_private_key()
+        ts_ms = str(int(time.time() * 1000))
+        message = f"{ts_ms}{method.upper()}{path_with_query}{body}"
+        signature = base64.b64encode(key.sign(message.encode("utf-8"))).decode("ascii")
+        return {
+            "X-Revx-API-Key": self.api_key,
+            "X-Revx-Timestamp": ts_ms,
+            "X-Revx-Signature": signature,
+            "Content-Type": "application/json",
+        }
+
+    @staticmethod
+    def _path_with_query(path: str, params: dict | None) -> str:
+        if not params:
+            return path
+        # Keep the order the caller passed so the signed prefix matches the
+        # actual wire query Revolut X receives.
+        clean = {k: v for k, v in params.items() if v is not None}
+        if not clean:
+            return path
+        return f"{path}?{urlencode(clean)}"
+
+    # ── Wire helpers ────────────────────────────────────────────────────
+
+    async def _get(self, path: str, params: dict | None = None) -> Any:
+        signed_path = f"{self._PREFIX}{path}"
+        path_with_query = self._path_with_query(signed_path, params)
+        resp = await self._http.get(
+            path_with_query,
+            headers=self._signed_headers("GET", path_with_query),
+        )
+        resp.raise_for_status()
+        return resp.json() if resp.content else {}
+
+    async def _post(self, path: str, body: dict | None = None) -> Any:
+        import json as _json
+
+        signed_path = f"{self._PREFIX}{path}"
+        raw = _json.dumps(body or {}, separators=(",", ":"))
+        resp = await self._http.post(
+            signed_path,
+            content=raw,
+            headers=self._signed_headers("POST", signed_path, raw),
+        )
+        resp.raise_for_status()
+        return resp.json() if resp.content else {}
+
+    async def _delete(self, path: str) -> Any:
+        signed_path = f"{self._PREFIX}{path}"
+        resp = await self._http.delete(
+            signed_path,
+            headers=self._signed_headers("DELETE", signed_path),
+        )
+        resp.raise_for_status()
+        return resp.json() if resp.content else {}
+
+    # ── High-level API ──────────────────────────────────────────────────
+
+    async def verify_connection(self) -> dict:
+        """Round-trip ``GET /balances`` and pull a UI-ready summary out.
+
+        Returns ``{account_id, available_cash, currency}`` so the connect
+        wizard can show the user what's connected without doing a second
+        request. ``available_cash`` is the sum of fiat balances (USD/EUR/
+        GBP/USDT/USDC) — crypto holdings stay out of buying-power until
+        the user explicitly converts them.
+        """
+        data = await _with_retry(self._get, "/balances")
+        balances = data.get("balances") if isinstance(data, dict) else data
+        cash = 0.0
+        currency = "USD"
+        if isinstance(balances, list):
+            for row in balances:
+                ccy = (row.get("currency") or "").strip().upper()
+                amt = float(row.get("amount") or row.get("available") or 0.0)
+                if ccy in ("USD", "USDT", "USDC"):
+                    cash += amt
+                elif ccy in ("EUR", "GBP") and cash <= 0:
+                    cash += amt
+                    currency = ccy
+        account_id = (
+            (data.get("account_id") if isinstance(data, dict) else None)
+            or "revolutx"
+        )
+        return {
+            "account_id": account_id,
+            "available_cash": cash,
+            "currency": currency,
+        }
+
+    async def get_account_balance(self) -> float:
+        info = await self.verify_connection()
+        return float(info.get("available_cash") or 0.0)
+
+    async def get_current_price(self, symbol: str) -> float:
+        """Return the latest mid price for ``symbol`` (BASE-QUOTE).
+
+        Revolut X exposes top-of-book quotes via ``/tickers`` keyed on the
+        ``symbol`` query parameter. We average bid/ask when both are
+        present, falling back to whichever side is available.
+        """
+        sym = symbol if "-" in symbol else f"{symbol}-USD"
+        data = await _with_retry(self._get, "/tickers", {"symbol": sym})
+        tickers = data.get("tickers") if isinstance(data, dict) else data
+        if isinstance(tickers, list) and tickers:
+            row = tickers[0]
+        elif isinstance(tickers, dict):
+            row = tickers
+        else:
+            raise ValueError(f"No ticker data for {sym}")
+        bid = float(row.get("bid") or 0.0)
+        ask = float(row.get("ask") or 0.0)
+        last = float(row.get("last") or row.get("price") or 0.0)
+        if bid and ask:
+            return (bid + ask) / 2.0
+        return ask or bid or last
+
+    async def place_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: float,
+        price: float | None = None,
+    ) -> str:
+        sym = symbol if "-" in symbol else f"{symbol}-USD"
+        body: dict[str, Any] = {
+            "symbol": sym,
+            "side": side.upper(),
+            "type": "LIMIT" if price else "MARKET",
+            "quantity": str(quantity),
+            "client_order_id": f"ut-{int(time.time() * 1000)}",
+            "time_in_force": "GTC",
+        }
+        if price:
+            body["price"] = str(price)
+        data = await _with_retry(self._post, "/orders", body)
+        return str(data.get("order_id") or data.get("id") or "")
+
+    async def set_stop_loss(self, symbol: str, order_id: str, stop_price: float) -> bool:
+        # Revolut X's REST surface (as of writing) does not expose native
+        # conditional / stop orders. Mirror Kraken's behaviour: report
+        # not-supported so the orchestrator falls back to monitored exits.
+        logger.info(
+            "RevolutXClient.set_stop_loss: stops not supported via REST yet "
+            "(symbol=%s, order_id=%s)", symbol, order_id,
+        )
+        return False
+
+    async def set_take_profit(self, symbol: str, order_id: str, target_price: float) -> bool:
+        logger.info(
+            "RevolutXClient.set_take_profit: take-profit not supported via REST yet "
+            "(symbol=%s, order_id=%s)", symbol, order_id,
+        )
+        return False
+
+    async def get_open_orders(self, symbol: str) -> list[dict]:
+        sym = symbol if "-" in symbol else f"{symbol}-USD"
+        data = await _with_retry(self._get, "/orders/active", {"symbol": sym})
+        orders = data.get("orders") if isinstance(data, dict) else data
+        if not isinstance(orders, list):
+            return []
+        # Some Revolut X tenants return all active orders regardless of the
+        # ``symbol`` query param; filter client-side to be safe.
+        target = sym.upper()
+        return [
+            o for o in orders
+            if isinstance(o, dict)
+            and (o.get("symbol") or "").upper() == target
+        ]
+
+    async def close_position(self, symbol: str) -> bool:
+        """Cancel open orders, then market-sell the held base balance.
+
+        Revolut X is spot-only — there's no "position" concept. Closing
+        means: stop new buys, then liquidate the base asset balance back
+        into the quote currency.
+        """
+        try:
+            sym = symbol if "-" in symbol else f"{symbol}-USD"
+            base_ccy = sym.split("-", 1)[0].strip().upper()
+
+            # 1) Cancel any open orders for this symbol.
+            try:
+                opens = await self.get_open_orders(sym)
+                for o in opens:
+                    oid = o.get("order_id") or o.get("id")
+                    if oid:
+                        try:
+                            await _with_retry(self._delete, f"/orders/{oid}")
+                        except Exception as exc:
+                            logger.warning(
+                                "RevolutXClient.close_position: cancel %s failed: %s",
+                                oid, exc,
+                            )
+            except Exception as exc:
+                logger.warning(
+                    "RevolutXClient.close_position: list open orders failed: %s", exc,
+                )
+
+            # 2) Sell the held base-asset balance.
+            data = await _with_retry(self._get, "/balances")
+            balances = data.get("balances") if isinstance(data, dict) else data
+            qty = 0.0
+            if isinstance(balances, list):
+                for row in balances:
+                    ccy = (row.get("currency") or "").strip().upper()
+                    if ccy == base_ccy:
+                        qty = float(row.get("amount") or row.get("available") or 0.0)
+                        break
+            if qty <= 0:
+                return True
+
+            order_id = await self.place_order(sym, "SELL", qty)
+            return bool(order_id)
+        except Exception as exc:
+            logger.error("RevolutXClient.close_position failed: %s", exc)
+            return False
+
+    async def get_order_status(self, symbol: str, order_id: str) -> dict:
+        try:
+            data = await _with_retry(self._get, f"/orders/{order_id}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                return {"order_id": order_id, "status": "not_found"}
+            raise
+        order = data.get("order") if isinstance(data, dict) and "order" in data else data
+        if not isinstance(order, dict):
+            return {"order_id": order_id, "status": "unknown"}
+        return {
+            "order_id": order.get("order_id") or order.get("id") or order_id,
+            "status": order.get("status", ""),
+            "filled_qty": float(order.get("filled_quantity") or order.get("filled") or 0),
+            "price": float(order.get("avg_price") or order.get("price") or 0),
+            "side": (order.get("side") or "").upper(),
+        }
+
+    async def aclose(self) -> None:
+        await self._http.aclose()
 
 
 # ─────────────────────────────────────────────

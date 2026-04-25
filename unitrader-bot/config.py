@@ -139,7 +139,7 @@ class Settings(BaseSettings):
     # ─────────────────────────────────────────────
     # Comma-separated list of exchanges available for user connections.
     # Set ENABLED_EXCHANGES in Railway to add more when they're ready.
-    enabled_exchanges: str = "alpaca,coinbase,kraken,binance"
+    enabled_exchanges: str = "alpaca,coinbase,kraken,binance,revolutx"
 
     @property
     def enabled_exchange_list(self) -> list[str]:

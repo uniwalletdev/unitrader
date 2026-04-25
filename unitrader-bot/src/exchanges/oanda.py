@@ -36,10 +36,14 @@ async def test_connection(
 ) -> dict:
     """For OANDA the "secret" slot carries the account_id — pre-existing
     convention in routers/exchanges.py before this refactor. Kept as-is.
+    
+    Routes to practice endpoint (fxpractice) for paper accounts and live
+    endpoint (fxtrade) for production accounts.
     """
     account_id = api_secret_or_account_id
+    base_url = "https://api-fxpractice.oanda.com" if is_paper else "https://api-fxtrade.oanda.com"
     resp = await client.get(
-        f"https://api-fxtrade.oanda.com/v3/accounts/{account_id}",
+        f"{base_url}/v3/accounts/{account_id}",
         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
     )
     resp.raise_for_status()
@@ -76,8 +80,8 @@ def _build_spec() -> ExchangeSpec:
         tagline="Forex",
         asset_classes=frozenset({AssetClass.FOREX}),
         primary_asset_class=AssetClass.FOREX,
-        paper_mode=PaperMode.SYNTHETIC,
-        supports_paper=True,  # OANDA "practice" is treated as paper
+        paper_mode=PaperMode.NATIVE,
+        supports_paper=True,  # OANDA "practice" is a true paper environment
         supports_fractional=True,
         order_types=frozenset({OrderType.MARKET, OrderType.LIMIT, OrderType.STOP}),
         time_in_force=frozenset({TimeInForce.GTC, TimeInForce.IOC, TimeInForce.FOK}),

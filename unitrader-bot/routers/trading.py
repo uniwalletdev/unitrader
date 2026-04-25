@@ -62,6 +62,7 @@ from src.integrations.exchange_client import (
     validate_coinbase_keys,
     validate_kraken_keys,
     validate_oanda_keys,
+    validate_revolutx_keys,
 )
 from src.market_context import (
     AssetClass,
@@ -124,13 +125,16 @@ class ClosePositionRequest(BaseModel):
 
 
 class ConnectExchangeRequest(BaseModel):
-    exchange: str = Field(..., pattern="^(alpaca|binance|oanda|coinbase|kraken|etoro)$")
+    exchange: str = Field(..., pattern="^(alpaca|binance|oanda|coinbase|kraken|etoro|revolutx)$")
     api_key: str = Field(..., min_length=1)
-    # eToro authenticates with a single user key; every other exchange
-    # still requires a non-empty secret. We enforce that via a
-    # field_validator (NOT a model_validator) so the 422 `loc` stays
-    # ["body", "api_secret"] — preserves existing Sentry grouping and
-    # the `fields=['body.api_secret']` log line our ops playbook matches on.
+    # eToro authenticates with a single user key; Revolut X authenticates
+    # with an API key + a server-side Ed25519 private key (the secret is
+    # already stored from the keypair-generation step). Every other
+    # exchange still requires a non-empty secret in the request body. We
+    # enforce that via a field_validator (NOT a model_validator) so the
+    # 422 `loc` stays ["body", "api_secret"] — preserves existing Sentry
+    # grouping and the `fields=['body.api_secret']` log line our ops
+    # playbook matches on.
     api_secret: str = Field(default="")
     is_paper: bool = Field(True, description="Whether these are paper/sandbox keys")
     # eToro only: 'demo' or 'real'. When provided, is_paper is derived from this.
@@ -142,16 +146,20 @@ class ConnectExchangeRequest(BaseModel):
 
     @field_validator("api_secret")
     @classmethod
-    def _require_secret_for_non_etoro(cls, v: str, info: ValidationInfo) -> str:
+    def _require_secret_for_non_secretless(cls, v: str, info: ValidationInfo) -> str:
         # Pydantic v2 runs field validators in declaration order, and
         # `exchange` is declared above `api_secret`, so info.data[
-        # "exchange"] is populated by the time this runs.
-        if info.data.get("exchange") != "etoro" and not v:
+        # "exchange"] is populated by the time this runs. eToro and
+        # Revolut X both omit api_secret from the request body — eToro
+        # has no secret at all, Revolut X stores it server-side via the
+        # generate-keypair step.
+        secretless = {"etoro", "revolutx"}
+        if info.data.get("exchange") not in secretless and not v:
             raise ValueError("api_secret must not be empty for this exchange")
         return v
 
 
-VALID_EXCHANGES = {"alpaca", "binance", "oanda", "coinbase", "kraken", "etoro"}
+VALID_EXCHANGES = {"alpaca", "binance", "oanda", "coinbase", "kraken", "etoro", "revolutx"}
 
 
 def _account_label(exchange: str, is_paper: bool) -> str:
@@ -321,6 +329,13 @@ async def _validate_exchange_keys(exchange: str, api_key: str, api_secret: str, 
             valid = await validate_kraken_keys(api_key, api_secret)
             if not valid:
                 raise ValueError("Kraken rejected the credentials")
+        elif exchange == "revolutx":
+            # api_secret here is the Ed25519 private key PEM that the
+            # generate-keypair endpoint stored ahead of time. The signed
+            # /balances round-trip is our smoke test.
+            valid = await validate_revolutx_keys(api_key, api_secret)
+            if not valid:
+                raise ValueError("Revolut X rejected the credentials")
         elif exchange == "coinbase":
             import httpx as _httpx
             try:
@@ -390,9 +405,74 @@ async def connect_exchange(
     """
     exchange = body.exchange.lower()
     is_paper = body.is_paper
+
+    # Coming-soon gate — generic, registry-driven. Reject credential storage
+    # for exchanges flagged coming_soon=True so users can't connect to an
+    # integration that isn't production-ready (e.g. eToro until rollout).
+    import src.exchanges  # noqa: F401 — populate registry
+    from src.exchanges.registry import get_optional as _get_spec_optional
+
+    _spec_pre = _get_spec_optional(exchange)
+    if _spec_pre is not None and getattr(_spec_pre, "coming_soon", False):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                getattr(_spec_pre, "coming_soon_reason", None)
+                or f"{_spec_pre.display_name} integration is not available yet. Coming soon."
+            ),
+        )
+
     # Coinbase has no paper/sandbox trading; force live to prevent bad labels & mode splits.
     if exchange == "coinbase":
         is_paper = False
+    # Revolut X: live-only (no sandbox) AND the api_secret in the request is
+    # ignored — the real secret is the Ed25519 private key Unitrader generated
+    # earlier and stored on a pending ExchangeAPIKey row. Pull it out here so
+    # downstream validation + persistence sees a normal (api_key, api_secret)
+    # pair and the rest of the route stays unchanged.
+    revolutx_pending_row: ExchangeAPIKey | None = None
+    if exchange == "revolutx":
+        is_paper = False
+        pending_q = await db.execute(
+            select(ExchangeAPIKey).where(
+                ExchangeAPIKey.user_id == current_user.id,
+                ExchangeAPIKey.exchange == "revolutx",
+                ExchangeAPIKey.is_active == False,  # noqa: E712
+                ExchangeAPIKey.key_version == 0,
+            )
+        )
+        revolutx_pending_row = pending_q.scalar_one_or_none()
+        if revolutx_pending_row is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "No Revolut X keypair found. Please generate a key first "
+                    "by clicking 'Generate my secure key' in the connect wizard."
+                ),
+            )
+        try:
+            _, private_pem = decrypt_api_key(
+                revolutx_pending_row.encrypted_api_key,
+                revolutx_pending_row.encrypted_api_secret,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to decrypt pending Revolut X keypair for user %s: %s",
+                current_user.id, exc,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "We couldn't read your stored Revolut X keypair. "
+                    "Please generate a new key and try again."
+                ),
+            )
+        # Replace the body's empty api_secret with the real PEM for the rest of
+        # the flow. body is a Pydantic model, so we mutate via setattr — this
+        # keeps the existing _validate_exchange_keys + encrypt_api_key call
+        # sites unchanged.
+        body.api_secret = private_pem
+
     # eToro: the environment field (demo|real) is the source of truth.
     # is_paper is derived so downstream paper/live logic stays unchanged.
     etoro_environment: str | None = None
@@ -455,6 +535,14 @@ async def connect_exchange(
             new_key_kwargs["etoro_environment"] = etoro_environment
         new_key = ExchangeAPIKey(**new_key_kwargs)
         db.add(new_key)
+
+        # Revolut X: now that the active row is in place, drop the
+        # pending keypair row so the same private key isn't usable a
+        # second time and the wizard can't re-enter "paste API key" by
+        # mistake.
+        if exchange == "revolutx" and revolutx_pending_row is not None:
+            await db.delete(revolutx_pending_row)
+
         await db.commit()
         await db.refresh(new_key)
 
@@ -528,7 +616,7 @@ async def list_exchange_keys(
 
 @router.delete("/exchange-keys/{exchange}")
 async def disconnect_exchange(
-    exchange: str = Path(..., pattern="^(alpaca|binance|oanda|coinbase|kraken|etoro)$"),
+    exchange: str = Path(..., pattern="^(alpaca|binance|oanda|coinbase|kraken|etoro|revolutx)$"),
     trading_account_id: str | None = Query(None),
     is_paper: bool | None = Query(None),
     current_user=Depends(get_current_user),
