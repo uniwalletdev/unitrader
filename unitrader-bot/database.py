@@ -236,6 +236,7 @@ async def create_tables() -> None:
             ("trades", "is_paper", "BOOLEAN"),
             ("trades", "account_scope", "VARCHAR(30) NOT NULL DEFAULT 'legacy_unscoped'"),
             ("trades", "external_order_id", "VARCHAR(128)"),
+            ("users", "clerk_user_id", "VARCHAR(128)"),
         ]
         # user_external_accounts, bot_messages, telegram_linking_codes are new tables
         # and are fully created by create_all above — only need column migrations for
@@ -253,6 +254,15 @@ async def create_tables() -> None:
                 await conn.exec_driver_sql(
                     "UPDATE trades SET account_scope = 'legacy_unscoped' "
                     "WHERE account_scope IS NULL OR account_scope = ''"
+                )
+            except Exception:
+                pass
+            # Mirror the PG unique partial index on users.clerk_user_id so
+            # local SQLite DBs match production behaviour (Clerk SSO dedup).
+            try:
+                await conn.exec_driver_sql(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_clerk_user_id "
+                    "ON users (clerk_user_id) WHERE clerk_user_id IS NOT NULL"
                 )
             except Exception:
                 pass
